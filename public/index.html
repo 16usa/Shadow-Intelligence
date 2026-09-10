@@ -68,6 +68,14 @@
   </main>
 </div>
 
+<nav class="mobile-nav" aria-label="Primary mobile navigation">
+  <button class="mobile-nav-item active" data-nav="overview" aria-label="Overview"><span>⌂</span><b>Home</b></button>
+  <button class="mobile-nav-item" data-nav="feed" aria-label="Live feed"><span>⌁</span><b>Live</b></button>
+  <button class="mobile-nav-item" data-nav="entities" aria-label="Entities"><span>◎</span><b>Entities</b></button>
+  <button class="mobile-nav-item" data-nav="community" aria-label="Community"><span>◌</span><b>Chat</b></button>
+  <button class="mobile-nav-item auth-only" data-nav="messages" aria-label="Messages"><span>✉</span><b>Messages</b></button>
+</nav>
+
 <div id="modal" class="modal hidden"><div class="modal-card"><button id="modalClose" class="modal-close">×</button><div id="modalBody"></div></div></div>
 <div id="toast" class="toast"></div>
 <script type="module" src="/app.js"></script>
