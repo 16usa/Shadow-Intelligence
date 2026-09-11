@@ -1,86 +1,54 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-  <meta name="theme-color" content="#ffffff"/>
-  <title>Shadow Intelligence</title>
-  <script>(function(){try{var t=localStorage.getItem('si-theme');if(t==='dark'||(!t&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.dataset.theme='dark'}catch{}})()</script>
-  <link rel="icon" href="/assets/logo.svg"/>
-  <link rel="stylesheet" href="/styles.css"/>
-  <link rel="stylesheet" href="/x-final.css?v=flat14-1789098597"/>
-<link rel="stylesheet" href="/network-live.css?v=15"/>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<meta name="theme-color" content="#ffffff"/>
+<title>Shadow Intelligence</title>
+<script>(function(){try{var t=localStorage.getItem('si-theme');if(t==='dark'||(!t&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.dataset.theme='dark'}catch{}})()</script>
+<link rel="icon" href="/assets/logo.svg"/>
+<link rel="stylesheet" href="/styles.css"/>
+<link rel="stylesheet" href="/x-final.css"/>
+<link rel="stylesheet" href="/si-shell.css"/>
 </head>
 <body>
-<div id="app" class="app-shell">
-  <aside class="sidebar">
-    <button class="brand" data-nav="overview" aria-label="Overview"><img src="/assets/logo.svg"/><span data-platform-name>Shadow Intelligence</span></button>
-    <nav class="nav-list">
-      <button class="nav-item active" data-nav="overview"><span>⌂</span><b>Overview</b></button>
-      <button class="nav-item" data-nav="feed"><span>⌁</span><b>Live Feed</b></button>
-      <button class="nav-item" data-nav="entities"><span>◎</span><b>Entities</b></button>
-      <button class="nav-item" data-nav="wallets"><span>▣</span><b>Wallets</b></button>
-      <button class="nav-item" data-nav="tokens"><span>◉</span><b>Tokens</b></button>
-      <button class="nav-item" data-nav="evidence"><span>◇</span><b>Evidence</b></button>
-      <button class="nav-item" data-nav="copy"><span>⧉</span><b>Copy Groups</b></button>
-      <button class="nav-item" data-nav="community"><span>◌</span><b>Community</b></button>
-      <button class="nav-item auth-only" data-nav="messages"><span>✉</span><b>Messages</b></button>
-      <button class="nav-item auth-only" data-nav="profile"><span>◯</span><b>Profile</b></button>
-      <button class="nav-item owner-only" data-nav="settings"><span>⚙</span><b>Settings</b></button>
-    </nav>
-    <div class="sidebar-spacer"></div>
-    <div class="sidebar-note"><strong>Track<br>Expose<br>Trade Smarter</strong><small>On-chain intelligence for a safer crypto market.</small><div class="wave"></div></div>
-  </aside>
+<div id="app" class="si-app">
+<header class="si-topbar">
+  <button class="si-brand" data-nav="overview"><img src="/assets/logo.svg" alt=""/><span data-platform-name>Shadow Intelligence</span></button>
+  <nav class="si-mainnav" aria-label="Primary">
+    <button data-nav="overview" class="active">Map</button><button data-nav="entities">Entities</button><button data-nav="wallets">Wallets</button><button data-nav="tokens">Tokens</button><button data-nav="feed">Live</button>
+  </nav>
+  <div class="si-top-actions"><label class="si-search"><span>⌕</span><input id="globalSearch" placeholder="Search"/></label><button id="themeToggle" class="si-icon" title="Theme">◐</button><button id="userButton" class="si-user"><span id="userAvatar" class="avatar avatar-sm">?</span><span id="userLabel">Sign in</span></button></div>
+</header>
+<div class="si-layout">
+<aside class="si-rail">
+  <div class="si-rail-section"><span class="si-rail-label">INTELLIGENCE</span><button data-nav="overview" class="active"><i>◉</i>Map</button><button data-nav="feed"><i>↯</i>Live Stream</button><button data-nav="entities"><i>◎</i>Entities</button><button data-nav="wallets"><i>▣</i>Wallets</button><button data-nav="tokens"><i>●</i>Tokens</button></div>
+  <div class="si-rail-section"><span class="si-rail-label">SYSTEM</span><button data-nav="evidence"><i>◇</i>Evidence</button><button data-nav="chat"><i>◌</i>Chat</button><button data-nav="messages" class="auth-only"><i>✉</i>Messages</button><button data-nav="settings" class="owner-only"><i>⚙</i>Admin</button></div>
+  <div class="si-rail-bottom"><span class="si-live-dot"></span><span>Solana</span><span id="railStatus">checking</span></div>
+</aside>
+<main class="si-main">
+<section id="page-overview" class="si-page active-page">
+  <div class="si-map-header"><div><div class="si-eyebrow"><span class="si-live-dot"></span> LIVE INTELLIGENCE</div><h1>Intelligence Map</h1><p>Entities, wallets and tokens connected in real time.</p></div><div class="si-map-actions"><button id="fitMap" class="si-button secondary">Fit</button><button id="addEntityBtn" class="si-button primary owner-only">＋ Entity</button></div></div>
+  <div class="si-map-layout">
+    <section class="si-map-card"><div id="globalMap" class="si-graph"></div><div class="si-map-footer"><span>Drag to orbit · scroll to zoom · tap a node to inspect</span><span id="mapCounts">0 entities · 0 wallets · 0 tokens</span></div></section>
+    <aside class="si-side-stack">
+      <section class="si-panel si-focus"><div class="si-panel-head"><span>FOCUS</span><button data-nav="entities">All →</button></div><div id="focusPanel"></div></section>
+      <section class="si-panel si-live-panel"><div class="si-panel-head"><span><span class="si-live-dot"></span> LIVE STREAM</span><button data-nav="feed">View all →</button></div><div id="overviewLive"></div></section>
+    </aside>
+  </div>
+  <div class="si-bottom-grid"><section class="si-panel"><div class="si-panel-head"><span>ACTIVE ENTITIES</span><button data-nav="entities">Explore →</button></div><div id="entityStrip" class="si-entity-strip"></div></section><section class="si-panel"><div class="si-panel-head"><span>RECENT CONNECTIONS</span></div><div id="connectionStrip" class="si-connection-strip"></div></section></div>
+</section>
 
-  <main class="main">
-    <header class="topbar">
-      <div class="mobile-brand"><img src="/assets/logo.svg"/><span data-platform-name>Shadow Intelligence</span></div>
-      <label class="search"><span>⌕</span><input id="globalSearch" placeholder="Search wallet, token, or X account"/></label>
-      <div class="top-actions">
-        <button id="themeToggle" class="icon-btn" title="Theme">◐</button>
-        <button id="userButton" class="user-button"><span id="userAvatar" class="avatar avatar-sm">?</span><span id="userLabel">Sign in</span></button>
-        <button id="addEntityBtn" class="primary owner-only">＋ Add Entity</button>
-      </div>
-    </header>
-
-    <section id="page-overview" class="page active-page">
-      <div class="stats-grid" id="statsGrid"></div>
-      <div class="dashboard-grid">
-        <section class="panel feed-panel"><div class="panel-head"><div><h2>Live Incident Feed</h2><span class="live"><i></i>Live</span></div><button data-nav="feed">View all →</button></div><div id="overviewFeed" class="feed-list"></div></section>
-        <section class="panel leaderboard-panel"><div class="panel-head"><h2>Risk Leaderboard</h2><button data-nav="entities">View all →</button></div><div id="leaderboard"></div></section>
-        <section class="panel entity-panel"><div class="panel-head"><h2>Entity Detail</h2><button data-nav="entities">View profile →</button></div><div id="entitySnapshot"></div></section>
-        <section class="panel network-panel"><div class="panel-head"><h2>Wallet Network</h2><span>Entity → wallets → tokens</span></div><div id="walletNetwork" class="network"></div></section>
-        <section class="panel evidence-panel"><div class="panel-head"><h2>Evidence</h2><button id="uploadEvidenceQuick" class="auth-only">Upload Evidence</button></div><div id="evidencePreview" class="evidence-preview"></div></section>
-        <section class="panel copy-panel"><div class="panel-head"><h2>Copy Groups</h2><button data-nav="copy">Manage →</button></div><div id="copyPreview" class="copy-list"></div></section>
-        <section class="panel chat-panel"><div class="panel-head"><div><h2>Community Chat</h2><span class="muted">Live discussion</span></div><button data-nav="community">Open →</button></div><div id="chatPreview" class="chat-preview"></div></section>
-      </div>
-      <p class="legal-note">Risk scores summarize observed signals and are not legal determinations or accusations of criminal conduct.</p>
-    </section>
-
-    <section id="page-feed" class="page"><div class="page-title"><div><h1>Live Feed</h1><p>Chronological on-chain and social intelligence events.</p></div></div><div class="panel"><div id="fullFeed" class="feed-list large"></div></div></section>
-    <section id="page-entities" class="page"><div class="page-title"><div><h1>Entities</h1><p>One identity can connect an X account, many wallets, tokens and evidence.</p></div><button class="primary owner-only" id="entitiesAddBtn">＋ Add Entity</button></div><div id="entitiesGrid" class="entity-grid"></div></section>
-    <section id="page-wallets" class="page"><div class="page-title"><div><h1>Wallets</h1><p>Linked wallets grouped by the entity they belong to.</p></div></div><div id="walletsTable" class="panel table-wrap"></div></section>
-    <section id="page-tokens" class="page"><div class="page-title"><div><h1>Tokens</h1><p>Tokens referenced by tracked incidents.</p></div></div><div id="tokensGrid" class="token-grid"></div></section>
-    <section id="page-evidence" class="page"><div class="page-title"><div><h1>Evidence</h1><p>Community submissions, screenshots, links and research notes.</p></div><button class="primary auth-only" id="evidenceAddBtn">＋ Upload Evidence</button></div><div id="evidenceGrid" class="evidence-grid"></div></section>
-    <section id="page-copy" class="page"><div class="page-title"><div><h1>Copy Groups</h1><p>Track, copy or inverse-monitor multiple wallets as one strategy group.</p></div><button class="primary owner-only" id="copyAddBtn">＋ New Group</button></div><div id="copyGroupsPage" class="copy-groups-grid"></div><div class="panel adapter-note"><strong>Execution adapter</strong><p id="copyAdapterStatus">Local simulation mode. Connect your existing copy engine through Replit Secrets without changing this UI.</p></div></section>
-    <section id="page-community" class="page"><div class="page-title"><div><h1>Community</h1><p>One simple public room for the people using the platform.</p></div></div><div class="chat-room panel"><div id="chatMessages" class="chat-messages"></div><form id="chatForm" class="composer auth-only"><input id="chatInput" maxlength="800" placeholder="Write a message…"/><button class="primary">Send</button></form><div class="guest-note guest-only">Sign in to join the conversation.</div></div></section>
-    <section id="page-messages" class="page"><div class="page-title"><div><h1>Messages</h1><p>Simple private messages between registered users.</p></div></div><div class="messages-layout"><aside class="panel conversations"><div class="user-search"><input id="userSearch" placeholder="Find a user…"/></div><div id="conversationList"></div></aside><section class="panel dm-panel"><div id="dmHeader" class="dm-header">Choose a conversation</div><div id="dmMessages" class="dm-messages"></div><form id="dmForm" class="composer"><input id="dmInput" maxlength="1200" placeholder="Private message…" disabled/><button class="primary" disabled>Send</button></form></section></div></section>
-    <section id="page-profile" class="page"><div class="page-title"><div><h1>Profile</h1><p>Your compact public identity on Shadow Intelligence.</p></div></div><form id="profileForm" class="panel profile-card"><div class="profile-avatar-row"><span id="profileAvatarPreview" class="avatar avatar-xl">?</span><div><label class="secondary file-btn">Upload avatar<input id="profileAvatarFile" type="file" accept="image/*" hidden/></label><small>PNG/JPEG/WebP up to about 1 MB.</small></div></div><label>Display name<input id="profileName" maxlength="60"/></label><label>X handle<input id="profileX" maxlength="40" placeholder="@username"/></label><label>Bio<textarea id="profileBio" maxlength="220" rows="4"></textarea></label><button class="primary" type="submit">Save profile</button></form></section>
-    <section id="page-settings" class="page"><div class="page-title"><div><h1>Owner Settings</h1><p>Platform-wide controls. Only owner/admin accounts can access these settings.</p></div></div><form id="settingsForm" class="settings-grid"><div class="panel setting-card"><h3>Brand</h3><label>Platform name<input id="setPlatformName"/></label></div><div class="panel setting-card"><h3>Access</h3><label class="toggle-row"><span>Allow registration</span><input id="setRegistration" type="checkbox"/></label><label class="toggle-row"><span>Community chat</span><input id="setChat" type="checkbox"/></label></div><div class="panel setting-card"><h3>Trading</h3><label class="toggle-row"><span>Copy trading enabled</span><input id="setCopy" type="checkbox"/></label><label>High-risk threshold<input id="setRiskThreshold" type="number" min="1" max="100"/></label></div><div class="panel setting-card"><h3>Live Intelligence</h3><label class="toggle-row"><span>Live wallet monitoring</span><input id="setLiveMonitor" type="checkbox"/></label><label>Poll every (seconds)<input id="setPollSeconds" type="number" min="30" max="3600"/></label><label>Transactions per first scan<input id="setHistoryLimit" type="number" min="5" max="100"/></label><label class="toggle-row"><span>X monitoring</span><input id="setXMonitor" type="checkbox"/></label><p class="muted" id="liveProviderStatus">Checking providers…</p></div><div class="panel setting-card"><h3>Data</h3><label class="toggle-row"><span>Demo data mode</span><input id="setDemo" type="checkbox"/></label><p class="muted">Production data uses Solana RPC, DexScreener, and optionally Helius/X API secrets. Secrets stay server-side.</p></div><div><button class="primary" type="submit">Save settings</button></div></form></section>
-  </main>
-</div>
-
-<nav class="mobile-nav" aria-label="Primary mobile navigation">
-  <button class="mobile-nav-item active" data-nav="overview" aria-label="Overview"><span>⌂</span><b>Home</b></button>
-  <button class="mobile-nav-item" data-nav="feed" aria-label="Live feed"><span>⌁</span><b>Live</b></button>
-  <button class="mobile-nav-item" data-nav="entities" aria-label="Entities"><span>◎</span><b>Entities</b></button>
-  <button class="mobile-nav-item" data-nav="community" aria-label="Community"><span>◌</span><b>Chat</b></button>
-  <button class="mobile-nav-item auth-only" data-nav="messages" aria-label="Messages"><span>✉</span><b>Messages</b></button>
-</nav>
-
-<div id="modal" class="modal hidden"><div class="modal-card"><button id="modalClose" class="modal-close">×</button><div id="modalBody"></div></div></div>
-<div id="toast" class="toast"></div>
-<script type="module" src="/app.js?v=flat14-1789098597"></script>
-<script src="/network-live.js?v=15"></script>
-</body>
-</html>
+<section id="page-entities" class="si-page"><div class="si-page-head"><div><div class="si-eyebrow">DIRECTORY</div><h1>Entities</h1><p>People and identities mapped across wallets, tokens and activity.</p></div><button id="entitiesAddBtn" class="si-button primary owner-only">＋ Add Entity</button></div><div id="entitiesGrid" class="si-card-grid"></div></section>
+<section id="page-wallets" class="si-page"><div class="si-page-head"><div><div class="si-eyebrow">ON-CHAIN</div><h1>Wallets</h1><p>Tracked wallets and their live activity.</p></div></div><div id="walletsTable" class="si-panel si-table-wrap"></div></section>
+<section id="page-tokens" class="si-page"><div class="si-page-head"><div><div class="si-eyebrow">MARKETS</div><h1>Tokens</h1><p>Assets observed across tracked activity.</p></div></div><div id="tokensGrid" class="si-card-grid token-grid"></div></section>
+<section id="page-feed" class="si-page"><div class="si-page-head"><div><div class="si-eyebrow"><span class="si-live-dot"></span> STREAM</div><h1>Live Activity</h1><p>Chronological on-chain intelligence events.</p></div></div><div class="si-feed-layout"><div id="fullFeed" class="si-panel si-feed-list"></div><aside class="si-panel si-stream-info"><h3>Live system</h3><div id="liveHealth"></div></aside></div></section>
+<section id="page-evidence" class="si-page"><div class="si-page-head"><div><div class="si-eyebrow">RESEARCH</div><h1>Evidence</h1><p>Sources, screenshots, links and research notes.</p></div><button id="evidenceAddBtn" class="si-button primary auth-only">＋ Evidence</button></div><div id="evidenceGrid" class="si-card-grid"></div></section>
+<section id="page-chat" class="si-page"><div class="si-page-head"><div><div class="si-eyebrow">COMMUNITY</div><h1>Chat</h1><p>Discuss live signals with the community.</p></div></div><div class="si-chat panel"><div id="chatMessages" class="si-chat-messages"></div><form id="chatForm" class="si-composer auth-only"><input id="chatInput" maxlength="800" placeholder="Write a message…"/><button class="si-button primary">Send</button></form><div class="guest-note guest-only">Sign in to join the conversation.</div></div></section>
+<section id="page-messages" class="si-page"><div class="si-page-head"><div><div class="si-eyebrow">PRIVATE</div><h1>Messages</h1><p>Private conversations between registered users.</p></div></div><div class="si-messages-layout"><aside class="si-panel"><input id="userSearch" class="si-input" placeholder="Find a user…"/><div id="conversationList"></div></aside><section class="si-panel"><div id="dmHeader" class="si-dm-header">Choose a conversation</div><div id="dmMessages" class="si-dm-messages"></div><form id="dmForm" class="si-composer"><input id="dmInput" maxlength="1200" placeholder="Private message…" disabled/><button class="si-button primary" disabled>Send</button></form></section></div></section>
+<section id="page-settings" class="si-page"><div class="si-page-head"><div><div class="si-eyebrow">OWNER CONTROL</div><h1>Admin Command Center</h1><p>Control the platform without changing the intelligence model.</p></div></div><form id="settingsForm" class="si-settings"><section class="si-panel"><h3>Platform</h3><label>Platform name<input id="setPlatformName" class="si-input"/></label><label class="si-toggle"><span>Allow registration</span><input id="setRegistration" type="checkbox"/></label><label class="si-toggle"><span>Community chat</span><input id="setChat" type="checkbox"/></label></section><section class="si-panel"><h3>Live intelligence</h3><label class="si-toggle"><span>Wallet monitoring</span><input id="setLiveMonitor" type="checkbox"/></label><label>Poll interval<input id="setPollSeconds" class="si-input" type="number" min="30" max="3600"/></label><label>Initial history depth<input id="setHistoryLimit" class="si-input" type="number" min="5" max="100"/></label><label class="si-toggle"><span>X monitoring</span><input id="setXMonitor" type="checkbox"/></label><div id="providerStatus" class="si-status"></div></section><section class="si-panel"><h3>Trading shell</h3><label class="si-toggle"><span>Copy trading enabled</span><input id="setCopy" type="checkbox"/></label><label>High signal threshold<input id="setRiskThreshold" class="si-input" type="number" min="1" max="100"/></label><label class="si-toggle"><span>Demo data mode</span><input id="setDemo" type="checkbox"/></label></section><section class="si-panel"><h3>Appearance</h3><p>Theme follows your saved preference. Use the ◐ button for Light / Dark.</p><button type="button" id="adminTheme" class="si-button secondary">Toggle theme</button></section><button class="si-button primary" type="submit">Save settings</button></form></section>
+</main></div></div>
+<div id="modal" class="si-modal hidden"><div class="si-modal-card"><button id="modalClose" class="si-modal-close">×</button><div id="modalBody"></div></div></div><div id="toast" class="si-toast"></div>
+<script type="module" src="/app.js?v=si-rebuild-1"></script>
+<script src="/si-graph.js?v=si-rebuild-1"></script>
+</body></html>
