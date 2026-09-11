@@ -268,7 +268,7 @@ function serveStatic(req,res,url){
   if(!fs.existsSync(full) || fs.statSync(full).isDirectory()) { rel='/index.html'; }
   const target = path.normalize(path.join(PUBLIC_DIR, rel));
   const ext=path.extname(target); const body=fs.readFileSync(target);
-  res.writeHead(200,{'content-type':MIME[ext]||'application/octet-stream','content-length':body.length,'cache-control':ext==='.html'?'no-store':'public, max-age=3600'}); res.end(body);
+  res.writeHead(200,{'content-type':MIME[ext]||'application/octet-stream','content-length':body.length,'cache-control':(ext==='.html'||ext==='.css'||ext==='.js')?'no-store':'public, max-age=3600'}); res.end(body);
 }
 
 export function createServer({dbPath,fetchImpl=fetch,autoMonitor=false}={}) {

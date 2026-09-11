@@ -83,12 +83,198 @@ function renderFeed(root,items){ root.innerHTML=items.length?items.map(x=>{const
 function renderFullFeed(){ renderFeed($('#fullFeed'),state.overview?.feed||[]); }
 function renderLeaderboard(){ const rows=state.overview.leaderboard; $('#leaderboard').innerHTML=`<div class="leader-head"><span>#</span><span>Entity</span><span>Risk</span><span>Cases</span><span>Losses</span></div>`+rows.map((e,i)=>`<div class="leader-row" data-entity="${e.id}"><span class="leader-num">${i+1}</span><div class="leader-identity">${avatarHtml(e,'sm')}<div><strong>${esc(e.name)}</strong><small>${esc(e.xHandle)}</small></div></div><span class="score-pill">${e.riskScore}</span><span class="leader-num">${e.incidents}</span><strong class="leader-num">${money(e.followerLosses)}</strong></div>`).join(''); $$('[data-entity]',$('#leaderboard')).forEach(el=>el.addEventListener('click',()=>entityDetailModal(el.dataset.entity))); }
 function renderSnapshot(){ const e=state.overview.selected;if(!e){$('#entitySnapshot').innerHTML='';return} const recent=state.overview.feed.filter(x=>x.entityId===e.id).slice(0,4); $('#entitySnapshot').innerHTML=`<div class="entity-snapshot"><div class="entity-top">${avatarHtml(e,'lg')}<div class="entity-top-text"><h3>${esc(e.name)} <span class="risk-tag ${riskClass(e.status,e.riskScore)}">${riskDisplay(e.riskScore)}</span></h3><p>${esc(e.xHandle)} · ${esc(e.notes||'Observed intelligence profile')}</p></div></div><div class="chips"><span class="chip">◉ ${esc(e.avatar_source||'avatar fallback')}</span><span class="chip good">● ${e.confidence}% confidence</span></div><div class="mini-metrics"><div class="mini-metric"><strong>${e.walletCount}</strong><small>Linked wallets</small></div><div class="mini-metric"><strong>${e.incidents}</strong><small>Incidents</small></div><div class="mini-metric"><strong>${money(e.followerLosses)}</strong><small>Follower losses</small></div></div><div class="entity-activity">${recent.map(x=>`<div><span>${ago(x.createdAt)} · ${esc(x.title)}</span><b class="${Number(x.value)<0?'value neg':'value pos'}">${x.symbol||''} ${Number(x.value||0)>0?'+':''}${x.value||''}${x.value?'%':''}</b></div>`).join('')}</div></div>`; }
+function network3dImage(item){
+  return item?.avatar||item?.image||fallbackAvatar(item?.displayName||item?.entityName||item?.name||item?.xHandle||item?.address||item?.symbol||'shadow');
+}
+
+function createNetwork3D(root, entity, wallets, tokens){
+  if(root._network3dController) root._network3dController.destroy();
+  const canvas=root.querySelector('.network3d-canvas');
+  const ctx=canvas?.getContext('2d');
+  if(!canvas||!ctx)return;
+
+  const dpr=Math.min(window.devicePixelRatio||1,2);
+  const images=new Map();
+  let width=1,height=1,raf=0,destroyed=false;
+  let yaw=-0.12,pitch=-0.12,targetYaw=yaw,targetPitch=pitch;
+  let dragging=false,lastX=0,lastY=0,idle=0;
+
+  const walletNodes=wallets.slice(0,5).map((w,i)=>({
+    kind:'wallet', raw:w,
+    label:w.label||`${String(w.address||'Wallet').slice(0,5)}…${String(w.address||'').slice(-5)}`,
+    sub:w.sync_status||'wallet',
+    x:-185-(i%2)*34, y:(i-2)*58, z:-70+(i%3)*68,
+    color:'#657786', image:network3dImage(w)
+  }));
+  const tokenNodes=tokens.slice(0,5).map((t,i)=>({
+    kind:'token', raw:t,
+    label:t.symbol||t.name||'Token',
+    sub:t.is_pump?'Pump.fun / PumpSwap':(t.dex_id||'token'),
+    x:185+(i%2)*34, y:(i-2)*58, z:-40+((i+1)%3)*72,
+    color:'#00ba7c', image:network3dImage(t)
+  }));
+  const entityNode={
+    kind:'entity', raw:entity, label:entity.xHandle||entity.name||'Entity', sub:'tracked entity',
+    x:0,y:0,z:105,color:'#7b61ff',image:network3dImage(entity)
+  };
+  const nodes=[...walletNodes,entityNode,...tokenNodes];
+
+  for(const n of nodes){
+    const img=new Image();
+    img.decoding='async';
+    img.onload=()=>schedule();
+    img.onerror=()=>{};
+    img.src=n.image;
+    images.set(n,img);
+  }
+
+  const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
+  function rotate(p){
+    const cy=Math.cos(yaw),sy=Math.sin(yaw),cx=Math.cos(pitch),sx=Math.sin(pitch);
+    const x1=p.x*cy-p.z*sy;
+    const z1=p.x*sy+p.z*cy;
+    const y1=p.y*cx-z1*sx;
+    const z2=p.y*sx+z1*cx;
+    return {x:x1,y:y1,z:z2};
+  }
+  function project(p){
+    const r=rotate(p);
+    const camera=650;
+    const depth=camera-r.z;
+    const scale=clamp(camera/depth,.58,1.72);
+    return {x:width/2+r.x*scale,y:height/2+r.y*scale*.92,z:r.z,scale};
+  }
+  function line(a,b,alpha=.36){
+    const pa=project(a),pb=project(b);
+    const grad=ctx.createLinearGradient(pa.x,pa.y,pb.x,pb.y);
+    grad.addColorStop(0,`rgba(123,97,255,${alpha})`);
+    grad.addColorStop(1,`rgba(29,155,240,${alpha*.45})`);
+    ctx.strokeStyle=grad;ctx.lineWidth=Math.max(1,dpr*.55);
+    ctx.beginPath();ctx.moveTo(pa.x,pa.y);ctx.lineTo(pb.x,pb.y);ctx.stroke();
+  }
+  function drawFloor(){
+    const dark=document.documentElement.dataset.theme==='dark';
+    ctx.save();
+    ctx.lineWidth=1;
+    for(let z=-220;z<=220;z+=55){
+      const a=project({x:-285,y:178,z}),b=project({x:285,y:178,z});
+      ctx.strokeStyle=dark?'rgba(83,100,113,.12)':'rgba(83,100,113,.10)';
+      ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+    }
+    for(let x=-275;x<=275;x+=55){
+      const a=project({x,y:178,z:-230}),b=project({x,y:178,z:230});
+      ctx.strokeStyle=dark?'rgba(83,100,113,.10)':'rgba(83,100,113,.08)';
+      ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+    }
+    ctx.restore();
+  }
+  function roundedRect(x,y,w,h,r){
+    const rr=Math.min(r,w/2,h/2);
+    ctx.beginPath();ctx.moveTo(x+rr,y);ctx.arcTo(x+w,y,x+w,y+h,rr);ctx.arcTo(x+w,y+h,x,y+h,rr);ctx.arcTo(x,y+h,x,y,rr);ctx.arcTo(x,y,x+w,y,rr);ctx.closePath();
+  }
+  function drawNode(n){
+    const p=project(n);
+    const dark=document.documentElement.dataset.theme==='dark';
+    const base=n.kind==='entity'?39:28;
+    const r=base*p.scale;
+    const x=p.x,y=p.y;
+
+    ctx.save();
+    const shadow=ctx.createRadialGradient(x+r*.18,y+r*.22,r*.12,x,y,r*1.38);
+    shadow.addColorStop(0,n.kind==='entity'?'rgba(123,97,255,.34)':n.kind==='token'?'rgba(0,186,124,.22)':'rgba(101,119,134,.20)');
+    shadow.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=shadow;ctx.beginPath();ctx.arc(x,y,r*1.42,0,Math.PI*2);ctx.fill();
+
+    const sphere=ctx.createRadialGradient(x-r*.35,y-r*.42,r*.06,x,y,r*1.05);
+    sphere.addColorStop(0,'rgba(255,255,255,.95)');
+    sphere.addColorStop(.12,n.color);
+    sphere.addColorStop(.72,dark?'#0f1419':'#cfd9de');
+    sphere.addColorStop(1,'#050607');
+    ctx.fillStyle=sphere;ctx.beginPath();ctx.arc(x,y,r+4,0,Math.PI*2);ctx.fill();
+
+    ctx.save();ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.clip();
+    const img=images.get(n);
+    if(img?.complete&&img.naturalWidth){ctx.drawImage(img,x-r,y-r,r*2,r*2)}
+    else{ctx.fillStyle=n.color;ctx.fillRect(x-r,y-r,r*2,r*2)}
+    const gloss=ctx.createLinearGradient(x-r,y-r,x+r,y+r);
+    gloss.addColorStop(0,'rgba(255,255,255,.24)');gloss.addColorStop(.42,'rgba(255,255,255,0)');gloss.addColorStop(1,'rgba(0,0,0,.22)');
+    ctx.fillStyle=gloss;ctx.fillRect(x-r,y-r,r*2,r*2);ctx.restore();
+
+    ctx.lineWidth=n.kind==='entity'?2:1.25;
+    ctx.strokeStyle=n.kind==='entity'?'rgba(123,97,255,.98)':n.kind==='token'?'rgba(0,186,124,.88)':'rgba(101,119,134,.9)';
+    ctx.beginPath();ctx.arc(x,y,r+4,0,Math.PI*2);ctx.stroke();
+
+    const labelY=y+r+15;
+    ctx.font=`${n.kind==='entity'?700:650} ${Math.max(10,12*p.scale)}px Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    const label=String(n.label||'');
+    const maxW=Math.min(150,width*.3);
+    let shown=label;
+    while(shown.length>5&&ctx.measureText(shown).width>maxW)shown=shown.slice(0,-2)+'…';
+    ctx.fillStyle=dark?'#e7e9ea':'#0f1419';ctx.fillText(shown,x,labelY);
+    ctx.font=`500 ${Math.max(8,9.5*p.scale)}px Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
+    ctx.fillStyle=dark?'#71767b':'#536471';ctx.fillText(String(n.sub||''),x,labelY+15);
+    ctx.restore();
+  }
+  function drawLaneLabel(text,x,color,count){
+    const dark=document.documentElement.dataset.theme==='dark';
+    ctx.save();
+    const y=28,w=122,h=31;
+    roundedRect(x-w/2,y-h/2,w,h,16);
+    ctx.fillStyle=dark?'rgba(22,24,28,.86)':'rgba(247,249,249,.94)';ctx.fill();
+    ctx.strokeStyle=dark?'rgba(47,51,54,.95)':'rgba(207,217,222,.95)';ctx.lineWidth=1;ctx.stroke();
+    ctx.fillStyle=color;ctx.beginPath();ctx.arc(x-w/2+16,y,4,0,Math.PI*2);ctx.fill();
+    ctx.textAlign='left';ctx.textBaseline='middle';ctx.font='700 11px Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';ctx.fillStyle=dark?'#e7e9ea':'#0f1419';ctx.fillText(text,x-w/2+27,y);
+    ctx.textAlign='right';ctx.fillStyle=dark?'#71767b':'#536471';ctx.font='600 10px Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';ctx.fillText(String(count),x+w/2-12,y);
+    ctx.restore();
+  }
+  function render(){
+    raf=0;if(destroyed)return;
+    yaw+=(targetYaw-yaw)*.13;pitch+=(targetPitch-pitch)*.13;
+    ctx.clearRect(0,0,width,height);
+    drawFloor();
+    for(const w of walletNodes)line(entityNode,w,.42);
+    for(const t of tokenNodes)line(entityNode,t,.42);
+    [...nodes].sort((a,b)=>rotate(a).z-rotate(b).z).forEach(drawNode);
+    drawLaneLabel('WALLETS',Math.max(78,width*.18),'#657786',wallets.length);
+    drawLaneLabel('TOKENS',Math.min(width-78,width*.82),'#00ba7c',tokens.length);
+    if(Math.abs(targetYaw-yaw)>.001||Math.abs(targetPitch-pitch)>.001)schedule();
+  }
+  function schedule(){if(!raf&&!destroyed)raf=requestAnimationFrame(render)}
+  function resize(){
+    const r=canvas.getBoundingClientRect();width=Math.max(1,Math.round(r.width));height=Math.max(1,Math.round(r.height));
+    canvas.width=Math.max(1,Math.round(width*dpr));canvas.height=Math.max(1,Math.round(height*dpr));
+    ctx.setTransform(dpr,0,0,dpr,0,0);schedule();
+  }
+  const ro=new ResizeObserver(resize);ro.observe(canvas);resize();
+
+  function down(ev){dragging=true;lastX=ev.clientX;lastY=ev.clientY;idle=0;canvas.setPointerCapture?.(ev.pointerId);canvas.classList.add('is-dragging')}
+  function move(ev){if(!dragging)return;const dx=ev.clientX-lastX,dy=ev.clientY-lastY;lastX=ev.clientX;lastY=ev.clientY;targetYaw=clamp(targetYaw+dx*.006,-.72,.72);targetPitch=clamp(targetPitch+dy*.004,-.42,.32);schedule()}
+  function up(ev){dragging=false;canvas.releasePointerCapture?.(ev.pointerId);canvas.classList.remove('is-dragging')}
+  canvas.addEventListener('pointerdown',down);canvas.addEventListener('pointermove',move);canvas.addEventListener('pointerup',up);canvas.addEventListener('pointercancel',up);
+
+  root._network3dController={destroy(){destroyed=true;cancelAnimationFrame(raf);ro.disconnect();canvas.removeEventListener('pointerdown',down);canvas.removeEventListener('pointermove',move);canvas.removeEventListener('pointerup',up);canvas.removeEventListener('pointercancel',up)}};
+}
+
 function renderNetwork(){
-  const e=state.overview.selected;if(!e){$('#walletNetwork').innerHTML='<div class="guest-note">Add a tracked entity and wallet to build the network.</div>';return}
-  const wallets=(state.overview.selectedWallets||[]).slice(0,2), tokens=(state.overview.selectedTokens||[]).slice(0,2);
-  const nodes=[...wallets.map(w=>({kind:'wallet',label:`${w.address.slice(0,5)}…${w.address.slice(-5)}`,sub:w.sync_status||'wallet',raw:w})),...tokens.map(t=>({kind:'token',label:t.symbol,sub:t.is_pump?'Pump.fun / PumpSwap':(t.dex_id||'token'),raw:t}))];
-  const pos=['n1','n2','n3 token-node','n4 token-node'];
-  $('#walletNetwork').innerHTML=`<div class="network-orbit"><span class="net-line line-1"></span><span class="net-line line-2"></span><span class="net-line line-3"></span><span class="net-line line-4"></span><div class="node center">${avatarHtml(e,'lg')}<b>${esc(e.xHandle||e.name)}</b><small>tracked entity</small></div>${nodes.map((n,i)=>`<div class="node ${pos[i]||'n4'}">${avatarHtml(n.raw,'sm')}<b>${esc(n.label)}</b><small>${esc(n.sub)}</small></div>`).join('')}</div><div class="network-legend"><span><i class="legend-entity"></i>Entity</span><span><i class="legend-wallet"></i>Wallet</span><span><i class="legend-token"></i>Token</span></div>`;
+  const root=$('#walletNetwork');
+  const panel=root?.closest('.network-panel');
+  const caption=panel?.querySelector('.panel-head>span');
+  if(caption)caption.textContent='Wallets · 3D Entity Graph · Tokens';
+  const e=state.overview.selected;
+  if(!e){
+    if(root?._network3dController)root._network3dController.destroy();
+    root.innerHTML='<div class="guest-note">Add a tracked entity and wallet to build the network.</div>';
+    return;
+  }
+  const wallets=state.overview.selectedWallets||[];
+  const tokens=state.overview.selectedTokens||[];
+  root.innerHTML=`<div class="network3d-v10-shell">
+    <canvas class="network3d-canvas" aria-label="Interactive 3D wallet and token network"></canvas>
+    <div class="network3d-v10-help">Drag to rotate</div>
+  </div>
+  <div class="network3d-v10-legend"><span><i class="entity"></i>Entity</span><span><i class="wallet"></i>Wallets</span><span><i class="token"></i>Tokens</span></div>`;
+  createNetwork3D(root,e,wallets,tokens);
 }
 
 function renderEvidencePreview(){ const f=state.overview.feed.slice(0,3); const kinds=['social','wallet','token']; const labels=['X / social signal','Wallet transaction','Token event']; $('#evidencePreview').innerHTML=f.map((x,i)=>`<article class="evidence-thumb evidence-${kinds[i]}"><div class="evidence-visual"><div class="evidence-mini-head">${avatarHtml(x,'xs')}<span>${esc(x.xHandle||x.entityName)}</span><i>${i===0?'X':i===1?'↗':'●'}</i></div><strong>${esc(x.title)}</strong><p>${esc(x.detail||x.walletAddress||'Observed signal')}</p><div class="evidence-mini-foot"><span>${esc(x.symbol||'Signal')}</span><b class="${Number(x.value)<0?'neg':'pos'}">${Number(x.value||0)>0?'+':''}${x.value||''}${x.value?'%':''}</b></div></div><div class="evidence-caption"><strong>${labels[i]}</strong><span>${ago(x.createdAt)} ago</span></div></article>`).join(''); }
