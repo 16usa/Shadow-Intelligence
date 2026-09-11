@@ -370,27 +370,15 @@ input:focus,textarea:focus,select:focus{border-color:var(--x-blue)!important;box
   .leader-row{grid-template-columns:22px minmax(0,1fr) 42px 38px 52px;padding:0 12px}
 }
 
-/* === NETWORK 3D V10 START === */
-/* Interactive projected 3D graph. One canonical style block; replaces v9. */
-#walletNetwork{position:relative;overflow:hidden;background:var(--bg)}
-.network3d-v10-shell{position:relative;width:100%;height:430px;overflow:hidden;background:radial-gradient(ellipse at 50% 48%,color-mix(in srgb,var(--accent) 7%,transparent),transparent 48%)}
-.network3d-canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none}
+/* === NETWORK FLAT V14 START === */
+#walletNetwork,.entity-3d-network{position:relative;overflow:hidden;background:var(--bg)}
+.network3d-v12-shell{position:relative;width:100%;height:430px;overflow:hidden;background:radial-gradient(circle at 50% 50%,color-mix(in srgb,var(--accent) 6%,transparent),transparent 42%),var(--bg)}
+.network3d-canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none;overscroll-behavior:contain}
 .network3d-canvas.is-dragging{cursor:grabbing}
-.network3d-v10-help{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);padding:5px 9px;border:1px solid var(--line);border-radius:999px;background:color-mix(in srgb,var(--bg) 86%,transparent);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);color:var(--muted);font-size:9px;font-weight:600;pointer-events:none}
-.network3d-v10-legend{min-height:46px;display:flex;align-items:center;justify-content:center;gap:20px;border-top:1px solid var(--line);color:var(--muted);font-size:10px}
-.network3d-v10-legend span{display:inline-flex;align-items:center;gap:6px}
-.network3d-v10-legend i{width:8px;height:8px;border-radius:50%}
-.network3d-v10-legend i.entity{background:var(--accent)}
-.network3d-v10-legend i.wallet{background:#657786}
-.network3d-v10-legend i.token{background:var(--green)}
-@media(max-width:720px){
-  .network3d-v10-shell{height:420px}
-  .network3d-v10-help{bottom:8px;font-size:9px}
-}
-@media(max-width:420px){
-  .network3d-v10-shell{height:390px}
-  .network3d-v10-legend{gap:16px;font-size:9px}
-}
-@media(prefers-reduced-motion:reduce){.network3d-canvas{scroll-behavior:auto}}
-/* === NETWORK 3D V10 END === */
-
+.network3d-v12-help{position:absolute;left:50%;bottom:9px;transform:translateX(-50%);white-space:nowrap;padding:6px 10px;border:1px solid var(--line);border-radius:999px;background:color-mix(in srgb,var(--bg) 90%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);color:var(--muted);font-size:10px;font-weight:600;pointer-events:none}
+.network3d-v12-legend{min-height:46px;display:flex;align-items:center;justify-content:center;gap:20px;border-top:1px solid var(--line);color:var(--muted);font-size:10px}
+.network3d-v12-legend span{display:inline-flex;align-items:center;gap:6px}.network3d-v12-legend i{width:8px;height:8px;border-radius:50%}.network3d-v12-legend i.entity{background:var(--accent)}.network3d-v12-legend i.wallet{background:#657786}.network3d-v12-legend i.token{background:var(--green)}
+.entity-3d-panel{overflow:hidden}.entity-3d-panel>.panel-head{border-bottom:1px solid var(--line)}.entity-3d-panel>.panel-head>span{color:var(--muted);font-size:12px}.entity-3d-network .network3d-v12-shell{height:390px}
+@media(max-width:720px){.network3d-v12-shell{height:410px}.entity-3d-network .network3d-v12-shell{height:365px}.network3d-v12-help{font-size:9px}.network3d-v12-legend{gap:16px;font-size:9px}}
+@media(max-width:420px){.network3d-v12-shell{height:390px}.entity-3d-network .network3d-v12-shell{height:350px}.network3d-v12-legend{gap:14px}}
+/* === NETWORK FLAT V14 END === */

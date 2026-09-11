@@ -9,10 +9,76 @@ import { resolveWalletAvatar } from './src/adapters/pump-profile.mjs';
 import { syncCopyGroup } from './src/adapters/copy-trading.mjs';
 import { providerHealth } from './src/adapters/intelligence.mjs';
 import { createLiveIntelligence } from './src/live-intelligence.mjs';
+import { getTokenMarket } from './src/adapters/token-market.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MIME = { '.html':'text/html; charset=utf-8', '.css':'text/css; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.svg':'image/svg+xml', '.png':'image/png', '.ico':'image/x-icon' };
+
+// === TOKEN PNL V13 START ===
+const WSOL_MINT = 'So11111111111111111111111111111111111111112';
+let solUsdCache = { value:0, at:0 };
+async function currentSolUsd(){
+  const now=Date.now();
+  if(solUsdCache.value>0 && now-solUsdCache.at<120000) return solUsdCache.value;
+  try{
+    const market=await Promise.race([
+      getTokenMarket(WSOL_MINT),
+      new Promise(resolve=>setTimeout(()=>resolve(null),2500))
+    ]);
+    const price=Number(market?.priceUsd||0);
+    if(Number.isFinite(price) && price>0) solUsdCache={value:price,at:now};
+  }catch{}
+  return solUsdCache.value||0;
+}
+function entityTokenPnlRows(db,entityId,limit=12,solUsd=0){
+  const rows=db.prepare(`
+    SELECT t.*,MAX(a.block_time) AS lastActivity,
+      SUM(CASE WHEN a.type IN ('buy','swap') AND ABS(COALESCE(a.sol_amount,0))>0 THEN ABS(COALESCE(a.token_amount,0)) ELSE 0 END) AS buyTokens,
+      SUM(CASE WHEN a.type='sell' AND ABS(COALESCE(a.sol_amount,0))>0 THEN ABS(COALESCE(a.token_amount,0)) ELSE 0 END) AS sellTokens,
+      SUM(CASE WHEN a.type IN ('buy','swap') AND ABS(COALESCE(a.sol_amount,0))>0 THEN ABS(COALESCE(a.sol_amount,0)) ELSE 0 END) AS buySol,
+      SUM(CASE WHEN a.type='sell' AND ABS(COALESCE(a.sol_amount,0))>0 THEN ABS(COALESCE(a.sol_amount,0)) ELSE 0 END) AS sellSol
+    FROM tokens t
+    JOIN wallet_activity a ON a.mint=t.mint
+    WHERE a.entity_id=?
+    GROUP BY t.id
+    ORDER BY lastActivity DESC
+    LIMIT ?
+  `).all(entityId,limit);
+  return rows.map(row=>{
+    const buyTokens=Math.abs(Number(row.buyTokens||0));
+    const sellTokens=Math.abs(Number(row.sellTokens||0));
+    const buySol=Math.abs(Number(row.buySol||0));
+    const sellSol=Math.abs(Number(row.sellSol||0));
+    const currentPriceUsd=Math.max(0,Number(row.price_usd||0));
+    const matchedSold=Math.min(buyTokens,sellTokens);
+    const avgBuySolPerToken=buyTokens>0?buySol/buyTokens:0;
+    const matchedSellSol=sellTokens>0?sellSol*(matchedSold/sellTokens):0;
+    const realizedCostSol=matchedSold*avgBuySolPerToken;
+    const realizedPnlSol=matchedSellSol-realizedCostSol;
+    const remainingKnown=Math.max(0,buyTokens-matchedSold);
+    const basisUsd=buySol*solUsd;
+    const realizedPnlUsd=realizedPnlSol*solUsd;
+    const unrealizedValueUsd=remainingKnown*currentPriceUsd;
+    const unrealizedCostUsd=remainingKnown*avgBuySolPerToken*solUsd;
+    const unrealizedPnlUsd=unrealizedValueUsd-unrealizedCostUsd;
+    const canValueOpen=remainingKnown<=1e-12 || currentPriceUsd>0;
+    const pnlKnown=solUsd>0 && buySol>0 && buyTokens>0 && canValueOpen;
+    const pnlUsd=pnlKnown?realizedPnlUsd+unrealizedPnlUsd:null;
+    const pnlPercent=pnlKnown && basisUsd>0?(pnlUsd/basisUsd)*100:null;
+    return {...row,
+      pnlKnown,
+      pnlUsd:pnlKnown?Number(pnlUsd.toFixed(2)):null,
+      pnlPercent:pnlKnown?Number(pnlPercent.toFixed(2)):null,
+      realizedPnlUsd:pnlKnown?Number(realizedPnlUsd.toFixed(2)):null,
+      unrealizedPnlUsd:pnlKnown?Number(unrealizedPnlUsd.toFixed(2)):null,
+      positionTokens:remainingKnown,
+      costBasisUsd:pnlKnown?Number(basisUsd.toFixed(2)):null,
+      solUsd:pnlKnown?Number(solUsd.toFixed(4)):null
+    };
+  });
+}
+// === TOKEN PNL V13 END ===
 
 function userFor(req, db) {
   return getUserFromSession(db, parseCookies(req).si_session);
@@ -117,7 +183,8 @@ async function api(req, res, db, url, live) {
     const wallets = db.prepare('SELECT COUNT(*) AS n FROM wallets').get().n;
     const entities=entityRows(db); const selected=entities[0]||null;
     const selectedWallets=selected?db.prepare('SELECT * FROM wallets WHERE entity_id=? ORDER BY created_at').all(selected.id):[];
-    const selectedTokens=selected?db.prepare(`SELECT t.*,MAX(a.block_time) AS lastActivity FROM tokens t JOIN wallet_activity a ON a.mint=t.mint WHERE a.entity_id=? GROUP BY t.id ORDER BY lastActivity DESC LIMIT 8`).all(selected.id):[];
+    const solUsd=selected?await currentSolUsd():0;
+    const selectedTokens=selected?entityTokenPnlRows(db,selected.id,8,solUsd):[];
     return json(res,200,{ stats:{trackedEntities:tracked,activeAlerts:alerts,estimatedFollowerLosses:losses,linkedWallets:wallets}, feed:feedRows(db,20), leaderboard:entities.slice(0,8), groups:groups(db), selected, selectedWallets, selectedTokens });
   }
   if (route === '/api/feed' && method === 'GET') return json(res,200,{items:feedRows(db,Math.min(Number(url.searchParams.get('limit'))||50,100))});
@@ -133,8 +200,10 @@ async function api(req, res, db, url, live) {
     const e=db.prepare('SELECT * FROM entities WHERE id=?').get(parts[2]); if(!e)return json(res,404,{error:'Entity not found'});
     const wallets=db.prepare('SELECT * FROM wallets WHERE entity_id=? ORDER BY created_at').all(e.id);
     const incidents=feedRows(db,100).filter(x=>x.entityId===e.id);
+    const solUsd=await currentSolUsd();
+    const tokens=entityTokenPnlRows(db,e.id,12,solUsd);
     const evidence=db.prepare('SELECT * FROM evidence WHERE entity_id=? ORDER BY created_at DESC').all(e.id);
-    return json(res,200,{entity:{...e,riskScore:e.risk_score,followerLosses:e.follower_losses,xHandle:e.x_handle},wallets,incidents,evidence});
+    return json(res,200,{entity:{...e,riskScore:e.risk_score,followerLosses:e.follower_losses,xHandle:e.x_handle},wallets,tokens,incidents,evidence});
   }
   if (parts[0]==='api' && parts[1]==='entities' && parts[2] && parts[3]==='wallets' && method==='POST') {
     if (!requireOwner(req,res,db)) return;

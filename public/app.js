@@ -83,6 +83,15 @@ function renderFeed(root,items){ root.innerHTML=items.length?items.map(x=>{const
 function renderFullFeed(){ renderFeed($('#fullFeed'),state.overview?.feed||[]); }
 function renderLeaderboard(){ const rows=state.overview.leaderboard; $('#leaderboard').innerHTML=`<div class="leader-head"><span>#</span><span>Entity</span><span>Risk</span><span>Cases</span><span>Losses</span></div>`+rows.map((e,i)=>`<div class="leader-row" data-entity="${e.id}"><span class="leader-num">${i+1}</span><div class="leader-identity">${avatarHtml(e,'sm')}<div><strong>${esc(e.name)}</strong><small>${esc(e.xHandle)}</small></div></div><span class="score-pill">${e.riskScore}</span><span class="leader-num">${e.incidents}</span><strong class="leader-num">${money(e.followerLosses)}</strong></div>`).join(''); $$('[data-entity]',$('#leaderboard')).forEach(el=>el.addEventListener('click',()=>entityDetailModal(el.dataset.entity))); }
 function renderSnapshot(){ const e=state.overview.selected;if(!e){$('#entitySnapshot').innerHTML='';return} const recent=state.overview.feed.filter(x=>x.entityId===e.id).slice(0,4); $('#entitySnapshot').innerHTML=`<div class="entity-snapshot"><div class="entity-top">${avatarHtml(e,'lg')}<div class="entity-top-text"><h3>${esc(e.name)} <span class="risk-tag ${riskClass(e.status,e.riskScore)}">${riskDisplay(e.riskScore)}</span></h3><p>${esc(e.xHandle)} · ${esc(e.notes||'Observed intelligence profile')}</p></div></div><div class="chips"><span class="chip">◉ ${esc(e.avatar_source||'avatar fallback')}</span><span class="chip good">● ${e.confidence}% confidence</span></div><div class="mini-metrics"><div class="mini-metric"><strong>${e.walletCount}</strong><small>Linked wallets</small></div><div class="mini-metric"><strong>${e.incidents}</strong><small>Incidents</small></div><div class="mini-metric"><strong>${money(e.followerLosses)}</strong><small>Follower losses</small></div></div><div class="entity-activity">${recent.map(x=>`<div><span>${ago(x.createdAt)} · ${esc(x.title)}</span><b class="${Number(x.value)<0?'value neg':'value pos'}">${x.symbol||''} ${Number(x.value||0)>0?'+':''}${x.value||''}${x.value?'%':''}</b></div>`).join('')}</div></div>`; }
+function network3dPnlMoney(value){
+  const n=Number(value||0),a=Math.abs(n),sign=n>0?'+':n<0?'-':'';
+  let body;
+  if(a>=1000000)body=`$${(a/1000000).toFixed(2)}M`;
+  else if(a>=1000)body=`$${(a/1000).toFixed(a>=100000?0:1)}K`;
+  else body=`$${a.toFixed(a<10?2:0)}`;
+  return sign+body;
+}
+
 function network3dImage(item){
   return item?.avatar||item?.image||fallbackAvatar(item?.displayName||item?.entityName||item?.name||item?.xHandle||item?.address||item?.symbol||'shadow');
 }
@@ -94,186 +103,129 @@ function createNetwork3D(root, entity, wallets, tokens){
   if(!canvas||!ctx)return;
 
   const dpr=Math.min(window.devicePixelRatio||1,2);
-  const images=new Map();
+  const images=new Map(),pointers=new Map();
   let width=1,height=1,raf=0,destroyed=false;
-  let yaw=-0.12,pitch=-0.12,targetYaw=yaw,targetPitch=pitch;
-  let dragging=false,lastX=0,lastY=0,idle=0;
+  let zoom=1,targetZoom=1,panX=0,panY=0,targetPanX=0,targetPanY=0,lastPinch=0,lastTap=0;
+  const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
+  const walletList=(wallets||[]).slice(0,10);
+  const tokenList=(tokens||[]).slice(0,12);
 
-  const walletNodes=wallets.slice(0,5).map((w,i)=>({
-    kind:'wallet', raw:w,
-    label:w.label||`${String(w.address||'Wallet').slice(0,5)}…${String(w.address||'').slice(-5)}`,
-    sub:w.sync_status||'wallet',
-    x:-185-(i%2)*34, y:(i-2)*58, z:-70+(i%3)*68,
-    color:'#657786', image:network3dImage(w)
-  }));
-  const tokenNodes=tokens.slice(0,5).map((t,i)=>({
-    kind:'token', raw:t,
-    label:t.symbol||t.name||'Token',
-    sub:t.is_pump?'Pump.fun / PumpSwap':(t.dex_id||'token'),
-    x:185+(i%2)*34, y:(i-2)*58, z:-40+((i+1)%3)*72,
-    color:'#00ba7c', image:network3dImage(t)
-  }));
-  const entityNode={
-    kind:'entity', raw:entity, label:entity.xHandle||entity.name||'Entity', sub:'tracked entity',
-    x:0,y:0,z:105,color:'#7b61ff',image:network3dImage(entity)
-  };
+  function sectorNodes(list,kind){
+    const perRing=5,side=kind==='wallet'?-1:1;
+    return list.map((raw,i)=>{
+      const ring=Math.floor(i/perRing),slot=i%perRing,total=Math.min(perRing,list.length-ring*perRing);
+      const t=total<=1?.5:slot/(total-1);
+      const angle=(kind==='wallet'?(2.08+t*2.10):(-1.04+t*2.08));
+      const radius=.98+ring*.54;
+      return {
+        kind,raw,
+        label:kind==='wallet'?(raw.label||`${String(raw.address||'Wallet').slice(0,5)}…${String(raw.address||'').slice(-5)}`):(raw.symbol||raw.name||'Token'),
+        sub:kind==='wallet'?(raw.sync_status||'wallet'):(raw.is_pump?'Pump.fun / PumpSwap':(raw.dex_id||'token')),
+        pnlKnown:kind==='token'&&!!raw.pnlKnown,pnlPercent:Number(raw.pnlPercent||0),pnlUsd:Number(raw.pnlUsd||0),
+        x:Math.cos(angle)*radius,y:Math.sin(angle)*radius*.82,z:0,
+        color:kind==='wallet'?'#657786':'#00ba7c',image:network3dImage(raw),ring
+      };
+    });
+  }
+  const walletNodes=sectorNodes(walletList,'wallet');
+  const tokenNodes=sectorNodes(tokenList,'token');
+  const entityNode={kind:'entity',raw:entity,label:entity.xHandle||entity.name||'Entity',sub:'tracked entity',x:0,y:0,z:0,color:'#7b61ff',image:network3dImage(entity),ring:0};
   const nodes=[...walletNodes,entityNode,...tokenNodes];
+  const maxRadius=Math.max(1.05,...nodes.map(n=>Math.hypot(n.x,n.y)));
+  const backgroundDots=Array.from({length:34},(_,i)=>({
+    x:((Math.sin(i*12.9898)*43758.5453)%1+1)%1,
+    y:((Math.sin((i+17)*78.233)*19642.349)%1+1)%1,
+    r:1.5+(((i*17)%7)/7)*4,
+    a:.035+((i%5)*.012)
+  }));
 
   for(const n of nodes){
-    const img=new Image();
-    img.decoding='async';
-    img.onload=()=>schedule();
-    img.onerror=()=>{};
-    img.src=n.image;
-    images.set(n,img);
+    const img=new Image();img.decoding='async';img.onload=()=>schedule();img.onerror=()=>{};img.src=n.image;images.set(n,img);
   }
 
-  const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
-  function rotate(p){
-    const cy=Math.cos(yaw),sy=Math.sin(yaw),cx=Math.cos(pitch),sx=Math.sin(pitch);
-    const x1=p.x*cy-p.z*sy;
-    const z1=p.x*sy+p.z*cy;
-    const y1=p.y*cx-z1*sx;
-    const z2=p.y*sx+z1*cx;
-    return {x:x1,y:y1,z:z2};
+  function baseScale(){
+    const horizontal=(width-112)/(maxRadius*2.08);
+    const vertical=(height-132)/(maxRadius*1.80);
+    return Math.max(52,Math.min(horizontal,vertical));
   }
-  function project(p){
-    const r=rotate(p);
-    const camera=650;
-    const depth=camera-r.z;
-    const scale=clamp(camera/depth,.58,1.72);
-    return {x:width/2+r.x*scale,y:height/2+r.y*scale*.92,z:r.z,scale};
-  }
-  function line(a,b,alpha=.36){
-    const pa=project(a),pb=project(b);
-    const grad=ctx.createLinearGradient(pa.x,pa.y,pb.x,pb.y);
-    grad.addColorStop(0,`rgba(123,97,255,${alpha})`);
-    grad.addColorStop(1,`rgba(29,155,240,${alpha*.45})`);
-    ctx.strokeStyle=grad;ctx.lineWidth=Math.max(1,dpr*.55);
-    ctx.beginPath();ctx.moveTo(pa.x,pa.y);ctx.lineTo(pb.x,pb.y);ctx.stroke();
-  }
-  function drawFloor(){
-    const dark=document.documentElement.dataset.theme==='dark';
-    ctx.save();
-    ctx.lineWidth=1;
-    for(let z=-220;z<=220;z+=55){
-      const a=project({x:-285,y:178,z}),b=project({x:285,y:178,z});
-      ctx.strokeStyle=dark?'rgba(83,100,113,.12)':'rgba(83,100,113,.10)';
-      ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
-    }
-    for(let x=-275;x<=275;x+=55){
-      const a=project({x,y:178,z:-230}),b=project({x,y:178,z:230});
-      ctx.strokeStyle=dark?'rgba(83,100,113,.10)':'rgba(83,100,113,.08)';
-      ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
-    }
-    ctx.restore();
+  function project(n){
+    const scale=baseScale()*zoom;
+    return {x:width/2+n.x*scale+panX,y:height/2+7+n.y*scale+panY,scale};
   }
   function roundedRect(x,y,w,h,r){
-    const rr=Math.min(r,w/2,h/2);
-    ctx.beginPath();ctx.moveTo(x+rr,y);ctx.arcTo(x+w,y,x+w,y+h,rr);ctx.arcTo(x+w,y+h,x,y+h,rr);ctx.arcTo(x,y+h,x,y,rr);ctx.arcTo(x,y,x+w,y,rr);ctx.closePath();
+    const rr=Math.min(r,w/2,h/2);ctx.beginPath();ctx.moveTo(x+rr,y);ctx.arcTo(x+w,y,x+w,y+h,rr);ctx.arcTo(x+w,y+h,x,y+h,rr);ctx.arcTo(x,y+h,x,y,rr);ctx.arcTo(x,y,x+w,y,rr);ctx.closePath();
+  }
+  function drawBackground(){
+    const dark=document.documentElement.dataset.theme==='dark';
+    ctx.save();
+    for(const d of backgroundDots){
+      const x=d.x*width,y=d.y*height;
+      ctx.fillStyle=dark?`rgba(29,155,240,${d.a})`:`rgba(29,155,240,${d.a*.7})`;
+      ctx.beginPath();ctx.arc(x,y,d.r*zoom*.72,0,Math.PI*2);ctx.fill();
+    }
+    ctx.restore();
+  }
+  function drawLine(n){
+    const a=project(entityNode),b=project(n),token=n.kind==='token';
+    const grad=ctx.createLinearGradient(a.x,a.y,b.x,b.y);
+    grad.addColorStop(0,'rgba(123,97,255,.58)');
+    grad.addColorStop(1,token?'rgba(0,186,124,.55)':'rgba(101,119,134,.48)');
+    ctx.strokeStyle=grad;ctx.lineWidth=clamp(1.15*zoom,.85,1.8);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+    const mx=a.x+(b.x-a.x)*.58,my=a.y+(b.y-a.y)*.58;
+    ctx.fillStyle=token?'rgba(0,186,124,.82)':'rgba(101,119,134,.72)';ctx.beginPath();ctx.arc(mx,my,clamp(2.1*zoom,1.4,3.4),0,Math.PI*2);ctx.fill();
   }
   function drawNode(n){
-    const p=project(n);
-    const dark=document.documentElement.dataset.theme==='dark';
-    const base=n.kind==='entity'?39:28;
-    const r=base*p.scale;
-    const x=p.x,y=p.y;
-
+    const p=project(n),dark=document.documentElement.dataset.theme==='dark';
+    const base=n.kind==='entity'?43:n.kind==='wallet'?26:27;
+    const r=clamp(base*zoom,n.kind==='entity'?31:18,n.kind==='entity'?58:38),x=p.x,y=p.y;
     ctx.save();
-    const shadow=ctx.createRadialGradient(x+r*.18,y+r*.22,r*.12,x,y,r*1.38);
-    shadow.addColorStop(0,n.kind==='entity'?'rgba(123,97,255,.34)':n.kind==='token'?'rgba(0,186,124,.22)':'rgba(101,119,134,.20)');
-    shadow.addColorStop(1,'rgba(0,0,0,0)');
-    ctx.fillStyle=shadow;ctx.beginPath();ctx.arc(x,y,r*1.42,0,Math.PI*2);ctx.fill();
-
-    const sphere=ctx.createRadialGradient(x-r*.35,y-r*.42,r*.06,x,y,r*1.05);
-    sphere.addColorStop(0,'rgba(255,255,255,.95)');
-    sphere.addColorStop(.12,n.color);
-    sphere.addColorStop(.72,dark?'#0f1419':'#cfd9de');
-    sphere.addColorStop(1,'#050607');
-    ctx.fillStyle=sphere;ctx.beginPath();ctx.arc(x,y,r+4,0,Math.PI*2);ctx.fill();
-
-    ctx.save();ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.clip();
-    const img=images.get(n);
-    if(img?.complete&&img.naturalWidth){ctx.drawImage(img,x-r,y-r,r*2,r*2)}
-    else{ctx.fillStyle=n.color;ctx.fillRect(x-r,y-r,r*2,r*2)}
-    const gloss=ctx.createLinearGradient(x-r,y-r,x+r,y+r);
-    gloss.addColorStop(0,'rgba(255,255,255,.24)');gloss.addColorStop(.42,'rgba(255,255,255,0)');gloss.addColorStop(1,'rgba(0,0,0,.22)');
-    ctx.fillStyle=gloss;ctx.fillRect(x-r,y-r,r*2,r*2);ctx.restore();
-
-    ctx.lineWidth=n.kind==='entity'?2:1.25;
-    ctx.strokeStyle=n.kind==='entity'?'rgba(123,97,255,.98)':n.kind==='token'?'rgba(0,186,124,.88)':'rgba(101,119,134,.9)';
-    ctx.beginPath();ctx.arc(x,y,r+4,0,Math.PI*2);ctx.stroke();
-
-    const labelY=y+r+15;
-    ctx.font=`${n.kind==='entity'?700:650} ${Math.max(10,12*p.scale)}px Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
-    ctx.textAlign='center';ctx.textBaseline='middle';
-    const label=String(n.label||'');
-    const maxW=Math.min(150,width*.3);
-    let shown=label;
-    while(shown.length>5&&ctx.measureText(shown).width>maxW)shown=shown.slice(0,-2)+'…';
-    ctx.fillStyle=dark?'#e7e9ea':'#0f1419';ctx.fillText(shown,x,labelY);
-    ctx.font=`500 ${Math.max(8,9.5*p.scale)}px Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
-    ctx.fillStyle=dark?'#71767b':'#536471';ctx.fillText(String(n.sub||''),x,labelY+15);
+    const glowColor=n.kind==='entity'?'123,97,255':n.kind==='token'?'0,186,124':'101,119,134';
+    const glow=ctx.createRadialGradient(x,y,r*.55,x,y,r*1.72);glow.addColorStop(0,`rgba(${glowColor},.18)`);glow.addColorStop(1,`rgba(${glowColor},0)`);ctx.fillStyle=glow;ctx.beginPath();ctx.arc(x,y,r*1.7,0,Math.PI*2);ctx.fill();
+    const sphere=ctx.createRadialGradient(x-r*.34,y-r*.38,r*.08,x,y,r*1.08);sphere.addColorStop(0,'rgba(255,255,255,.92)');sphere.addColorStop(.18,n.color);sphere.addColorStop(.72,dark?'#111820':'#d9e3ea');sphere.addColorStop(1,'#030507');ctx.fillStyle=sphere;ctx.beginPath();ctx.arc(x,y,r+4,0,Math.PI*2);ctx.fill();
+    ctx.save();ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.clip();const img=images.get(n);if(img?.complete&&img.naturalWidth)ctx.drawImage(img,x-r,y-r,r*2,r*2);else{ctx.fillStyle=n.color;ctx.fillRect(x-r,y-r,r*2,r*2)}const gloss=ctx.createLinearGradient(x-r,y-r,x+r,y+r);gloss.addColorStop(0,'rgba(255,255,255,.22)');gloss.addColorStop(.48,'rgba(255,255,255,0)');gloss.addColorStop(1,'rgba(0,0,0,.24)');ctx.fillStyle=gloss;ctx.fillRect(x-r,y-r,r*2,r*2);ctx.restore();
+    ctx.lineWidth=n.kind==='entity'?2.4:1.5;ctx.strokeStyle=n.kind==='entity'?'rgba(123,97,255,.98)':n.kind==='token'?'rgba(0,186,124,.95)':'rgba(101,119,134,.95)';ctx.beginPath();ctx.arc(x,y,r+4,0,Math.PI*2);ctx.stroke();
+    const labelX=clamp(x,58,width-58),labelY=y+r+15,maxW=Math.min(116,width*.29),fontScale=clamp(.92+((zoom-1)*.28),.82,1.16);
+    ctx.textAlign='center';ctx.textBaseline='middle';ctx.font=`${n.kind==='entity'?750:680} ${(n.kind==='entity'?14:11)*fontScale}px Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;let shown=String(n.label||'');while(shown.length>5&&ctx.measureText(shown).width>maxW)shown=shown.slice(0,-2)+'…';ctx.fillStyle=dark?'#e7e9ea':'#0f1419';ctx.fillText(shown,labelX,labelY);
+    if(n.kind==='token'){
+      if(n.pnlKnown){
+        const positive=n.pnlUsd>=0,pnlColor=positive?'#00ba7c':'#f91880',pct=`${n.pnlPercent>0?'+':''}${n.pnlPercent.toFixed(2)}%`;
+        ctx.font=`700 ${10*fontScale}px Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;ctx.fillStyle=pnlColor;ctx.fillText(pct,labelX,labelY+14*fontScale);
+        ctx.font=`650 ${9*fontScale}px Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;ctx.fillText(network3dPnlMoney(n.pnlUsd),labelX,labelY+27*fontScale);
+      }else{ctx.font=`600 ${9*fontScale}px Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;ctx.fillStyle=dark?'#71767b':'#536471';ctx.fillText('P&L —',labelX,labelY+16*fontScale)}
+    }else{ctx.font=`500 ${9*fontScale}px Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;ctx.fillStyle=dark?'#71767b':'#536471';ctx.fillText(String(n.sub||''),labelX,labelY+14*fontScale)}
     ctx.restore();
   }
-  function drawLaneLabel(text,x,color,count){
-    const dark=document.documentElement.dataset.theme==='dark';
-    ctx.save();
-    const y=28,w=122,h=31;
-    roundedRect(x-w/2,y-h/2,w,h,16);
-    ctx.fillStyle=dark?'rgba(22,24,28,.86)':'rgba(247,249,249,.94)';ctx.fill();
-    ctx.strokeStyle=dark?'rgba(47,51,54,.95)':'rgba(207,217,222,.95)';ctx.lineWidth=1;ctx.stroke();
-    ctx.fillStyle=color;ctx.beginPath();ctx.arc(x-w/2+16,y,4,0,Math.PI*2);ctx.fill();
-    ctx.textAlign='left';ctx.textBaseline='middle';ctx.font='700 11px Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';ctx.fillStyle=dark?'#e7e9ea':'#0f1419';ctx.fillText(text,x-w/2+27,y);
-    ctx.textAlign='right';ctx.fillStyle=dark?'#71767b':'#536471';ctx.font='600 10px Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';ctx.fillText(String(count),x+w/2-12,y);
-    ctx.restore();
+  function lane(text,x,color,count){
+    const dark=document.documentElement.dataset.theme==='dark',w=122,h=32,y=27;ctx.save();roundedRect(x-w/2,y-h/2,w,h,16);ctx.fillStyle=dark?'rgba(22,24,28,.90)':'rgba(247,249,249,.96)';ctx.fill();ctx.strokeStyle=dark?'#2f3336':'#cfd9de';ctx.lineWidth=1;ctx.stroke();ctx.fillStyle=color;ctx.beginPath();ctx.arc(x-w/2+16,y,4,0,Math.PI*2);ctx.fill();ctx.font='700 11px Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';ctx.textBaseline='middle';ctx.textAlign='left';ctx.fillStyle=dark?'#e7e9ea':'#0f1419';ctx.fillText(text,x-w/2+28,y);ctx.textAlign='right';ctx.fillStyle=dark?'#71767b':'#536471';ctx.font='600 10px Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';ctx.fillText(String(count),x+w/2-12,y);ctx.restore();
   }
   function render(){
     raf=0;if(destroyed)return;
-    yaw+=(targetYaw-yaw)*.13;pitch+=(targetPitch-pitch)*.13;
-    ctx.clearRect(0,0,width,height);
-    drawFloor();
-    for(const w of walletNodes)line(entityNode,w,.42);
-    for(const t of tokenNodes)line(entityNode,t,.42);
-    [...nodes].sort((a,b)=>rotate(a).z-rotate(b).z).forEach(drawNode);
-    drawLaneLabel('WALLETS',Math.max(78,width*.18),'#657786',wallets.length);
-    drawLaneLabel('TOKENS',Math.min(width-78,width*.82),'#00ba7c',tokens.length);
-    if(Math.abs(targetYaw-yaw)>.001||Math.abs(targetPitch-pitch)>.001)schedule();
+    zoom+=(targetZoom-zoom)*.18;panX+=(targetPanX-panX)*.20;panY+=(targetPanY-panY)*.20;
+    ctx.clearRect(0,0,width,height);drawBackground();
+    for(const w of walletNodes)drawLine(w);for(const t of tokenNodes)drawLine(t);
+    [...walletNodes,...tokenNodes,entityNode].forEach(drawNode);
+    lane('WALLETS',Math.max(70,width*.19),'#657786',wallets?.length||0);lane('TOKENS',Math.min(width-70,width*.81),'#00ba7c',tokens?.length||0);
+    if(Math.abs(targetZoom-zoom)>.001||Math.abs(targetPanX-panX)>.08||Math.abs(targetPanY-panY)>.08)schedule();
   }
   function schedule(){if(!raf&&!destroyed)raf=requestAnimationFrame(render)}
-  function resize(){
-    const r=canvas.getBoundingClientRect();width=Math.max(1,Math.round(r.width));height=Math.max(1,Math.round(r.height));
-    canvas.width=Math.max(1,Math.round(width*dpr));canvas.height=Math.max(1,Math.round(height*dpr));
-    ctx.setTransform(dpr,0,0,dpr,0,0);schedule();
-  }
+  function resize(){const r=canvas.getBoundingClientRect();width=Math.max(1,Math.round(r.width));height=Math.max(1,Math.round(r.height));canvas.width=Math.max(1,Math.round(width*dpr));canvas.height=Math.max(1,Math.round(height*dpr));ctx.setTransform(dpr,0,0,dpr,0,0);targetPanX=panX=0;targetPanY=panY=0;targetZoom=zoom=1;schedule()}
   const ro=new ResizeObserver(resize);ro.observe(canvas);resize();
-
-  function down(ev){dragging=true;lastX=ev.clientX;lastY=ev.clientY;idle=0;canvas.setPointerCapture?.(ev.pointerId);canvas.classList.add('is-dragging')}
-  function move(ev){if(!dragging)return;const dx=ev.clientX-lastX,dy=ev.clientY-lastY;lastX=ev.clientX;lastY=ev.clientY;targetYaw=clamp(targetYaw+dx*.006,-.72,.72);targetPitch=clamp(targetPitch+dy*.004,-.42,.32);schedule()}
-  function up(ev){dragging=false;canvas.releasePointerCapture?.(ev.pointerId);canvas.classList.remove('is-dragging')}
-  canvas.addEventListener('pointerdown',down);canvas.addEventListener('pointermove',move);canvas.addEventListener('pointerup',up);canvas.addEventListener('pointercancel',up);
-
-  root._network3dController={destroy(){destroyed=true;cancelAnimationFrame(raf);ro.disconnect();canvas.removeEventListener('pointerdown',down);canvas.removeEventListener('pointermove',move);canvas.removeEventListener('pointerup',up);canvas.removeEventListener('pointercancel',up)}};
+  function pinchDistance(){const a=[...pointers.values()];if(a.length<2)return 0;return Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y)}
+  function down(ev){pointers.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});canvas.setPointerCapture?.(ev.pointerId);if(pointers.size===2)lastPinch=pinchDistance();canvas.classList.add('is-dragging')}
+  function move(ev){const old=pointers.get(ev.pointerId);if(!old)return;pointers.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});if(pointers.size>=2){const d=pinchDistance();if(lastPinch>0)targetZoom=clamp(targetZoom*(d/lastPinch),.72,2.15);lastPinch=d;schedule();return}const dx=ev.clientX-old.x,dy=ev.clientY-old.y;const maxX=width*.58*Math.max(0,targetZoom-.78),maxY=height*.52*Math.max(0,targetZoom-.78);targetPanX=clamp(targetPanX+dx,-maxX,maxX);targetPanY=clamp(targetPanY+dy,-maxY,maxY);schedule()}
+  function up(ev){pointers.delete(ev.pointerId);if(pointers.size<2)lastPinch=0;if(!pointers.size)canvas.classList.remove('is-dragging');canvas.releasePointerCapture?.(ev.pointerId)}
+  function wheel(ev){ev.preventDefault();targetZoom=clamp(targetZoom*(ev.deltaY>0?.92:1.08),.72,2.15);schedule()}
+  function reset(){targetZoom=1;targetPanX=0;targetPanY=0;schedule()}
+  function tap(){const now=Date.now();if(now-lastTap<320)reset();lastTap=now}
+  canvas.addEventListener('pointerdown',down);canvas.addEventListener('pointermove',move);canvas.addEventListener('pointerup',up);canvas.addEventListener('pointercancel',up);canvas.addEventListener('wheel',wheel,{passive:false});canvas.addEventListener('click',tap);
+  root._network3dController={destroy(){destroyed=true;cancelAnimationFrame(raf);ro.disconnect();canvas.removeEventListener('pointerdown',down);canvas.removeEventListener('pointermove',move);canvas.removeEventListener('pointerup',up);canvas.removeEventListener('pointercancel',up);canvas.removeEventListener('wheel',wheel);canvas.removeEventListener('click',tap);pointers.clear()}};
 }
 
 function renderNetwork(){
-  const root=$('#walletNetwork');
-  const panel=root?.closest('.network-panel');
-  const caption=panel?.querySelector('.panel-head>span');
-  if(caption)caption.textContent='Wallets · 3D Entity Graph · Tokens';
-  const e=state.overview.selected;
-  if(!e){
-    if(root?._network3dController)root._network3dController.destroy();
-    root.innerHTML='<div class="guest-note">Add a tracked entity and wallet to build the network.</div>';
-    return;
-  }
-  const wallets=state.overview.selectedWallets||[];
-  const tokens=state.overview.selectedTokens||[];
-  root.innerHTML=`<div class="network3d-v10-shell">
-    <canvas class="network3d-canvas" aria-label="Interactive 3D wallet and token network"></canvas>
-    <div class="network3d-v10-help">Drag to rotate</div>
-  </div>
-  <div class="network3d-v10-legend"><span><i class="entity"></i>Entity</span><span><i class="wallet"></i>Wallets</span><span><i class="token"></i>Tokens</span></div>`;
+  const root=$('#walletNetwork'),panel=root?.closest('.network-panel'),caption=panel?.querySelector('.panel-head>span');if(caption)caption.textContent='Wallets · Entity · Tokens';const e=state.overview.selected;
+  if(!e){if(root?._network3dController)root._network3dController.destroy();root.innerHTML='<div class="guest-note">Add a tracked entity and wallet to build the network.</div>';return}
+  const wallets=state.overview.selectedWallets||[],tokens=state.overview.selectedTokens||[];
+  root.innerHTML=`<div class="network3d-v12-shell"><canvas class="network3d-canvas" aria-label="Flat wallet and token network"></canvas><div class="network3d-v12-help">Drag to pan · pinch to zoom · flat view</div></div><div class="network3d-v12-legend"><span><i class="entity"></i>Entity</span><span><i class="wallet"></i>Wallets</span><span><i class="token"></i>Tokens</span></div>`;
   createNetwork3D(root,e,wallets,tokens);
 }
 
@@ -331,16 +283,17 @@ async function loadSettings(){try{const s=await api('/api/settings');$('#setPlat
 async function saveSettings(e){e.preventDefault();try{const s=await api('/api/settings',{method:'PATCH',body:JSON.stringify({platform_name:$('#setPlatformName').value,registration_enabled:$('#setRegistration').checked,community_chat_enabled:$('#setChat').checked,copy_trading_enabled:$('#setCopy').checked,risk_high_threshold:$('#setRiskThreshold').value,demo_mode:$('#setDemo').checked,live_monitor_enabled:$('#setLiveMonitor').checked,live_poll_seconds:$('#setPollSeconds').value,wallet_history_limit:$('#setHistoryLimit').value,x_monitor_enabled:$('#setXMonitor').checked})});applyPlatformName(s.platform_name);toast('Owner settings saved');loadSettings()}catch(err){toast(err.message)}}
 
 function modal(html){$('#modalBody').innerHTML=html;$('#modal').classList.remove('hidden')}
-function closeModal(){$('#modal').classList.add('hidden');$('#modalBody').innerHTML=''}
+function closeModal(){const n=$('#entity3dNetwork');if(n?._network3dController)n._network3dController.destroy();$('#modal').classList.add('hidden');$('#modalBody').innerHTML=''}
 function authModal(mode='login'){const login=mode==='login';modal(`<h2>${login?'Welcome back':'Create account'}</h2><p>${login?'Sign in to chat, message users and manage your profile.':'A standard email account. The first account becomes owner if no owner is configured in Secrets.'}</p><form id="authForm" class="modal-form">${login?'':'<label>Display name<input name="displayName" maxlength="60" required></label>'}<label>Email<input name="email" type="email" required></label><label>Password<input name="password" type="password" minlength="8" required></label><button class="primary">${login?'Sign in':'Create account'}</button><button class="secondary" type="button" id="authSwitch">${login?'Create an account':'Already have an account'}</button></form>`);$('#authSwitch').onclick=()=>authModal(login?'register':'login');$('#authForm').onsubmit=async e=>{e.preventDefault();const b=Object.fromEntries(new FormData(e.target));try{const d=await api(`/api/auth/${login?'login':'register'}`,{method:'POST',body:JSON.stringify(b)});state.user=d.user;setAuthUI();closeModal();toast(`Signed in as ${state.user.displayName}`);refreshOverview()}catch(err){toast(err.message)}};}
 function entityModal(){modal(`<h2>Add tracked entity</h2><p>Create the X/person profile once, then attach as many wallets as needed. You can upload the real avatar now; otherwise the initial wallet will resolve a configured profile image or generate a deterministic fallback.</p><form id="entityForm" class="modal-form"><label>Name / alias<input name="name" required placeholder="moondev"></label><label>X handle<input name="xHandle" placeholder="@moondev"></label><label>Avatar (optional)<input id="entityAvatarFile" type="file" accept="image/*"></label><div class="split"><label>Risk score<input name="riskScore" type="number" min="0" max="100" value="0"></label><label>Confidence<input name="confidence" type="number" min="0" max="100" value="50"></label></div><label>Initial wallet (optional)<input name="wallet" placeholder="Solana wallet address"></label><label>Notes<textarea name="notes" rows="3" placeholder="Observed pattern, source, context…"></textarea></label><button class="primary">Create entity</button></form>`);let entityAvatar='';$('#entityAvatarFile').onchange=e=>{const f=e.target.files?.[0];if(!f)return;if(f.size>1_050_000){toast('Please use an image under about 1 MB');e.target.value='';return}const r=new FileReader();r.onload=()=>entityAvatar=r.result;r.readAsDataURL(f)};$('#entityForm').onsubmit=async e=>{e.preventDefault();const b=Object.fromEntries(new FormData(e.target));b.avatar=entityAvatar;try{const ent=await api('/api/entities',{method:'POST',body:JSON.stringify(b)});if(b.wallet)await api(`/api/entities/${ent.id}/wallets`,{method:'POST',body:JSON.stringify({address:b.wallet,label:'Main wallet'})});closeModal();toast('Entity created');await refreshOverview();loadEntities()}catch(err){toast(err.message)}};}
 async function entityDetailModal(entityId){
   try{
     const d=await api(`/api/entities/${entityId}`);const e=d.entity;
-    modal(`<h2>${esc(e.name)} <span class="risk-tag ${riskClass(e.status,e.riskScore)}">${riskDisplay(e.riskScore)}</span></h2><p>${esc(e.xHandle||'')} · ${e.confidence}% identity confidence · ${d.wallets.length} linked wallets</p><div class="entity-top" style="margin:14px 0">${avatarHtml(e,'xl')}<div><strong>${esc(e.notes||'Monitoring profile')}</strong><div class="chips"><span class="chip">Avatar: ${esc(e.avatar_source||'manual')}</span><span class="chip good">● Live intelligence</span></div></div></div><div class="modal-actions owner-only"><button class="primary" id="syncEntityNow">↻ Sync wallet + X now</button></div><div class="panel" style="box-shadow:none;margin:12px 0"><div class="panel-head"><h2>Linked wallets</h2></div><div class="copy-list">${d.wallets.map(w=>`<div class="copy-row">${avatarHtml(w,'sm')}<strong>${esc(w.address.slice(0,8))}…${esc(w.address.slice(-6))}</strong><span class="muted">${esc(w.label||'Wallet')} · ${esc(w.sync_status||'pending')} ${w.last_scanned_at?'· '+ago(w.last_scanned_at)+' ago':''}</span><button class="secondary small owner-only" data-detail-sync="${w.id}">Sync</button></div>`).join('')||'<div class="guest-note">No wallets yet.</div>'}</div></div><div class="panel" style="box-shadow:none;margin:12px 0"><div class="panel-head"><h2>Recent observed activity</h2></div><div class="entity-activity">${d.incidents.slice(0,12).map(x=>`<div><span>${ago(x.createdAt)} · ${esc(x.title)}</span><b class="${Number(x.value)<0?'value neg':'value pos'}">${esc(x.symbol||'')}</b></div>`).join('')||'<div class="guest-note">No activity yet. Press Sync now.</div>'}</div></div>${document.body.classList.contains('is-owner')?`<form id="walletAddForm" class="modal-form"><label>Add another wallet<input name="address" required placeholder="Solana wallet address"></label><label>Label<input name="label" placeholder="Secondary wallet"></label><button class="primary">Add wallet + start monitoring</button></form>`:''}`);
+    modal(`<h2>${esc(e.name)} <span class="risk-tag ${riskClass(e.status,e.riskScore)}">${riskDisplay(e.riskScore)}</span></h2><p>${esc(e.xHandle||'')} · ${e.confidence}% identity confidence · ${d.wallets.length} linked wallets</p><div class="entity-top" style="margin:14px 0">${avatarHtml(e,'xl')}<div><strong>${esc(e.notes||'Monitoring profile')}</strong><div class="chips"><span class="chip">Avatar: ${esc(e.avatar_source||'manual')}</span><span class="chip good">● Live intelligence</span></div></div></div><div class="modal-actions owner-only"><button class="primary" id="syncEntityNow">↻ Sync wallet + X now</button></div><div class="panel" style="box-shadow:none;margin:12px 0"><div class="panel-head"><h2>Linked wallets</h2></div><div class="copy-list">${d.wallets.map(w=>`<div class="copy-row">${avatarHtml(w,'sm')}<strong>${esc(w.address.slice(0,8))}…${esc(w.address.slice(-6))}</strong><span class="muted">${esc(w.label||'Wallet')} · ${esc(w.sync_status||'pending')} ${w.last_scanned_at?'· '+ago(w.last_scanned_at)+' ago':''}</span><button class="secondary small owner-only" data-detail-sync="${w.id}">Sync</button></div>`).join('')||'<div class="guest-note">No wallets yet.</div>'}</div></div><div class="panel entity-3d-panel" style="box-shadow:none;margin:12px 0"><div class="panel-head"><h2>Network</h2><span>Wallets · Entity · Tokens</span></div><div id="entity3dNetwork" class="entity-3d-network"><div class="network3d-v12-shell"><canvas class="network3d-canvas" aria-label="Flat entity wallet and token network"></canvas><div class="network3d-v12-help">Drag to pan · pinch to zoom · flat view</div></div><div class="network3d-v12-legend"><span><i class="entity"></i>Entity</span><span><i class="wallet"></i>Wallets</span><span><i class="token"></i>Tokens</span></div></div></div><div class="panel" style="box-shadow:none;margin:12px 0"><div class="panel-head"><h2>Recent observed activity</h2></div><div class="entity-activity">${d.incidents.slice(0,12).map(x=>`<div><span>${ago(x.createdAt)} · ${esc(x.title)}</span><b class="${Number(x.value)<0?'value neg':'value pos'}">${esc(x.symbol||'')}</b></div>`).join('')||'<div class="guest-note">No activity yet. Press Sync now.</div>'}</div></div>${document.body.classList.contains('is-owner')?`<form id="walletAddForm" class="modal-form"><label>Add another wallet<input name="address" required placeholder="Solana wallet address"></label><label>Label<input name="label" placeholder="Secondary wallet"></label><button class="primary">Add wallet + start monitoring</button></form>`:''}`);
+    const detail3d=$('#entity3dNetwork');if(detail3d)requestAnimationFrame(()=>createNetwork3D(detail3d,e,d.wallets||[],d.tokens||[]));
     const syncEntity=$('#syncEntityNow'); if(syncEntity)syncEntity.onclick=async()=>{syncEntity.disabled=true;syncEntity.textContent='Syncing…';try{const r=await api(`/api/entities/${entityId}/sync`,{method:'POST',body:'{}'});const n=r.wallets?.reduce((a,x)=>a+(x.newActivity||0),0)||0;toast(`Live sync complete · ${n} new activity${r.x?.configured?' · X checked':''}`);await refreshOverview();entityDetailModal(entityId)}catch(err){toast(err.message)}finally{syncEntity.disabled=false}};
     $$('[data-detail-sync]').forEach(b=>b.onclick=async()=>{b.disabled=true;b.textContent='…';try{const r=await api(`/api/wallets/${b.dataset.detailSync}/sync`,{method:'POST',body:'{}'});toast(`Synced · ${r.newActivity} new activity`);await refreshOverview();entityDetailModal(entityId)}catch(err){toast(err.message)}});
-    if($('#walletAddForm'))$('#walletAddForm').onsubmit=async ev=>{ev.preventDefault();const b=Object.fromEntries(new FormData(ev.target));try{const r=await api(`/api/entities/${entityId}/wallets`,{method:'POST',body:JSON.stringify(b)});toast(`Wallet added · monitoring started`);entityDetailModal(entityId);refreshOverview()}catch(err){toast(err.message)}};
+    if($('#walletAddForm'))$('#walletAddForm').onsubmit=async ev=>{ev.preventDefault();const b=Object.fromEntries(new FormData(ev.target));try{await api(`/api/entities/${entityId}/wallets`,{method:'POST',body:JSON.stringify(b)});toast('Wallet added · monitoring started');await refreshOverview();entityDetailModal(entityId)}catch(err){toast(err.message)}};
   }catch(e){toast(e.message)}
 }
 
