@@ -1,135 +1,152 @@
-# Shadow Intelligence — Replit-ready MVP
+# Shadow Intelligence — Live Intelligence v0.4
 
-A clean, dependency-light starter for an on-chain intelligence + reputation + multi-wallet copy-trading product. It is intentionally structured so the public product UI does **not** have to be rewritten when the existing trading engine and live providers are connected later.
+A Replit-ready Solana/Pump.fun intelligence application with entity profiles, multi-wallet tracking, live activity, evidence, optional X monitoring, community chat, private messages, owner controls, and a copy-trading adapter.
 
-![Design reference](docs/reference-design.png)
+## What changed in v0.4
 
-## What is already implemented
+This release replaces the original demo intelligence feed with a real data pipeline while preserving existing users, real entities, wallets, avatars, chat, evidence, and settings.
 
-- Light theme: white base, subtle gray surfaces, thin separators.
-- Dark theme: black base, near-black surfaces, restrained borders.
-- Responsive desktop/mobile single-page UI.
-- Overview with live incident feed, risk leaderboard, entity snapshot, wallet graph, evidence, copy groups and compact community chat.
-- Entity model: one public identity/X account → many wallets → tokens/incidents/evidence.
-- Wallet avatar resolver with three paths: external profile adapter, manual avatar at entity/profile level, deterministic generated fallback.
-- Email/password registration and sign-in using Node `scrypt` hashing and HttpOnly cookie sessions.
-- User avatar upload, display name, X handle and short bio.
-- One community chat room plus simple private direct messages.
-- Owner/admin-only platform settings.
-- Multi-wallet Copy Groups with `copy`, `watch`, and `inverse` modes.
-- Copy-engine adapter: local simulation until `COPY_ENGINE_URL` is configured.
-- Evidence uploads (small screenshots), source URLs and notes.
-- SQLite persistence using Node 22's built-in `node:sqlite`, so there are no npm runtime dependencies.
-- Demo intelligence data so the intended design is visible immediately.
+### Live wallet monitoring
 
-## Replit install
+- Validates Solana public keys before tracking.
+- Polls every tracked wallet automatically (default: every 60 seconds).
+- Backfills recent wallet activity on the first scan.
+- Uses Helius Enhanced Transactions automatically when `HELIUS_API_KEY` is present.
+- Otherwise falls back to standard Solana JSON-RPC (`getSignaturesForAddress` + `getTransaction`).
+- Stores normalized wallet activity in SQLite and deduplicates it by transaction signature/mint/type.
+- `Sync now` is available from Entity Detail and Wallets for owner/admin accounts.
 
-1. Upload the entire folder or the ZIP to a new Replit Node.js project.
-2. Open **Secrets** and optionally add the variables from `.env.example`.
-3. Press **Run**. `.replit` runs `npm start` on port `3000`.
-4. If `OWNER_EMAIL` and `OWNER_PASSWORD` are not configured, the **first registered account becomes owner**.
+### Pump.fun / PumpSwap detection
 
-### Recommended owner Secrets
+The parser recognizes the official Pump bonding-curve program and PumpSwap AMM program:
+
+- Pump: `6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P`
+- PumpSwap: `pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA`
+
+Tracked token metadata and current market context are enriched through DexScreener. Token market data is cached briefly in SQLite so a wallet with repeated activity does not hammer the external API.
+
+### X monitoring
+
+If `X_BEARER_TOKEN` is configured, Shadow Intelligence:
+
+- resolves the tracked X profile by handle;
+- polls new posts from that user;
+- stores posts and source URLs;
+- detects Solana mint addresses and `$SYMBOL` mentions in post text;
+- correlates a post with already observed wallet activity for the same token.
+
+Without an X API token, wallet monitoring remains fully active. Users can still upload X posts/screenshots as Evidence and specify the post time + token mint/symbol for correlation.
+
+### Evidence-based risk
+
+Normal wallet buys/sells do **not** automatically make an entity high risk. Risk is increased only for stronger observable correlations such as:
+
+`wallet buy -> X post -> wallet sell`
+
+The resulting incident is explicitly described as an observed on-chain/social correlation, not a legal determination of wrongdoing.
+
+### Demo cleanup / migration safety
+
+On the first v0.4 start, the migration removes only the known built-in demo IDs (`moondev`, `degensage`, demo tokens/incidents/groups). Random/user-created records are preserved. The migration test includes a real-style `sling` entity and confirms that its wallet survives intact.
+
+## Replit installation
+
+Upload the v0.4 patch ZIP to the **existing Shadow Intelligence Replit project**. Do not create a new database and do not delete the current `shadow-intelligence.db`.
+
+Use this Replit Agent instruction:
 
 ```text
-OWNER_EMAIL=your@email.com
-OWNER_PASSWORD=a-long-private-password
-OWNER_NAME=Owner
-NODE_ENV=production
+Apply the attached Shadow Intelligence Live Intelligence v0.4 patch to the existing project.
+Replace/add only the files contained in the patch.
+DO NOT delete, reset, rename, recreate, or overwrite the existing shadow-intelligence.db database.
+DO NOT remove existing users, the sling entity, its wallet, avatars, evidence, chat, messages, owner role, or Replit secrets.
+Keep the existing npm start workflow and port 3000.
+
+After applying, run:
+node --check server.mjs
+node --check public/app.js
+node --check src/live-intelligence.mjs
+npm test
+
+Expected tests: 6 passed, 0 failed.
+Then restart the existing npm start application.
+Do not redesign the UI and do not change unrelated files.
 ```
 
-Do not commit real passwords/API keys to GitHub.
+## Replit Secrets
 
-## Connecting the existing copy-trading engine
+### Works immediately (no paid provider required)
 
-This starter deliberately does not invent trading behavior. Configure:
+The code falls back to Solana public mainnet RPC when no provider is configured. This is useful to verify the pipeline, but public RPC can rate-limit history-heavy monitoring.
+
+### Recommended for stable wallet monitoring
+
+Set one of:
+
+```text
+SOLANA_RPC_URL=https://your-solana-rpc.example
+```
+
+or:
+
+```text
+HELIUS_API_KEY=your_helius_key
+```
+
+When `HELIUS_API_KEY` is present, the wallet reader automatically uses Helius' parsed address transaction feed and its RPC endpoint for health/status.
+
+### Automatic X posts
+
+```text
+X_BEARER_TOKEN=your_x_api_bearer_token
+```
+
+This is optional. It is never exposed to the browser.
+
+### Existing copy-trading engine
 
 ```text
 COPY_ENGINE_URL=https://your-existing-engine.example
-COPY_ENGINE_TOKEN=...
+COPY_ENGINE_TOKEN=your_server_to_server_token
 ```
 
-When a Copy Group is enabled/paused, the server calls:
+The v0.4 UI can now put multiple tracked wallets into a Copy Group. If the external engine is not configured, group state is stored and monitoring works, but actual trade execution remains simulation mode. This is intentional: the existing trading engine cannot be safely reproduced without its actual source/API contract.
 
-```text
-POST {COPY_ENGINE_URL}/groups/sync
-Authorization: Bearer {COPY_ENGINE_TOKEN}
-Content-Type: application/json
-```
+## Owner workflow for the first real entity
 
-Payload shape:
+For `sling`:
 
-```json
-{
-  "group": {
-    "id": "grp_...",
-    "name": "Smart Money",
-    "mode": "copy",
-    "enabled": true
-  },
-  "wallets": [
-    {
-      "id": "wal_...",
-      "address": "...",
-      "chain": "solana"
-    }
-  ]
-}
-```
+1. Keep the existing Entity and confirmed wallet; do not recreate them.
+2. Open **Entities -> sling**.
+3. Tap **Sync wallet + X now**.
+4. The first scan loads recent wallet transactions. New scans use the saved latest signature and process only newer activity.
+5. Open **Live Feed** to see normalized buys/sells/receives/sends.
+6. Open **Tokens** for detected token market context and Pump.fun/PumpSwap labels.
+7. For a relevant X post, use **Evidence -> Upload Evidence**, select `sling`, choose `X post`, add the original post URL, exact post time, and token mint if known.
+8. If `X_BEARER_TOKEN` is configured, the app also imports new posts automatically.
 
-Replace `src/adapters/copy-trading.mjs` with the exact adapter for the existing MemeFlow engine once that repository is available.
+## Owner Settings
 
-## Pump.fun / profile avatar adapter
+The owner page now includes:
 
-Set `PUMP_PROFILE_LOOKUP_URL` to a server-side profile resolver you trust. The app will call it with `?wallet=<address>` and accepts an image in one of these JSON fields:
+- Live wallet monitoring toggle
+- Poll interval (30–3600 seconds)
+- First-scan history depth (5–100 transactions)
+- X monitoring toggle
+- Live provider status
 
-```text
-avatarUrl | avatar | image | profileImage
-```
+Default live poll: 60 seconds.
 
-If the resolver is unavailable, a deterministic avatar is generated automatically. This keeps the UI complete without pretending a Pump.fun API exists where none has been configured.
+## New live data tables
 
-## Live intelligence adapter
+- `wallet_activity` — normalized on-chain wallet activity
+- `social_posts` — automatic X posts and evidence-backed social signals
+- `market_snapshots` — token market snapshots for future outcome analysis
 
-`INTELLIGENCE_PROVIDER_URL` is reserved for the live scanner/social intelligence service. The current database includes demo incidents only. The UI/data model already expects:
+Existing schema is migrated in place using additive columns/tables.
 
-- entity + X identity
-- linked wallets
-- token
-- event type (`buy`, `sell`, `social`, `inflow`, `drop`, etc.)
-- severity/confidence
-- timestamp
-- evidence
+## Important current boundary
 
-## Safety / wording
+v0.4 makes **wallet monitoring, Pump.fun/PumpSwap detection, token enrichment, live feed, evidence correlation, X ingestion (with API token), and multi-wallet Copy Groups real**.
 
-The UI uses evidence-oriented labels such as **High Risk**, **Watch**, **observed pattern**, and **confidence**. It deliberately avoids automatically declaring a person a criminal or scammer. Risk scores are analytics, not legal determinations.
-
-## Local development
-
-```bash
-npm start
-# or
-npm run dev
-npm test
-```
-
-Requires Node 22.5+ because it uses the built-in SQLite module.
-
-## Main files
-
-```text
-server.mjs                         HTTP server + APIs
-src/db.mjs                        SQLite schema + demo seed
-src/auth.mjs                      password hashing + sessions
-src/adapters/copy-trading.mjs     external trading-engine boundary
-src/adapters/pump-profile.mjs     wallet/profile avatar boundary
-src/adapters/intelligence.mjs     live intelligence provider boundary
-public/index.html                  app structure
-public/styles.css                  light/dark responsive product UI
-public/app.js                      SPA interactions, chat, DM, admin UI
-```
-
-## Next integration step
-
-The current GitHub connector returned no accessible repositories in this session, so the exact production MemeFlow copy-trading source was not copied. Once GitHub access exposes that repository, wire its real execution methods into `src/adapters/copy-trading.mjs` and map its live intelligence events into the `incidents` table/API. No redesign is required for that integration.
+It does **not** invent follower-loss dollar amounts when there is no defensible source for them, and it does not execute real copy trades unless the existing copy-trading engine is connected through its server adapter. Those values/actions should come from real data rather than demo assumptions.

@@ -4,10 +4,11 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { openDb, getAllSettings, getSetting } from './src/db.mjs';
 import { hashPassword, verifyPassword, createSession, deleteSession, getUserFromSession, setSessionCookie, clearSessionCookie } from './src/auth.mjs';
-import { clean, cleanEmail, isEmail, id, nowIso, json, parseCookies, readJson, maskWallet, isSafeHttpUrl } from './src/utils.mjs';
+import { clean, cleanEmail, isEmail, id, nowIso, json, parseCookies, readJson, maskWallet, isSafeHttpUrl, isSolanaAddress } from './src/utils.mjs';
 import { resolveWalletAvatar } from './src/adapters/pump-profile.mjs';
 import { syncCopyGroup } from './src/adapters/copy-trading.mjs';
 import { providerHealth } from './src/adapters/intelligence.mjs';
+import { createLiveIntelligence } from './src/live-intelligence.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -58,14 +59,19 @@ function groups(db) {
 }
 function parseRoute(urlPath) { return urlPath.split('/').filter(Boolean); }
 
-async function api(req, res, db, url) {
+async function api(req, res, db, url, live) {
   const method = req.method || 'GET';
   const parts = parseRoute(url.pathname);
   const route = '/' + parts.join('/');
 
   if (route === '/api/health' && method === 'GET') {
-    const intel = await providerHealth();
-    return json(res, 200, { ok:true, time:nowIso(), intelligence:intel, copyEngineConfigured:!!process.env.COPY_ENGINE_URL, pumpAvatarConfigured:!!process.env.PUMP_PROFILE_LOOKUP_URL });
+    const [intel, liveStatus] = await Promise.all([providerHealth(), live.health()]);
+    return json(res, 200, { ok:true, time:nowIso(), intelligence:intel, live:liveStatus, copyEngineConfigured:!!process.env.COPY_ENGINE_URL, pumpAvatarConfigured:!!process.env.PUMP_PROFILE_LOOKUP_URL });
+  }
+  if (route === '/api/live/status' && method === 'GET') return json(res,200,await live.health());
+  if (route === '/api/live/sync-all' && method === 'POST') {
+    if (!requireOwner(req,res,db)) return;
+    return json(res,200,await live.syncAll());
   }
   if (route === '/api/me' && method === 'GET') return json(res, 200, { user:userFor(req, db), settings:{ platformName:getSetting(db,'platform_name','Shadow Intelligence') } });
   if (route === '/api/auth/register' && method === 'POST') {
@@ -109,7 +115,10 @@ async function api(req, res, db, url) {
     const alerts = db.prepare("SELECT COUNT(*) AS n FROM incidents WHERE severity IN ('high','critical')").get().n;
     const losses = db.prepare('SELECT COALESCE(SUM(follower_losses),0) AS n FROM entities').get().n;
     const wallets = db.prepare('SELECT COUNT(*) AS n FROM wallets').get().n;
-    return json(res,200,{ stats:{trackedEntities:tracked,activeAlerts:alerts,estimatedFollowerLosses:losses,linkedWallets:wallets}, feed:feedRows(db,12), leaderboard:entityRows(db).slice(0,8), groups:groups(db), selected:entityRows(db)[0] || null });
+    const entities=entityRows(db); const selected=entities[0]||null;
+    const selectedWallets=selected?db.prepare('SELECT * FROM wallets WHERE entity_id=? ORDER BY created_at').all(selected.id):[];
+    const selectedTokens=selected?db.prepare(`SELECT t.*,MAX(a.block_time) AS lastActivity FROM tokens t JOIN wallet_activity a ON a.mint=t.mint WHERE a.entity_id=? GROUP BY t.id ORDER BY lastActivity DESC LIMIT 8`).all(selected.id):[];
+    return json(res,200,{ stats:{trackedEntities:tracked,activeAlerts:alerts,estimatedFollowerLosses:losses,linkedWallets:wallets}, feed:feedRows(db,20), leaderboard:entities.slice(0,8), groups:groups(db), selected, selectedWallets, selectedTokens });
   }
   if (route === '/api/feed' && method === 'GET') return json(res,200,{items:feedRows(db,Math.min(Number(url.searchParams.get('limit'))||50,100))});
   if (route === '/api/entities' && method === 'GET') return json(res,200,{items:entityRows(db)});
@@ -117,7 +126,7 @@ async function api(req, res, db, url) {
     if (!requireOwner(req,res,db)) return;
     const b=await readJson(req); const name=clean(b.name,80); if(!name)return json(res,400,{error:'Name required'});
     const entityId=id('ent_'); let avatar=String(b.avatar||'').trim();
-    db.prepare(`INSERT INTO entities (id,name,x_handle,avatar,avatar_source,risk_score,confidence,incidents,follower_losses,status,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(entityId,name,clean(b.xHandle,50),avatar,'manual',Number(b.riskScore)||0,Number(b.confidence)||50,0,0,clean(b.status,20)||'watch',clean(b.notes,500),nowIso());
+    db.prepare(`INSERT INTO entities (id,name,x_handle,avatar,avatar_source,risk_score,confidence,incidents,follower_losses,status,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(entityId,name,clean(b.xHandle,50),avatar,avatar?'manual':'pending',Math.max(0,Math.min(100,Number.isFinite(Number(b.riskScore))?Number(b.riskScore):0)),Math.max(0,Math.min(100,Number.isFinite(Number(b.confidence))?Number(b.confidence):50)),0,0,clean(b.status,20)||'watch',clean(b.notes,500),nowIso());
     return json(res,201,{id:entityId});
   }
   if (parts[0]==='api' && parts[1]==='entities' && parts[2] && parts.length===3 && method==='GET') {
@@ -130,11 +139,14 @@ async function api(req, res, db, url) {
   if (parts[0]==='api' && parts[1]==='entities' && parts[2] && parts[3]==='wallets' && method==='POST') {
     if (!requireOwner(req,res,db)) return;
     const b=await readJson(req); const address=clean(b.address,120); if(!address)return json(res,400,{error:'Wallet address required'});
+    if(!isSolanaAddress(address))return json(res,400,{error:'Invalid Solana wallet address'});
+    if(!db.prepare('SELECT id FROM entities WHERE id=?').get(parts[2]))return json(res,404,{error:'Entity not found'});
     if(db.prepare('SELECT 1 FROM wallets WHERE address=?').get(address))return json(res,409,{error:'Wallet already tracked'});
     const av=await resolveWalletAvatar(address); const walletId=id('wal_');
-    db.prepare('INSERT INTO wallets (id,entity_id,address,label,avatar,avatar_source,created_at) VALUES (?,?,?,?,?,?,?)').run(walletId,parts[2],address,clean(b.label,80),av.avatar,av.source,nowIso());
+    db.prepare('INSERT INTO wallets (id,entity_id,address,label,avatar,avatar_source,sync_status,monitoring_enabled,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(walletId,parts[2],address,clean(b.label,80),av.avatar,av.source,'pending',1,nowIso());
     if(!db.prepare('SELECT avatar FROM entities WHERE id=?').get(parts[2])?.avatar) db.prepare('UPDATE entities SET avatar=?,avatar_source=? WHERE id=?').run(av.avatar,av.source,parts[2]);
-    return json(res,201,{id:walletId,avatarSource:av.source});
+    setTimeout(()=>live.syncWallet(walletId).catch(err=>console.warn('Initial wallet sync failed:',err.message)),0).unref?.();
+    return json(res,201,{id:walletId,avatarSource:av.source,syncStatus:'pending'});
   }
   if (parts[0]==='api' && parts[1]==='wallets' && parts[2] && parts[3]==='sync-avatar' && method==='POST') {
     if (!requireOwner(req,res,db)) return;
@@ -143,14 +155,37 @@ async function api(req, res, db, url) {
     if(w.entity_id) db.prepare('UPDATE entities SET avatar=?,avatar_source=? WHERE id=?').run(av.avatar,av.source,w.entity_id);
     return json(res,200,av);
   }
-  if (route === '/api/tokens' && method === 'GET') return json(res,200,{items:db.prepare('SELECT * FROM tokens ORDER BY created_at DESC').all()});
+  if (parts[0]==='api' && parts[1]==='wallets' && parts[2] && parts[3]==='sync' && method==='POST') {
+    if (!requireOwner(req,res,db)) return;
+    try { return json(res,200,await live.syncWallet(parts[2],{forceMarket:true})); }
+    catch(error){ return json(res,502,{error:error.message}); }
+  }
+  if (parts[0]==='api' && parts[1]==='wallets' && parts[2] && parts[3]==='activity' && method==='GET') {
+    const w=db.prepare('SELECT id FROM wallets WHERE id=?').get(parts[2]); if(!w)return json(res,404,{error:'Wallet not found'});
+    const items=db.prepare(`SELECT * FROM wallet_activity WHERE wallet_id=? ORDER BY block_time DESC LIMIT ?`).all(parts[2],Math.min(Number(url.searchParams.get('limit'))||100,300));
+    return json(res,200,{items});
+  }
+  if (parts[0]==='api' && parts[1]==='entities' && parts[2] && parts[3]==='sync' && method==='POST') {
+    if (!requireOwner(req,res,db)) return;
+    try { return json(res,200,await live.syncEntity(parts[2])); }
+    catch(error){ return json(res,502,{error:error.message}); }
+  }
+  if (route === '/api/tokens' && method === 'GET') return json(res,200,{items:db.prepare('SELECT * FROM tokens ORDER BY COALESCE(last_market_at,created_at) DESC').all()});
   if (route === '/api/evidence' && method === 'GET') return json(res,200,{items:db.prepare(`SELECT e.*,u.display_name AS userName,en.name AS entityName FROM evidence e LEFT JOIN users u ON u.id=e.user_id LEFT JOIN entities en ON en.id=e.entity_id ORDER BY e.created_at DESC LIMIT 100`).all()});
   if (route === '/api/evidence' && method === 'POST') {
     const user=requireUser(req,res,db); if(!user)return; const b=await readJson(req);
     const title=clean(b.title,120); if(!title)return json(res,400,{error:'Title required'});
     let image=String(b.image||''); if(image.length>1_400_000)return json(res,413,{error:'Image too large'});
-    db.prepare('INSERT INTO evidence (id,user_id,entity_id,title,kind,source_url,image,note,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(id('ev_'),user.id,clean(b.entityId,80)||null,title,clean(b.kind,30)||'note',clean(b.sourceUrl,500),image,clean(b.note,1000),nowIso());
-    return json(res,201,{ok:true});
+    const entityId=clean(b.entityId,80)||null; const kind=clean(b.kind,30)||'note'; const tokenMint=clean(b.tokenMint,80); const tokenSymbol=clean(b.tokenSymbol,30); const observedAt=clean(b.observedAt,50)||nowIso();
+    if(tokenMint && !isSolanaAddress(tokenMint))return json(res,400,{error:'Token mint is not a valid Solana address'});
+    const evidenceId=id('ev_');
+    db.prepare('INSERT INTO evidence (id,user_id,entity_id,title,kind,source_url,image,note,created_at,observed_at,token_mint,token_symbol) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run(evidenceId,user.id,entityId,title,kind,clean(b.sourceUrl,500),image,clean(b.note,1000),nowIso(),observedAt,tokenMint,tokenSymbol);
+    if(entityId && (kind==='x_post'||kind==='social') && (clean(b.sourceUrl,500)||clean(b.note,1000))){
+      const external=`evidence:${evidenceId}`; const text=clean(b.note,1200)||title;
+      db.prepare('INSERT OR IGNORE INTO social_posts (id,entity_id,external_id,source,text,url,token_mint,token_symbol,posted_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)').run(id('post_'),entityId,external,'evidence',text,clean(b.sourceUrl,500),tokenMint,tokenSymbol,observedAt,nowIso());
+      live.recomputeEntity(entityId);
+    }
+    return json(res,201,{ok:true,id:evidenceId});
   }
   if (route === '/api/chat/messages' && method === 'GET') {
     if(getSetting(db,'community_chat_enabled','true')!=='true')return json(res,403,{error:'Community chat disabled'});
@@ -186,6 +221,12 @@ async function api(req, res, db, url) {
     db.prepare('INSERT INTO direct_messages (id,sender_id,recipient_id,body,created_at) VALUES (?,?,?,?,?)').run(id('dm_'),user.id,parts[2],body,nowIso()); return json(res,201,{ok:true});
   }
   if (route === '/api/copy-groups' && method === 'GET') return json(res,200,{items:groups(db)});
+  if (parts[0]==='api' && parts[1]==='copy-groups' && parts[2] && parts.length===3 && method==='GET') {
+    const g=db.prepare('SELECT * FROM copy_groups WHERE id=?').get(parts[2]); if(!g)return json(res,404,{error:'Group not found'});
+    const wallets=db.prepare(`SELECT w.*,e.name AS entityName,e.x_handle AS xHandle FROM wallets w JOIN copy_group_wallets c ON c.wallet_id=w.id LEFT JOIN entities e ON e.id=w.entity_id WHERE c.group_id=? ORDER BY e.name,w.created_at`).all(g.id);
+    const available=db.prepare(`SELECT w.*,e.name AS entityName,e.x_handle AS xHandle FROM wallets w LEFT JOIN entities e ON e.id=w.entity_id WHERE w.id NOT IN (SELECT wallet_id FROM copy_group_wallets WHERE group_id=?) ORDER BY e.name,w.created_at`).all(g.id);
+    return json(res,200,{group:{...g,enabled:!!g.enabled},wallets,available});
+  }
   if (route === '/api/copy-groups' && method === 'POST') {
     if(!requireOwner(req,res,db))return; const b=await readJson(req); const name=clean(b.name,80); if(!name)return json(res,400,{error:'Name required'});
     const groupId=id('grp_'); db.prepare('INSERT INTO copy_groups (id,name,mode,enabled,created_at) VALUES (?,?,?,?,?)').run(groupId,name,clean(b.mode,20)||'watch',0,nowIso()); return json(res,201,{id:groupId});
@@ -193,6 +234,10 @@ async function api(req, res, db, url) {
   if (parts[0]==='api' && parts[1]==='copy-groups' && parts[2] && parts[3]==='wallets' && method==='POST') {
     if(!requireOwner(req,res,db))return; const b=await readJson(req); const walletId=clean(b.walletId,100); if(!db.prepare('SELECT 1 FROM wallets WHERE id=?').get(walletId))return json(res,404,{error:'Wallet not found'});
     db.prepare('INSERT OR IGNORE INTO copy_group_wallets (group_id,wallet_id) VALUES (?,?)').run(parts[2],walletId); return json(res,201,{ok:true});
+  }
+  if (parts[0]==='api' && parts[1]==='copy-groups' && parts[2] && parts[3]==='wallets' && parts[4] && method==='DELETE') {
+    if(!requireOwner(req,res,db))return;
+    db.prepare('DELETE FROM copy_group_wallets WHERE group_id=? AND wallet_id=?').run(parts[2],parts[4]); return json(res,200,{ok:true});
   }
   if (parts[0]==='api' && parts[1]==='copy-groups' && parts[2] && parts[3]==='toggle' && method==='POST') {
     if(!requireOwner(req,res,db))return; const g=db.prepare('SELECT * FROM copy_groups WHERE id=?').get(parts[2]); if(!g)return json(res,404,{error:'Group not found'});
@@ -208,7 +253,7 @@ async function api(req, res, db, url) {
   }
   if (route === '/api/settings' && method === 'PATCH') {
     if(!requireOwner(req,res,db))return; const b=await readJson(req);
-    const allowed=['platform_name','registration_enabled','community_chat_enabled','copy_trading_enabled','risk_high_threshold','demo_mode'];
+    const allowed=['platform_name','registration_enabled','community_chat_enabled','copy_trading_enabled','risk_high_threshold','demo_mode','live_monitor_enabled','live_poll_seconds','wallet_history_limit','x_monitor_enabled'];
     const stmt=db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
     for(const key of allowed) if(Object.hasOwn(b,key)) stmt.run(key,String(b[key]));
     return json(res,200,getAllSettings(db));
@@ -226,21 +271,23 @@ function serveStatic(req,res,url){
   res.writeHead(200,{'content-type':MIME[ext]||'application/octet-stream','content-length':body.length,'cache-control':ext==='.html'?'no-store':'public, max-age=3600'}); res.end(body);
 }
 
-export function createServer({dbPath}={}) {
+export function createServer({dbPath,fetchImpl=fetch,autoMonitor=false}={}) {
   const db=openDb(dbPath);
+  const live=createLiveIntelligence(db,{fetchImpl});
   const server=http.createServer(async(req,res)=>{
     try{
       const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);
-      if(url.pathname.startsWith('/api/')) await api(req,res,db,url); else serveStatic(req,res,url);
+      if(url.pathname.startsWith('/api/')) await api(req,res,db,url,live); else serveStatic(req,res,url);
     }catch(err){ console.error(err); if(!res.headersSent)json(res,err.statusCode||500,{error:err.statusCode?err.message:'Internal server error'}); else res.end(); }
   });
-  server.on('close',()=>{ try{db.close();}catch{} });
+  if(autoMonitor) live.start();
+  server.on('close',()=>{ try{live.stop();}catch{} try{db.close();}catch{} });
   return server;
 }
 
 export function startServer({port=Number(process.env.PORT)||3000,dbPath}={}){
-  const server=createServer({dbPath});
-  server.listen(port,'0.0.0.0',()=>console.log(`Shadow Intelligence running on http://0.0.0.0:${server.address().port}`));
+  const server=createServer({dbPath,autoMonitor:true});
+  server.listen(port,'0.0.0.0',()=>console.log(`Shadow Intelligence LIVE running on http://0.0.0.0:${server.address().port}`));
   return server;
 }
 

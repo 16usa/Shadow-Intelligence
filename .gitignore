@@ -4,3 +4,6 @@
 *.db-wal
 node_modules/
 .DS_Store
+
+backups/
+*.zip

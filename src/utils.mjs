@@ -43,3 +43,32 @@ export const isSafeHttpUrl = (value) => {
     return url.protocol === 'https:' || (process.env.NODE_ENV !== 'production' && url.protocol === 'http:');
   } catch { return false; }
 };
+
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+export function decodeBase58(value) {
+  const text = String(value || '').trim();
+  if (!text) return Buffer.alloc(0);
+  let bytes = [0];
+  for (const ch of text) {
+    const digit = BASE58_ALPHABET.indexOf(ch);
+    if (digit < 0) throw new Error('Invalid base58 character');
+    let carry = digit;
+    for (let i = 0; i < bytes.length; i++) {
+      const n = bytes[i] * 58 + carry;
+      bytes[i] = n & 0xff;
+      carry = n >> 8;
+    }
+    while (carry > 0) {
+      bytes.push(carry & 0xff);
+      carry >>= 8;
+    }
+  }
+  for (let i = 0; i < text.length - 1 && text[i] === '1'; i++) bytes.push(0);
+  return Buffer.from(bytes.reverse());
+}
+export function isSolanaAddress(value) {
+  try {
+    const text = String(value || '').trim();
+    return text.length >= 32 && text.length <= 44 && decodeBase58(text).length === 32;
+  } catch { return false; }
+}
