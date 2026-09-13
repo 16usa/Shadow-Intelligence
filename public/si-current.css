@@ -584,40 +584,74 @@ body.si-detail-page-open .si-page-back{
 }
 /* SHADOW_DETAIL_FULL_PAGE_V194_END */
 
-/* SHADOW_GRAPH_BOOT_RECOVERY_V204_CSS_START */
+
+
+
+
+/* SHADOW_GRAPH_PROGRESSIVE_V205_CSS_START */
+.si-graph-engine-error{position:absolute;inset:0;display:grid;place-items:center;color:var(--si-muted);font-size:13px;pointer-events:none}
+/* SHADOW_GRAPH_PROGRESSIVE_V205_CSS_END */
+
+
+/* SHADOW_DOM_SWARM_V206_CSS_START */
 #globalMap{
-  position:relative!important;
-  isolation:isolate!important;
-  overflow:hidden!important;
+  background:radial-gradient(circle at 50% 45%,color-mix(in srgb,var(--si-blue) 7%,var(--si-bg)) 0%,var(--si-bg) 58%)!important;
 }
-#globalMap>.si-graph-canvas{
+html[data-theme=dark] #globalMap{
+  background:radial-gradient(circle at 50% 44%,#0d141c 0%,#05080b 48%,#000 82%)!important;
+}
+#globalMap>.si-dom-swarm{
   position:absolute!important;
   inset:0!important;
-  z-index:1!important;
-  display:block!important;
-  opacity:1!important;
-  visibility:visible!important;
-}
-#globalMap>.si-graph-empty{
   z-index:2!important;
+  overflow:hidden!important;
+  touch-action:none!important;
+  user-select:none!important;
+  -webkit-user-select:none!important;
+}
+#globalMap>.si-graph-hud{z-index:40!important}
+#globalMap>.si-graph-empty{z-index:3!important;pointer-events:none!important}
+.si-dom-node{
+  position:absolute!important;
+  left:0!important;
+  top:0!important;
+  width:46px!important;
+  height:46px!important;
+  margin:0!important;
+  padding:0!important;
+  overflow:hidden!important;
+  border-radius:50%!important;
+  border:1.5px solid rgba(29,155,240,.94)!important;
+  background:var(--si-panel)!important;
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--si-bg) 92%,transparent),0 8px 24px rgba(29,155,240,.15)!important;
+  transform-origin:center center!important;
+  will-change:transform!important;
+  cursor:grab!important;
+  touch-action:none!important;
+  -webkit-tap-highlight-color:transparent!important;
+}
+.si-dom-node.dragging{
+  cursor:grabbing!important;
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--si-blue) 28%,transparent),0 12px 34px rgba(29,155,240,.22)!important;
+}
+.si-dom-node>img{
+  display:block!important;
+  width:100%!important;
+  height:100%!important;
+  object-fit:cover!important;
+  object-position:center!important;
+  border-radius:inherit!important;
   pointer-events:none!important;
 }
-#globalMap>.si-graph-hud{
-  z-index:7!important;
-  opacity:1;
-  visibility:visible;
-}
-#globalMap>.si-graph-recovery-error{
+.si-dom-node-fallback{
   position:absolute;
   inset:0;
-  z-index:8;
   display:grid;
   place-items:center;
-  padding:24px;
-  color:var(--si-muted);
-  font-size:13px;
-  text-align:center;
+  font-size:18px;
+  font-weight:800;
+  color:#fff;
+  background:linear-gradient(135deg,#1d9bf0,#5b4cf0);
   pointer-events:none;
 }
-/* SHADOW_GRAPH_BOOT_RECOVERY_V204_CSS_END */
-
+/* SHADOW_DOM_SWARM_V206_CSS_END */

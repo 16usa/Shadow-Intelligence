@@ -60,8 +60,16 @@ function backPage(){
 }
 
 async function boot(){
- try{const me=await api('/api/me');state.user=me.user;state.settings=me.settings||{};document.title=state.settings.platformName||'Shadow Intelligence'}catch{}
- setAuth();bind();await refresh();nav('overview',{push:false,replace:true});
+ try{
+   const me=await api('/api/me');
+   state.user=me.user;
+   state.settings=me.settings||{};
+   document.title=state.settings.platformName||'Shadow Intelligence';
+ }catch{}
+ setAuth();
+ bind();
+ nav('overview',{push:false,replace:true});
+ refresh();
  setInterval(()=>{
    if(!['chat','messages','settings'].includes(currentPage))refresh();
  },7000);
@@ -70,9 +78,7 @@ function bind(){
  $$('[data-nav]').forEach(b=>b.onclick=()=>{
    const target=b.dataset.nav;
    nav(target);
-   if(target==='overview' && state.overview && !state.graph){
-     renderOverview().catch(e=>console.error('Map retry failed',e));
-   }
+   if(target==='overview')renderOverview().catch(e=>console.error('Map render failed',e));
  });$('#themeToggle').onclick=toggleTheme;$('#adminTheme').onclick=toggleTheme;$('#userButton').onclick=()=>state.user?nav('messages'):authModal('login');$('#modalClose').onclick=closeModal;$('#modal').onclick=e=>{if(e.target.id==='modal')closeModal()};$('#addEntityBtn').onclick=entityModal;$('#entitiesAddBtn').onclick=entityModal;$('#evidenceAddBtn').onclick=evidenceModal;$('#chatForm').onsubmit=sendChat;$('#dmForm').onsubmit=sendDm;$('#userSearch').oninput=()=>searchUsers($('#userSearch').value);$('#settingsForm').onsubmit=saveSettings;$('#globalSearch').onkeydown=e=>{if(e.key==='Enter')searchGlobal(e.target.value)};$('#fitMap').onclick=()=>state.graph?.fit();
   $('#pageBack').onclick=backPage;
   window.addEventListener('popstate',e=>{
@@ -80,113 +86,495 @@ function bind(){
     nav(name,{push:false});
   });
 }
-async function refresh(){
-  try{
-    const [o,l,e,t]=await Promise.all([
-      api('/api/overview'),
-      api('/api/live/status').catch(()=>null),
-      api('/api/entities'),
-      api('/api/tokens')
-    ]);
-    state.overview=o;
-    state.entities=e.items||[];
-    state.tokens=t.items||[];
+let refreshSeq=0;
+let graphEntityKey='';
 
-    if(currentPage==='overview')await renderOverview(l);
-    if(currentPage==='feed')renderFeed();
-    if(currentPage==='entities')renderEntities();
-    if(currentPage==='tokens')renderTokens();
-  }catch(e){
-    toast(e.message);
+function globalEntityModel(){
+  return {entities:state.entities.slice(0,18),wallets:[],tokens:[],activity:[]};
+}
+
+function currentMapCounts(){
+  return {
+    entities:state.entities.length,
+    wallets:state.entities.reduce((n,e)=>n+Number(e.walletCount||0),0),
+    tokens:state.tokens.length
+  };
+}
+
+function updateMapCounts(){
+  const el=$('#mapCounts');
+  if(!el)return;
+  const c=currentMapCounts();
+  el.textContent=`${c.entities} entities · ${c.wallets} wallets · ${c.tokens} tokens`;
+}
+
+function renderOverviewChrome(live=state.liveStatus){
+  const o=state.overview||{};
+  const selected=o.selected||state.entities[0]||null;
+  const focus=$('#focusPanel');
+  if(focus){
+    focus.innerHTML=selected
+      ? focusHtml(selected)
+      : '<div class="guest-note">Add an entity to begin mapping intelligence.</div>';
   }
+  renderLive(o.feed||[]);
+  renderEntitiesStrip();
+  renderConnections({tokens:state.tokens.slice(0,42)});
+  const status=$('#railStatus');
+  if(status)status.textContent=live?.solana?.status==='online'?'online':'check';
+  updateMapCounts();
 }
-async function buildGlobalModel(){
- const details=await Promise.all(state.entities.slice(0,18).map(async e=>{try{return await api(`/api/entities/${e.id}`)}catch{return null}}));state.details.clear();details.filter(Boolean).forEach(d=>state.details.set(d.entity.id,d));
- const wallets=details.filter(Boolean).flatMap(d=>d.wallets||[]);
- const seen=new Set(),tokens=[];details.filter(Boolean).forEach(d=>(d.tokens||[]).forEach(t=>{if(!seen.has(t.mint)){seen.add(t.mint);tokens.push({...t,entity_id:d.entity.id})}}));
- return{entities:state.entities.slice(0,18),wallets:wallets.slice(0,36),tokens:tokens.slice(0,42),activity:details.flatMap(d=>d.incidents||[]).slice(0,80)}
-}
-/* SHADOW_GRAPH_BOOT_RECOVERY_V204_START */
-let shadowGraphBootPromise=null;
 
-async function ensureShadowGraph(){
-  if(typeof window.ShadowGraph==='function')return window.ShadowGraph;
-  if(shadowGraphBootPromise)return shadowGraphBootPromise;
+/* SHADOW_DOM_SWARM_V206_START */
+class ShadowDomSwarm{
+  constructor(root,model={},opts={}){
+    this.root=root;
+    this.model=model||{};
+    this.entities=Array.isArray(this.model.entities)?this.model.entities:[];
+    this.onSelect=opts.onSelect||(()=>{});
+    this.nodes=[];
+    this.dead=false;
+    this.raf=0;
+    this.last=performance.now();
+    this.drag=null;
+    this.w=1;
+    this.h=1;
+    this.centerX=0;
+    this.centerY=0;
+    this.safe={left:28,right:28,top:118,bottom:158};
 
-  shadowGraphBootPromise=new Promise((resolve,reject)=>{
-    const done=()=>{
-      if(typeof window.ShadowGraph==='function')resolve(window.ShadowGraph);
-      else reject(new Error('3D engine loaded but ShadowGraph is unavailable'));
-    };
+    root.innerHTML=
+      '<div class="si-dom-swarm" aria-label="Entity 3D map"></div>'+ 
+      '<div class="si-graph-hud">'+
+        '<span class="si-graph-live"><i></i> LIVE</span>'+ 
+        '<span class="si-graph-mode">ENTITIES</span>'+ 
+        '<button class="si-graph-fit" type="button">Fit</button>'+ 
+      '</div>'+ 
+      '<div class="si-graph-empty">No network data yet.</div>';
 
-    document.querySelectorAll('script[data-shadow-graph-recovery]').forEach(x=>x.remove());
+    this.layer=root.querySelector('.si-dom-swarm');
+    this.empty=root.querySelector('.si-graph-empty');
+    this.fitButton=root.querySelector('.si-graph-fit');
 
-    const tag=document.createElement('script');
-    tag.src='/si-graph.js?v=graph-recovery-2.0.4-20260913221305';
-    tag.dataset.shadowGraphRecovery='1';
-    tag.async=false;
-    tag.onload=done;
-    tag.onerror=()=>reject(new Error('Failed to load 3D engine'));
-    document.head.appendChild(tag);
+    this.fitButton.onclick=()=>this.fit();
+    this.layer.addEventListener('wheel',e=>{
+      e.preventDefault();
+      const factor=e.deltaY>0?.92:1.08;
+      this.zoomAroundCenter(factor);
+    },{passive:false});
 
-    setTimeout(()=>{
-      if(typeof window.ShadowGraph==='function')resolve(window.ShadowGraph);
-    },120);
-  });
+    this.ro=new ResizeObserver(()=>this.resize());
+    this.ro.observe(root);
 
-  try{
-    return await shadowGraphBootPromise;
-  }catch(error){
-    shadowGraphBootPromise=null;
-    throw error;
+    this.build();
+    this.resize(true);
+    this.schedule();
   }
-}
 
-function bootGlobalGraph(model){
-  const root=$('#globalMap');
-  if(!root)throw new Error('3D root #globalMap is missing');
+  hash(value){
+    let h=2166136261>>>0;
+    for(const ch of String(value||'entity')){
+      h^=ch.charCodeAt(0);
+      h=Math.imul(h,16777619)>>>0;
+    }
+    return h>>>0;
+  }
 
-  return ensureShadowGraph().then(Graph=>{
-    try{ state.graph?.destroy?.(); }catch(error){ console.warn('Previous graph destroy failed',error); }
-    state.graph=null;
+  key(e){
+    return String(e?.id||e?.name||e?.x_handle||e?.xHandle||'entity');
+  }
 
-    root.replaceChildren();
+  build(){
+    this.nodes=[];
+    this.layer.replaceChildren();
 
-    const instance=new Graph(root,model,{onSelect:openObject});
-    state.graph=instance;
+    for(let i=0;i<this.entities.length;i++){
+      const raw=this.entities[i];
+      const seed=this.hash(this.key(raw));
+      const el=document.createElement('button');
+      el.type='button';
+      el.className='si-dom-node';
+      el.setAttribute('aria-label',raw?.name||raw?.x_handle||'Entity');
 
-    try{
-      if(instance.raf){
-        cancelAnimationFrame(instance.raf);
-        instance.raf=0;
+      const avatar=raw?.avatar||'';
+      if(avatar){
+        const img=document.createElement('img');
+        img.alt='';
+        img.draggable=false;
+        img.decoding='async';
+        img.src=avatar;
+        img.addEventListener('error',()=>{
+          img.remove();
+          if(!el.querySelector('.si-dom-node-fallback')){
+            const f=document.createElement('span');
+            f.className='si-dom-node-fallback';
+            f.textContent='@';
+            el.appendChild(f);
+          }
+        },{once:true});
+        el.appendChild(img);
+      }else{
+        const f=document.createElement('span');
+        f.className='si-dom-node-fallback';
+        f.textContent='@';
+        el.appendChild(f);
       }
-      instance.resize?.();
-      instance.render?.();
-    }catch(error){
-      try{instance.destroy?.()}catch{}
-      state.graph=null;
-      throw error;
+
+      const node={
+        raw,el,seed,index:i,
+        x:0,y:0,vx:0,vy:0,
+        radius:23,
+        phase:(seed%6283)/1000,
+        phase2:((seed>>>8)%6283)/1000
+      };
+
+      el.addEventListener('pointerdown',e=>this.pointerDown(e,node),{passive:false});
+      el.addEventListener('pointermove',e=>this.pointerMove(e,node),{passive:false});
+      el.addEventListener('pointerup',e=>this.pointerUp(e,node),{passive:false});
+      el.addEventListener('pointercancel',e=>this.pointerUp(e,node),{passive:false});
+
+      this.layer.appendChild(el);
+      this.nodes.push(node);
     }
 
-    return instance;
-  });
-}
-/* SHADOW_GRAPH_BOOT_RECOVERY_V204_END */
+    this.empty.style.display=this.nodes.length?'none':'grid';
+  }
 
-async function renderOverview(live){
- const o=state.overview, model=await buildGlobalModel();$('#mapCounts').textContent=`${model.entities.length} entities · ${model.wallets.length} wallets · ${model.tokens.length} tokens`;
- try{
-   await bootGlobalGraph(model);
- }catch(error){
-   console.error('Shadow 3D boot failed:',error);
-   const root=$('#globalMap');
-   if(root){
-     root.innerHTML='<div class="si-graph-recovery-error">3D renderer unavailable. Tap Map to retry.</div>';
-   }
-   toast('3D renderer failed to start');
- }$('#focusPanel').innerHTML=o.selected?focusHtml(o.selected):'<div class="guest-note">Add an entity to begin mapping intelligence.</div>';renderLive(o.feed||[]);renderEntitiesStrip();renderConnections(model);
- $('#railStatus').textContent=live?.solana?.status==='online'?'online':'check';
+  resize(forceFit=false){
+    const r=this.root.getBoundingClientRect();
+    const nw=Math.max(1,r.width);
+    const nh=Math.max(1,r.height);
+    const first=this.w<=1||this.h<=1;
+    const oldW=this.w,oldH=this.h;
+    this.w=nw;
+    this.h=nh;
+
+    this.safe.top=Math.min(132,Math.max(96,this.h*.14));
+    this.safe.bottom=Math.min(174,Math.max(132,this.h*.17));
+    this.centerX=this.w*.5;
+    const usable=Math.max(180,this.h-this.safe.top-this.safe.bottom);
+    this.centerY=this.safe.top+usable*.46;
+
+    if(forceFit||first){
+      this.fit();
+      return;
+    }
+
+    if(oldW>1&&oldH>1){
+      const sx=this.w/oldW, sy=this.h/oldH;
+      for(const n of this.nodes){
+        n.x*=sx;
+        n.y*=sy;
+        this.keepNodeInside(n);
+      }
+    }
+    this.schedule();
+  }
+
+  fit(){
+    if(!this.nodes.length)return;
+
+    const usableH=Math.max(180,this.h-this.safe.top-this.safe.bottom);
+    const spread=Math.max(72,Math.min(this.w*.29,usableH*.27,132));
+    const golden=2.399963229728653;
+    const total=this.nodes.length;
+
+    this.nodes.forEach((n,i)=>{
+      const f=Math.sqrt((i+.70)/Math.max(1,total));
+      const jitter=((n.seed&1023)/1023)-.5;
+      const angle=i*golden+jitter*.72;
+      const dist=36+f*Math.max(36,spread-36);
+      n.x=this.centerX+Math.cos(angle)*dist;
+      n.y=this.centerY+Math.sin(angle)*dist*.82;
+      n.vx=0;
+      n.vy=0;
+      this.keepNodeInside(n);
+    });
+
+    for(let i=0;i<8;i++)this.resolveCollisions(null);
+    this.renderNodes();
+    this.schedule();
+  }
+
+  zoomAroundCenter(factor){
+    factor=Math.max(.82,Math.min(1.18,factor));
+    for(const n of this.nodes){
+      n.x=this.centerX+(n.x-this.centerX)*factor;
+      n.y=this.centerY+(n.y-this.centerY)*factor;
+      this.keepNodeInside(n);
+    }
+    for(let i=0;i<5;i++)this.resolveCollisions(null);
+    this.renderNodes();
+    this.schedule();
+  }
+
+  keepNodeInside(n){
+    const r=n.radius+5;
+    const minX=this.safe.left+r;
+    const maxX=Math.max(minX,this.w-this.safe.right-r);
+    const minY=this.safe.top+r;
+    const maxY=Math.max(minY,this.h-this.safe.bottom-r);
+    n.x=Math.max(minX,Math.min(maxX,n.x));
+    n.y=Math.max(minY,Math.min(maxY,n.y));
+  }
+
+  resolveCollisions(dragged=null){
+    if(this.nodes.length<2)return;
+    for(let pass=0;pass<4;pass++){
+      let changed=false;
+      for(let i=0;i<this.nodes.length;i++){
+        const a=this.nodes[i];
+        for(let j=i+1;j<this.nodes.length;j++){
+          const b=this.nodes[j];
+          let dx=b.x-a.x;
+          let dy=b.y-a.y;
+          let d=Math.hypot(dx,dy);
+          if(d<.01){
+            const angle=((a.seed^b.seed)%6283)/1000;
+            dx=Math.cos(angle);
+            dy=Math.sin(angle);
+            d=1;
+          }
+          const min=a.radius+b.radius+8;
+          if(d>=min)continue;
+
+          const nx=dx/d,ny=dy/d;
+          const overlap=min-d;
+
+          if(a===dragged&&b!==dragged){
+            b.x+=nx*overlap;
+            b.y+=ny*overlap;
+            b.vx=b.vy=0;
+            this.keepNodeInside(b);
+          }else if(b===dragged&&a!==dragged){
+            a.x-=nx*overlap;
+            a.y-=ny*overlap;
+            a.vx=a.vy=0;
+            this.keepNodeInside(a);
+          }else{
+            a.x-=nx*overlap*.5;
+            a.y-=ny*overlap*.5;
+            b.x+=nx*overlap*.5;
+            b.y+=ny*overlap*.5;
+            a.vx*=.35;a.vy*=.35;
+            b.vx*=.35;b.vy*=.35;
+            this.keepNodeInside(a);
+            this.keepNodeInside(b);
+          }
+          changed=true;
+        }
+      }
+      if(!changed)break;
+    }
+  }
+
+  physics(now){
+    const dt=Math.max(.35,Math.min(2,(now-this.last)/16.667));
+    this.last=now;
+
+    for(const n of this.nodes){
+      if(this.drag?.node===n)continue;
+
+      const wanderX=Math.sin(now*.00031+n.phase)*.012+Math.cos(now*.00019+n.phase2)*.008;
+      const wanderY=Math.cos(now*.00027+n.phase2)*.012+Math.sin(now*.00017+n.phase)*.008;
+
+      n.vx+=((this.centerX-n.x)*.00017+wanderX)*dt;
+      n.vy+=((this.centerY-n.y)*.00017+wanderY)*dt;
+      n.vx*=.968;
+      n.vy*=.968;
+
+      const speed=Math.hypot(n.vx,n.vy);
+      if(speed>1.05){
+        n.vx=n.vx/speed*1.05;
+        n.vy=n.vy/speed*1.05;
+      }
+
+      n.x+=n.vx*dt;
+      n.y+=n.vy*dt;
+      this.keepNodeInside(n);
+    }
+
+    this.resolveCollisions(null);
+  }
+
+  renderNodes(){
+    const minY=this.safe.top;
+    const maxY=Math.max(minY+1,this.h-this.safe.bottom);
+
+    for(const n of this.nodes){
+      const depth=(n.y-minY)/(maxY-minY);
+      const scale=.94+Math.max(0,Math.min(1,depth))*.10;
+      n.el.style.transform=`translate3d(${n.x}px,${n.y}px,0) translate(-50%,-50%) scale(${scale})`;
+      n.el.style.zIndex=String(10+Math.round(depth*20));
+    }
+  }
+
+  render(){
+    if(this.dead)return;
+    this.raf=0;
+    const now=performance.now();
+    this.physics(now);
+    this.renderNodes();
+    this.schedule();
+  }
+
+  schedule(){
+    if(!this.dead&&!this.raf)this.raf=requestAnimationFrame(()=>this.render());
+  }
+
+  pointerDown(e,node){
+    if(this.dead)return;
+    e.preventDefault();
+    e.stopPropagation();
+    try{node.el.setPointerCapture(e.pointerId)}catch{}
+    this.drag={
+      node,id:e.pointerId,
+      startX:e.clientX,startY:e.clientY,
+      originX:node.x,originY:node.y,
+      moved:false
+    };
+    node.vx=node.vy=0;
+    node.el.classList.add('dragging');
+  }
+
+  pointerMove(e,node){
+    const d=this.drag;
+    if(!d||d.id!==e.pointerId||d.node!==node)return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const dx=e.clientX-d.startX;
+    const dy=e.clientY-d.startY;
+    if(Math.hypot(dx,dy)>4)d.moved=true;
+
+    node.x=d.originX+dx;
+    node.y=d.originY+dy;
+    this.keepNodeInside(node);
+    this.resolveCollisions(node);
+    this.renderNodes();
+  }
+
+  pointerUp(e,node){
+    const d=this.drag;
+    if(!d||d.id!==e.pointerId||d.node!==node)return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    try{node.el.releasePointerCapture(e.pointerId)}catch{}
+    node.el.classList.remove('dragging');
+    this.drag=null;
+    node.vx=node.vy=0;
+
+    if(!d.moved)this.onSelect('entity',node.raw);
+    this.schedule();
+  }
+
+  setModel(model={}){
+    this.model=model||{};
+    this.entities=Array.isArray(this.model.entities)?this.model.entities:[];
+    this.build();
+    this.fit();
+  }
+
+  destroy(){
+    this.dead=true;
+    if(this.raf)cancelAnimationFrame(this.raf);
+    this.raf=0;
+    this.ro?.disconnect();
+    this.drag=null;
+  }
 }
+
+function mountGlobalGraph(){
+  const root=$('#globalMap');
+  if(!root)return null;
+
+  const model=globalEntityModel();
+  updateMapCounts();
+
+  const key=JSON.stringify(model.entities.map(e=>[
+    e.id||'',e.name||'',e.avatar||'',e.x_handle||e.xHandle||''
+  ]));
+
+  const healthy=
+    state.graph instanceof ShadowDomSwarm &&
+    root.querySelector('.si-dom-swarm') &&
+    root.querySelectorAll('.si-dom-node').length===model.entities.length;
+
+  if(healthy&&graphEntityKey===key){
+    state.graph.schedule();
+    return model;
+  }
+
+  try{state.graph?.destroy?.()}catch(error){
+    console.warn('Graph destroy warning:',error);
+  }
+
+  state.graph=null;
+  root.replaceChildren();
+  state.graph=new ShadowDomSwarm(root,model,{onSelect:openObject});
+  graphEntityKey=key;
+  return model;
+}
+/* SHADOW_DOM_SWARM_V206_END */
+
+async function renderOverview(live=state.liveStatus){
+  let model=null;
+  try{model=mountGlobalGraph()}
+  catch(error){
+    console.error('Global graph render failed:',error);
+    toast('3D renderer failed to start');
+  }
+  renderOverviewChrome(live);
+  return model;
+}
+
+async function refresh(){
+  const seq=++refreshSeq;
+
+  const entitiesTask=api('/api/entities')
+    .then(data=>{
+      if(seq!==refreshSeq)return;
+      state.entities=Array.isArray(data.items)?data.items:[];
+      updateMapCounts();
+      if(currentPage==='overview')renderOverview();
+      if(currentPage==='entities')renderEntities();
+    })
+    .catch(error=>{
+      console.error('Entities refresh failed:',error);
+      if(!state.entities.length)toast('Entity data unavailable');
+    });
+
+  const tokensTask=api('/api/tokens')
+    .then(data=>{
+      if(seq!==refreshSeq)return;
+      state.tokens=Array.isArray(data.items)?data.items:[];
+      updateMapCounts();
+      if(currentPage==='tokens')renderTokens();
+      if(currentPage==='overview')renderConnections({tokens:state.tokens.slice(0,42)});
+    })
+    .catch(error=>console.error('Tokens refresh failed:',error));
+
+  const overviewTask=api('/api/overview')
+    .then(data=>{
+      if(seq!==refreshSeq)return;
+      state.overview=data||null;
+      if(currentPage==='overview')renderOverviewChrome();
+      if(currentPage==='feed')renderFeed();
+    })
+    .catch(error=>console.error('Overview refresh failed:',error));
+
+  const liveTask=api('/api/live/status')
+    .then(data=>{
+      if(seq!==refreshSeq)return;
+      state.liveStatus=data||null;
+      if(currentPage==='overview')renderOverviewChrome(state.liveStatus);
+    })
+    .catch(error=>console.error('Live status refresh failed:',error));
+
+  await Promise.allSettled([entitiesTask,tokensTask,overviewTask,liveTask]);
+}
+
 function focusHtml(e){const d=state.details.get(e.id),ws=d?.wallets?.length??e.walletCount??0,ts=d?.tokens?.length??0;return`<div class="si-focus-main">${avatar(e,'lg')}<div><h3>${esc(e.name)}</h3><p>${esc(e.x_handle||'')} · ${e.confidence||0}% confidence</p></div></div><div class="si-metrics"><div class="si-metric"><strong>${ws}</strong><small>Wallets</small></div><div class="si-metric"><strong>${ts}</strong><small>Tokens</small></div><div class="si-metric"><strong>${e.riskScore||0}</strong><small>Signal</small></div></div>`}
 function eventHtml(x){const type=String(x.type||'activity').toLowerCase(),sell=type.includes('sell')||type==='send',tr=type.includes('transfer')||type==='receive';return`<div class="si-event"><i class="si-event-dot ${sell?'sell':tr?'transfer':''}"></i><div><strong>${esc((x.title||type).replace(/^./,c=>c.toUpperCase()))}</strong><small>${esc(x.detail||x.symbol||x.tokenName||x.walletAddress||'Observed on-chain activity')}</small></div><time>${ago(x.createdAt||x.block_time)}</time></div>`}
 function renderLive(items){$('#overviewLive').innerHTML=(items||[]).slice(0,8).map(eventHtml).join('')||'<div class="guest-note">Waiting for live activity.</div>'}
