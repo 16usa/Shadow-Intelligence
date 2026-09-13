@@ -1,0 +1,74 @@
+SHADOW UI CONSOLIDATION AUDIT
+======================================
+
+CSS source order preserved in si-current.css:
+  1. /si-shell.css -> si-shell.css
+  2. /si-immersive.css?v=1.0.0 -> si-immersive.css
+  3. /si-interaction-recovery.css?v=20260913-1140 -> si-interaction-recovery.css
+
+Missing local CSS references removed:
+  none
+
+CSS !important counts before consolidation:
+  - si-shell.css: 2
+  - si-immersive.css: 287
+  - si-interaction-recovery.css: 30
+
+Selectors defined by more than one source file: 41
+  - #addEntityBtn :: si-immersive.css -> si-interaction-recovery.css
+  - .si-app :: si-shell.css -> si-immersive.css
+  - .si-bottom-grid :: si-shell.css -> si-immersive.css
+  - .si-brand :: si-shell.css -> si-immersive.css
+  - .si-brand img :: si-shell.css -> si-immersive.css
+  - .si-brand span :: si-shell.css -> si-immersive.css
+  - .si-button :: si-shell.css -> si-interaction-recovery.css
+  - .si-conversation :: si-shell.css -> si-interaction-recovery.css
+  - .si-detail-layout :: si-shell.css -> si-immersive.css
+  - .si-detail-map :: si-shell.css -> si-immersive.css
+  - .si-detail-map .si-graph :: si-shell.css -> si-immersive.css
+  - .si-entity-card :: si-shell.css -> si-interaction-recovery.css
+  - .si-entity-chip :: si-shell.css -> si-interaction-recovery.css
+  - .si-graph-canvas :: si-shell.css -> si-interaction-recovery.css
+  - .si-graph-hud :: si-shell.css -> si-immersive.css
+  - .si-graph-hud button :: si-shell.css -> si-immersive.css
+  - .si-icon :: si-shell.css -> si-immersive.css
+  - .si-immersive-dock button :: si-immersive.css -> si-interaction-recovery.css
+  - .si-main :: si-shell.css -> si-immersive.css
+  - .si-mainnav :: si-shell.css -> si-immersive.css
+  - .si-map-card :: si-shell.css -> si-immersive.css
+  - .si-map-footer :: si-shell.css -> si-immersive.css
+  - .si-map-footer span:first-child :: si-shell.css -> si-immersive.css
+  - .si-map-layout :: si-shell.css -> si-immersive.css
+  - .si-modal :: si-shell.css -> si-immersive.css
+  - .si-modal-card :: si-shell.css -> si-immersive.css
+  - .si-modal-close :: si-shell.css -> si-immersive.css
+  - .si-modal.hidden :: si-shell.css -> si-interaction-recovery.css
+  - .si-page:not(#page-overview).active-page :: si-immersive.css -> si-interaction-recovery.css
+  - .si-rail :: si-shell.css -> si-immersive.css
+  - .si-search :: si-shell.css -> si-immersive.css
+  - .si-search input :: si-shell.css -> si-immersive.css
+  - .si-sheet-close :: si-immersive.css -> si-interaction-recovery.css
+  - .si-side-stack :: si-shell.css -> si-immersive.css
+  - .si-token-card :: si-shell.css -> si-interaction-recovery.css
+  - .si-top-actions :: si-shell.css -> si-immersive.css
+  - .si-topbar :: si-shell.css -> si-immersive.css
+  - .si-user :: si-shell.css -> si-immersive.css
+  - body :: si-shell.css -> si-immersive.css
+  - html :: si-shell.css -> si-immersive.css
+  - html[data-theme=dark] :: si-shell.css -> si-immersive.css
+
+Custom runtime scripts consolidated into si-current-ui.js:
+  - /si-graph-unified-v136.js?v=20260913-0526-soft-contact
+  - /si-interaction-recovery.js?v=20260913-1140
+
+Obsolete/older custom script references removed:
+  none
+
+Missing local JS references removed:
+  none
+
+Result:
+  - one active local CSS bundle: /si-current.css
+  - base app.js and si-graph.js remain separate
+  - at most one current custom UI/runtime bundle: /si-current-ui.js
+  - original source files remain on disk but are no longer layered in HTML

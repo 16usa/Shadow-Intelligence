@@ -1,0 +1,103 @@
+/* Shadow Interaction Recovery v1.4.0 */
+
+/* Nothing invisible should intercept taps. */
+.si-page:not(#page-overview):not(.active-page){
+  pointer-events:none !important;
+}
+.si-page:not(#page-overview).active-page{
+  pointer-events:auto !important;
+}
+.si-modal.hidden{
+  pointer-events:none !important;
+}
+.si-modal:not(.hidden){
+  pointer-events:auto !important;
+}
+
+/* Critical interactive controls always receive taps. */
+.si-immersive-dock,
+.si-immersive-dock button,
+.si-topbar > *,
+.si-sheet-close,
+.si-button,
+button[data-nav],
+[data-entity],
+[data-token],
+[data-open],
+[data-user],
+.si-entity-chip,
+.si-entity-card,
+.si-token-card,
+.si-conversation,
+#userButton,
+#themeToggle,
+#addEntityBtn,
+#entitiesAddBtn,
+#evidenceAddBtn,
+#modalClose{
+  pointer-events:auto !important;
+  touch-action:manipulation;
+}
+
+/* Remove any hit layer created by the previous experimental window chrome. */
+.shadow-window-chrome{
+  pointer-events:none !important;
+}
+.shadow-window-chrome *{
+  pointer-events:none !important;
+}
+
+/* Safe window chrome:
+   the OUTER modal card does not scroll anymore.
+   Only modalBody scrolls, so X and the top handle remain attached to the window. */
+.si-modal-card{
+  position:relative !important;
+  overflow:hidden !important;
+  display:flex !important;
+  flex-direction:column !important;
+}
+#modalBody{
+  flex:1 1 auto !important;
+  min-height:0 !important;
+  overflow:auto !important;
+  overscroll-behavior:contain !important;
+  -webkit-overflow-scrolling:touch;
+}
+
+/* Close button belongs to the window chrome, not to scrolling content. */
+.si-modal-close{
+  position:absolute !important;
+  z-index:30 !important;
+  right:13px !important;
+  top:12px !important;
+  pointer-events:auto !important;
+}
+
+/* Handle belongs to the outer window and stays in place. */
+.si-modal-card::before{
+  flex:0 0 auto !important;
+  position:relative !important;
+  z-index:20 !important;
+}
+
+/* Secondary immersive sheet handle remains on its outer sheet. */
+.si-page:not(#page-overview).active-page::before{
+  position:sticky !important;
+  top:-19px !important;
+  z-index:30 !important;
+  pointer-events:none !important;
+}
+
+/* Dock must stay above sheets and map hit areas. */
+.si-immersive-dock{
+  z-index:140 !important;
+}
+.si-sheet-close{
+  z-index:145 !important;
+}
+
+/* Graph itself remains interactive when no sheet is covering it. */
+.si-graph,
+.si-graph-canvas{
+  pointer-events:auto !important;
+}

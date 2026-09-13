@@ -40,7 +40,28 @@ async function renderWallets(){try{const ds=await Promise.all(state.entities.map
 function renderTokens(){const a=state.tokens;$('#tokensGrid').innerHTML=a.map(t=>`<article class="si-panel si-token-card" data-token="${esc(t.mint)}">${avatar(t,'md')}<div><span class="si-token-symbol">${esc(t.symbol||'TOKEN')}</span><p>${esc(t.name||'Unknown')}<br><small>${short(t.mint)}</small></p><small>${t.is_pump?'Pump.fun / PumpSwap':esc(t.dex_id||'Solana')} · MC ${money(t.market_cap||0)}</small></div><strong class="${Number(t.price_change)>=0?'pos':'neg'}">${Number(t.price_change)>=0?'+':''}${Number(t.price_change||0).toFixed(1)}%</strong></article>`).join('')||'<div class="guest-note">Tokens appear after observed activity.</div>';$$('[data-token]').forEach(x=>x.onclick=()=>openObject('token',{mint:x.dataset.token}))}
 function renderFeed(){const a=state.overview?.feed||[];$('#fullFeed').innerHTML=a.map(x=>`<div class="si-feed-row">${avatar(x,'md')}<div><h3>${esc(x.title||x.type||'Activity')}</h3><p>${esc(x.detail||x.symbol||x.walletAddress||'')}</p><time>${esc(x.entityName||'Unknown')} · ${ago(x.createdAt)}</time></div><strong class="${Number(x.value)<0?'neg':'pos'}">${x.value!=null?(Number(x.value)>0?'+':'')+esc(x.value)+'%':''}</strong></div>`).join('')||'<div class="guest-note">No live events yet.</div>';loadHealth()}
 async function loadHealth(){try{const h=await api('/api/health');$('#liveHealth').innerHTML=`<div class="si-health-line"><span>Solana</span><strong>${esc(h.live?.solana?.status||'unknown')}</strong></div><div class="si-health-line"><span>Provider</span><strong>${esc(h.live?.solana?.provider||'')}</strong></div><div class="si-health-line"><span>X API</span><strong>${h.intelligence?.x?.configured?'configured':'not configured'}</strong></div>`}catch{}}
-function modal(html){$('#modalBody').innerHTML=html;$('#modal').classList.remove('hidden')}
+function modal(html){
+  // SINGLE-WINDOW RULE:
+  // The immersive navigation pages are sheets over the map.
+  // Before opening a detail/modal, collapse any active sheet so we never
+  // show sheet + modal at the same time (double chrome / double X).
+  $$('.si-page').forEach(page=>{
+    if(page.id!=='page-overview') page.classList.remove('active-page');
+  });
+  $('#page-overview')?.classList.add('active-page');
+
+  // Keep the dock/navigation visually on Map while a detail window is open.
+  $$('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav==='overview'));
+
+  // Reuse ONE modal shell. Replacing innerHTML means opening wallet/token/
+  // entity from inside an already-open detail replaces the current content
+  // instead of creating another visual layer.
+  state.detailGraph?.destroy();
+  state.detailGraph=null;
+  $('#modalBody').innerHTML=html;
+  $('#modal').classList.remove('hidden');
+  $('#modalBody').scrollTop=0;
+}
 function closeModal(){state.detailGraph?.destroy();state.detailGraph=null;$('#modal').classList.add('hidden');$('#modalBody').innerHTML=''}
 function authModal(mode){const login=mode==='login';modal(`<h2>${login?'Welcome back':'Create account'}</h2><p>${login?'Sign in to access private features.':'The first registered account becomes owner when no owner exists.'}</p><form id="authForm" class="si-modal-form">${login?'':'<label>Display name<input name="displayName" required></label>'}<label>Email<input name="email" type="email" required></label><label>Password<input name="password" type="password" minlength="8" required></label><button class="si-button primary">${login?'Sign in':'Create account'}</button><button type="button" id="authSwitch" class="si-button secondary">${login?'Create an account':'Sign in instead'}</button></form>`);$('#authSwitch').onclick=()=>authModal(login?'register':'login');$('#authForm').onsubmit=async e=>{e.preventDefault();try{const d=await api(`/api/auth/${login?'login':'register'}`,{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});state.user=d.user;setAuth();closeModal();toast('Signed in');refresh()}catch(e){toast(e.message)}}}
 async function openObject(kind,raw){

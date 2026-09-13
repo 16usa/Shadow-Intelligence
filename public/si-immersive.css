@@ -1,0 +1,244 @@
+/* Shadow Intelligence — Immersive Map Shell v1.0
+   Additive layout layer. Keeps the existing data/model/UI logic intact. */
+:root{
+  --imm-glass:rgba(255,255,255,.82);
+  --imm-glass-strong:rgba(255,255,255,.94);
+  --imm-sheet:rgba(255,255,255,.95);
+  --imm-line:rgba(15,20,25,.12);
+  --imm-shadow:0 22px 70px rgba(15,20,25,.18);
+  --imm-dock-shadow:0 10px 34px rgba(15,20,25,.16);
+}
+html[data-theme=dark]{
+  --imm-glass:rgba(8,12,18,.70);
+  --imm-glass-strong:rgba(8,12,18,.90);
+  --imm-sheet:rgba(7,10,15,.94);
+  --imm-line:rgba(255,255,255,.12);
+  --imm-shadow:0 26px 80px rgba(0,0,0,.54);
+  --imm-dock-shadow:0 14px 44px rgba(0,0,0,.48);
+}
+html,body{height:100%;overscroll-behavior:none}
+body{overflow:hidden!important;background:var(--si-bg)}
+.si-app{min-height:100dvh!important;overflow:hidden;background:var(--si-bg)}
+
+/* Floating top controls — logo / search / theme / account. */
+.si-topbar{
+  position:fixed!important;
+  top:calc(env(safe-area-inset-top,0px) + 10px)!important;
+  left:12px!important;
+  right:12px!important;
+  z-index:80!important;
+  height:44px!important;
+  min-height:44px!important;
+  display:flex!important;
+  align-items:center!important;
+  gap:9px!important;
+  padding:0!important;
+  border:0!important;
+  background:transparent!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+  pointer-events:none;
+}
+.si-topbar>*{pointer-events:auto}
+.si-brand{
+  width:42px!important;height:42px!important;flex:0 0 42px!important;
+  display:grid!important;place-items:center!important;
+  padding:0!important;border:1px solid var(--imm-line)!important;
+  border-radius:13px!important;background:var(--imm-glass)!important;
+  box-shadow:var(--imm-dock-shadow)!important;
+  backdrop-filter:blur(22px) saturate(150%)!important;
+  -webkit-backdrop-filter:blur(22px) saturate(150%)!important;
+}
+.si-brand img{width:23px!important;height:23px!important;margin:0!important}
+.si-brand span{display:none!important}
+.si-mainnav{display:none!important}
+.si-top-actions{margin-left:auto!important;display:flex!important;align-items:center!important;gap:8px!important;min-width:0!important}
+.si-search{
+  width:min(42vw,360px)!important;height:42px!important;
+  border:1px solid var(--imm-line)!important;border-radius:999px!important;
+  background:var(--imm-glass)!important;box-shadow:var(--imm-dock-shadow)!important;
+  backdrop-filter:blur(22px) saturate(150%)!important;
+  -webkit-backdrop-filter:blur(22px) saturate(150%)!important;
+  padding:0 14px!important;
+}
+.si-search input{font-size:14px!important;min-width:0!important}
+.si-icon,.si-user{
+  width:42px!important;height:42px!important;min-width:42px!important;
+  padding:0!important;border:1px solid var(--imm-line)!important;border-radius:50%!important;
+  background:var(--imm-glass)!important;box-shadow:var(--imm-dock-shadow)!important;
+  backdrop-filter:blur(22px) saturate(150%)!important;
+  -webkit-backdrop-filter:blur(22px) saturate(150%)!important;
+}
+.si-icon{display:grid!important;place-items:center!important}
+.si-user{display:grid!important;place-items:center!important;overflow:hidden!important}
+.si-user #userLabel{display:none!important}
+.si-user #userAvatar{width:32px!important;height:32px!important;margin:0!important}
+
+/* The graph is the application surface. */
+.si-layout{display:block!important;min-height:100dvh!important}
+.si-rail{display:none!important}
+.si-main{position:relative!important;min-height:100dvh!important;min-width:0!important}
+#page-overview{
+  display:block!important;position:fixed!important;inset:0!important;
+  z-index:0!important;padding:0!important;margin:0!important;max-width:none!important;
+}
+#page-overview .si-map-header{position:fixed!important;inset:auto 14px auto auto!important;top:calc(env(safe-area-inset-top,0px) + 66px)!important;z-index:78!important;margin:0!important;pointer-events:none}
+#page-overview .si-map-header>div:first-child{display:none!important}
+#page-overview .si-map-actions{display:flex!important;gap:8px!important;pointer-events:auto!important}
+#fitMap{display:none!important}
+#addEntityBtn{
+  width:42px!important;height:42px!important;padding:0!important;border-radius:50%!important;
+  font-size:0!important;background:var(--imm-glass)!important;color:var(--si-text)!important;
+  border:1px solid var(--imm-line)!important;box-shadow:var(--imm-dock-shadow)!important;
+  backdrop-filter:blur(22px) saturate(150%)!important;
+  -webkit-backdrop-filter:blur(22px) saturate(150%)!important;
+}
+#addEntityBtn::before{content:"+";font-size:23px;font-weight:500;line-height:1}
+.si-map-layout{display:block!important;width:100%!important;height:100dvh!important}
+.si-map-card{
+  position:fixed!important;inset:0!important;z-index:0!important;width:100%!important;height:100dvh!important;
+  border:0!important;border-radius:0!important;box-shadow:none!important;overflow:hidden!important;
+  background:var(--si-bg)!important;
+}
+#globalMap,.si-map-card>.si-graph{width:100%!important;height:100dvh!important;min-height:100dvh!important}
+.si-side-stack,.si-bottom-grid{display:none!important}
+.si-graph-hud{
+  left:14px!important;right:auto!important;top:calc(env(safe-area-inset-top,0px) + 67px)!important;
+  width:auto!important;max-width:calc(100vw - 84px)!important;
+  gap:10px!important;padding:7px 9px!important;border:1px solid var(--imm-line)!important;
+  border-radius:999px!important;background:var(--imm-glass)!important;
+  box-shadow:var(--imm-dock-shadow)!important;backdrop-filter:blur(20px) saturate(150%)!important;
+  -webkit-backdrop-filter:blur(20px) saturate(150%)!important;
+}
+.si-graph-hud button{margin-left:2px!important;background:transparent!important;border-color:var(--imm-line)!important;padding:5px 9px!important}
+.si-map-footer{
+  position:absolute!important;left:50%!important;right:auto!important;bottom:calc(env(safe-area-inset-bottom,0px) + 82px)!important;
+  transform:translateX(-50%)!important;width:max-content!important;max-width:calc(100vw - 24px)!important;
+  z-index:4!important;display:flex!important;align-items:center!important;gap:16px!important;
+  padding:7px 11px!important;border:1px solid var(--imm-line)!important;border-radius:999px!important;
+  background:var(--imm-glass)!important;box-shadow:var(--imm-dock-shadow)!important;
+  backdrop-filter:blur(20px) saturate(150%)!important;-webkit-backdrop-filter:blur(20px) saturate(150%)!important;
+}
+
+/* Bottom navigation lives above the map and never replaces it. */
+.si-immersive-dock{
+  position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 12px);transform:translateX(-50%);
+  z-index:84;display:flex;align-items:center;gap:3px;max-width:calc(100vw - 20px);
+  padding:6px;border:1px solid var(--imm-line);border-radius:999px;
+  background:var(--imm-glass);box-shadow:var(--imm-dock-shadow);
+  backdrop-filter:blur(24px) saturate(160%);-webkit-backdrop-filter:blur(24px) saturate(160%);
+}
+.si-immersive-dock button{
+  min-width:50px;height:48px;padding:5px 9px;border:0;border-radius:999px;background:transparent;color:var(--si-muted);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer;transition:background .16s ease,color .16s ease,transform .16s ease;
+}
+.si-immersive-dock button:hover{color:var(--si-text);background:color-mix(in srgb,var(--si-text) 7%,transparent)}
+.si-immersive-dock button:active{transform:scale(.96)}
+.si-immersive-dock button.active{color:var(--si-text);background:color-mix(in srgb,var(--si-text) 10%,transparent)}
+.si-immersive-dock svg{width:18px;height:18px;display:block;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.si-immersive-dock span{font-size:9px;font-weight:720;letter-spacing:.01em;line-height:1}
+
+/* All secondary sections become floating bottom sheets over the live graph. */
+.si-page:not(#page-overview){display:none!important}
+.si-page:not(#page-overview).active-page{
+  display:block!important;position:fixed!important;left:50%!important;right:auto!important;
+  bottom:calc(env(safe-area-inset-bottom,0px) + 76px)!important;transform:translateX(-50%)!important;
+  z-index:60!important;width:min(1120px,calc(100vw - 24px))!important;
+  max-width:none!important;max-height:calc(100dvh - env(safe-area-inset-top,0px) - 92px)!important;
+  margin:0!important;padding:27px 20px 22px!important;overflow:auto!important;overscroll-behavior:contain!important;
+  border:1px solid var(--imm-line)!important;border-radius:26px!important;background:var(--imm-sheet)!important;
+  box-shadow:var(--imm-shadow)!important;backdrop-filter:blur(28px) saturate(150%)!important;
+  -webkit-backdrop-filter:blur(28px) saturate(150%)!important;
+  animation:si-sheet-in .22s cubic-bezier(.2,.8,.2,1) both;
+}
+.si-page:not(#page-overview).active-page::before{
+  content:"";position:sticky;display:block;top:-19px;margin:-2px auto 15px;width:36px;height:4px;border-radius:999px;
+  background:color-mix(in srgb,var(--si-muted) 58%,transparent);z-index:2;
+}
+.si-page:not(#page-overview).active-page .si-page-head{margin:0 0 17px!important;align-items:center!important}
+.si-page:not(#page-overview).active-page .si-page-head h1{font-size:22px!important;margin:2px 0!important}
+.si-page:not(#page-overview).active-page .si-page-head p{font-size:12px!important}
+.si-page:not(#page-overview).active-page .si-panel{box-shadow:none!important;background:color-mix(in srgb,var(--si-panel) 76%,transparent)!important;border-color:var(--imm-line)!important}
+#page-entities.active-page,#page-wallets.active-page,#page-tokens.active-page,#page-feed.active-page,#page-evidence.active-page{height:min(74dvh,740px)!important}
+#page-messages.active-page{height:min(80dvh,820px)!important}
+#page-settings.active-page{height:min(84dvh,860px)!important}
+
+/* Chat is intentionally compact: a lower-third conversation tray. */
+#page-chat.active-page{height:min(38dvh,410px)!important;min-height:290px!important;padding:18px 16px 14px!important;overflow:hidden!important}
+#page-chat.active-page::before{top:-10px;margin:0 auto 8px}
+#page-chat .si-page-head{display:none!important}
+#page-chat .si-chat{height:100%!important;max-width:none!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important;display:flex!important;flex-direction:column!important}
+#page-chat .si-chat-messages{flex:1!important;min-height:0!important;height:auto!important;overflow:auto!important;padding:2px 2px 6px!important}
+#page-chat .si-composer{flex:0 0 auto!important;margin:4px 0 0!important;padding-top:9px!important}
+#page-chat .guest-note{padding:8px 0!important}
+
+/* Messages / settings use the full sheet comfortably. */
+#page-messages .si-messages-layout{height:calc(100% - 82px)!important;min-height:0!important}
+#page-messages .si-messages-layout>.si-panel{min-height:0!important;overflow:auto!important}
+#page-messages .si-dm-messages{height:calc(100% - 94px)!important;min-height:220px!important}
+#page-settings .si-settings{padding-bottom:8px!important}
+
+/* Close control for any open sheet. */
+.si-sheet-close{
+  position:fixed;right:14px;top:calc(env(safe-area-inset-top,0px) + 67px);z-index:88;
+  width:42px;height:42px;border:1px solid var(--imm-line);border-radius:14px;
+  display:grid;place-items:center;background:var(--imm-glass);color:var(--si-text);box-shadow:var(--imm-dock-shadow);
+  backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);
+  opacity:0;pointer-events:none;transform:scale(.92);transition:opacity .15s ease,transform .15s ease;cursor:pointer;
+}
+.si-sheet-close svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round}
+body:has(.si-page.active-page:not(#page-overview)) .si-sheet-close{opacity:1;pointer-events:auto;transform:scale(1)}
+body:has(.si-page.active-page:not(#page-overview)) #page-overview{filter:brightness(.84) saturate(.78);transition:filter .18s ease}
+body:not(:has(.si-page.active-page:not(#page-overview))) #page-overview{filter:none;transition:filter .18s ease}
+
+/* Detail/auth/add forms also slide from the bottom rather than taking over the scene. */
+.si-modal{
+  z-index:96!important;place-items:end center!important;padding:14px 14px 0!important;
+  background:rgba(0,0,0,.28)!important;backdrop-filter:blur(4px)!important;-webkit-backdrop-filter:blur(4px)!important;
+}
+.si-modal-card{
+  width:min(1120px,100%)!important;max-height:86dvh!important;margin:0!important;
+  border-color:var(--imm-line)!important;border-radius:28px 28px 0 0!important;
+  background:var(--imm-sheet)!important;box-shadow:var(--imm-shadow)!important;
+  padding:27px 24px calc(24px + env(safe-area-inset-bottom,0px))!important;
+  animation:si-modal-in .22s cubic-bezier(.2,.8,.2,1) both;
+}
+.si-modal-card::before{content:"";display:block;width:36px;height:4px;margin:-14px auto 16px;border-radius:999px;background:color-mix(in srgb,var(--si-muted) 58%,transparent)}
+.si-modal-close{width:38px!important;height:38px!important;display:grid!important;place-items:center!important;right:13px!important;top:12px!important;border:1px solid var(--imm-line)!important;border-radius:50%!important;background:color-mix(in srgb,var(--si-panel) 70%,transparent)!important;font-size:22px!important}
+
+@keyframes si-sheet-in{from{opacity:0;transform:translate(-50%,22px) scale(.985)}to{opacity:1;transform:translate(-50%,0) scale(1)}}
+@keyframes si-modal-in{from{opacity:0;transform:translateY(26px)}to{opacity:1;transform:translateY(0)}}
+
+@media(max-width:720px){
+  .si-topbar{left:10px!important;right:10px!important;gap:7px!important}
+  .si-brand{width:40px!important;height:40px!important;flex-basis:40px!important;border-radius:12px!important}
+  .si-top-actions{gap:6px!important;flex:1!important;justify-content:flex-end!important}
+  .si-search{width:min(52vw,238px)!important;height:40px!important;padding:0 12px!important}
+  .si-icon,.si-user{width:40px!important;height:40px!important;min-width:40px!important}
+  .si-map-footer{bottom:calc(env(safe-area-inset-bottom,0px) + 80px)!important;font-size:9px!important;gap:8px!important}
+  .si-map-footer span:first-child{display:none!important}
+  .si-graph-hud{top:calc(env(safe-area-inset-top,0px) + 64px)!important;font-size:9px!important;gap:7px!important}
+  .si-graph-hud>span:nth-child(2){display:none!important}
+  #page-overview .si-map-header{top:calc(env(safe-area-inset-top,0px) + 64px)!important}
+  .si-immersive-dock{bottom:calc(env(safe-area-inset-bottom,0px) + 9px);padding:5px;gap:1px}
+  .si-immersive-dock button{min-width:46px;height:46px;padding:4px 7px}
+  .si-immersive-dock svg{width:17px;height:17px}
+  .si-immersive-dock span{font-size:8.5px}
+  .si-page:not(#page-overview).active-page{bottom:calc(env(safe-area-inset-bottom,0px) + 70px)!important;width:calc(100vw - 12px)!important;padding:23px 14px 17px!important;border-radius:24px!important;max-height:calc(100dvh - env(safe-area-inset-top,0px) - 82px)!important}
+  #page-chat.active-page{height:min(39dvh,390px)!important;min-height:285px!important;padding:16px 12px 12px!important}
+  #page-messages.active-page,#page-settings.active-page{height:84dvh!important}
+  #page-entities.active-page,#page-wallets.active-page,#page-tokens.active-page,#page-feed.active-page,#page-evidence.active-page{height:76dvh!important}
+  .si-sheet-close{right:10px;top:calc(env(safe-area-inset-top,0px) + 63px);width:40px;height:40px;border-radius:13px}
+  .si-modal{padding:8px 6px 0!important}
+  .si-modal-card{max-height:90dvh!important;border-radius:25px 25px 0 0!important;padding:24px 15px calc(18px + env(safe-area-inset-bottom,0px))!important}
+  .si-detail-layout{grid-template-columns:1fr!important}
+  .si-detail-map{min-height:42dvh!important}
+  .si-detail-map .si-graph{min-height:42dvh!important}
+}
+@media(max-width:390px){
+  .si-search{width:44vw!important}
+  .si-immersive-dock button{min-width:43px;padding-inline:5px}
+  .si-immersive-dock span{font-size:8px}
+}
+@media(prefers-reduced-motion:reduce){.si-page:not(#page-overview).active-page,.si-modal-card{animation:none!important}.si-immersive-dock button,.si-sheet-close{transition:none!important}}
+@supports not ((backdrop-filter:blur(2px)) or (-webkit-backdrop-filter:blur(2px))){.si-topbar .si-brand,.si-search,.si-icon,.si-user,.si-immersive-dock,.si-map-footer,.si-graph-hud,.si-sheet-close{background:var(--imm-glass-strong)!important}.si-page:not(#page-overview).active-page,.si-modal-card{background:var(--si-panel)!important}}

@@ -7,3 +7,7 @@ node_modules/
 
 backups/
 *.zip
+
+.shadow-backups/
+*.zip
+node_modules/
