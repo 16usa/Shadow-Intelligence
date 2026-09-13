@@ -262,8 +262,29 @@ async function api(req, res, db, url, live) {
   }
   if (route === '/api/chat/messages' && method === 'POST') {
     if(getSetting(db,'community_chat_enabled','true')!=='true')return json(res,403,{error:'Community chat disabled'});
-    const user=requireUser(req,res,db); if(!user)return; const b=await readJson(req); const body=clean(b.body,800); if(!body)return json(res,400,{error:'Message cannot be empty'});
-    db.prepare('INSERT INTO chat_messages (id,user_id,body,created_at) VALUES (?,?,?,?)').run(id('chat_'),user.id,body,nowIso()); return json(res,201,{ok:true});
+    const user=requireUser(req,res,db); if(!user)return;
+    const b=await readJson(req);
+    const body=clean(b.body,800);
+    if(!body)return json(res,400,{error:'Message cannot be empty'});
+
+    const chatId=id('chat_');
+    const createdAt=nowIso();
+
+    db.prepare('INSERT INTO chat_messages (id,user_id,body,created_at) VALUES (?,?,?,?)')
+      .run(chatId,user.id,body,createdAt);
+
+    return json(res,201,{
+      ok:true,
+      item:{
+        id:chatId,
+        body,
+        createdAt,
+        userId:user.id,
+        displayName:user.displayName,
+        avatar:user.avatar||'',
+        role:user.role
+      }
+    });
   }
   if (route === '/api/users' && method === 'GET') {
     const user=requireUser(req,res,db); if(!user)return; const q=`%${clean(url.searchParams.get('q'),80)}%`;

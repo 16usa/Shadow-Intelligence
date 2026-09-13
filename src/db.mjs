@@ -43,6 +43,7 @@ export function openDb(path = process.env.DB_PATH || './shadow-intelligence.db')
     CREATE TABLE IF NOT EXISTS copy_groups (id TEXT PRIMARY KEY,name TEXT NOT NULL,mode TEXT NOT NULL DEFAULT 'watch',enabled INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS copy_group_wallets (group_id TEXT NOT NULL REFERENCES copy_groups(id) ON DELETE CASCADE,wallet_id TEXT NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,PRIMARY KEY (group_id,wallet_id));
     CREATE TABLE IF NOT EXISTS chat_messages (id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,body TEXT NOT NULL,created_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at ON chat_messages(created_at DESC);
     CREATE TABLE IF NOT EXISTS direct_messages (id TEXT PRIMARY KEY,sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,recipient_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,body TEXT NOT NULL,created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY,value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS wallet_activity (

@@ -61,26 +61,130 @@ function backPage(){
 
 async function boot(){
  try{const me=await api('/api/me');state.user=me.user;state.settings=me.settings||{};document.title=state.settings.platformName||'Shadow Intelligence'}catch{}
- setAuth();bind();await refresh();nav('overview',{push:false,replace:true});setInterval(refresh,7000);
+ setAuth();bind();await refresh();nav('overview',{push:false,replace:true});
+ setInterval(()=>{
+   if(!['chat','messages','settings'].includes(currentPage))refresh();
+ },7000);
 }
 function bind(){
- $$('[data-nav]').forEach(b=>b.onclick=()=>nav(b.dataset.nav));$('#themeToggle').onclick=toggleTheme;$('#adminTheme').onclick=toggleTheme;$('#userButton').onclick=()=>state.user?nav('messages'):authModal('login');$('#modalClose').onclick=closeModal;$('#modal').onclick=e=>{if(e.target.id==='modal')closeModal()};$('#addEntityBtn').onclick=entityModal;$('#entitiesAddBtn').onclick=entityModal;$('#evidenceAddBtn').onclick=evidenceModal;$('#chatForm').onsubmit=sendChat;$('#dmForm').onsubmit=sendDm;$('#userSearch').oninput=()=>searchUsers($('#userSearch').value);$('#settingsForm').onsubmit=saveSettings;$('#globalSearch').onkeydown=e=>{if(e.key==='Enter')searchGlobal(e.target.value)};$('#fitMap').onclick=()=>state.graph?.fit();
+ $$('[data-nav]').forEach(b=>b.onclick=()=>{
+   const target=b.dataset.nav;
+   nav(target);
+   if(target==='overview' && state.overview && !state.graph){
+     renderOverview().catch(e=>console.error('Map retry failed',e));
+   }
+ });$('#themeToggle').onclick=toggleTheme;$('#adminTheme').onclick=toggleTheme;$('#userButton').onclick=()=>state.user?nav('messages'):authModal('login');$('#modalClose').onclick=closeModal;$('#modal').onclick=e=>{if(e.target.id==='modal')closeModal()};$('#addEntityBtn').onclick=entityModal;$('#entitiesAddBtn').onclick=entityModal;$('#evidenceAddBtn').onclick=evidenceModal;$('#chatForm').onsubmit=sendChat;$('#dmForm').onsubmit=sendDm;$('#userSearch').oninput=()=>searchUsers($('#userSearch').value);$('#settingsForm').onsubmit=saveSettings;$('#globalSearch').onkeydown=e=>{if(e.key==='Enter')searchGlobal(e.target.value)};$('#fitMap').onclick=()=>state.graph?.fit();
   $('#pageBack').onclick=backPage;
   window.addEventListener('popstate',e=>{
     const name=e.state?.shadowPage||'overview';
     nav(name,{push:false});
   });
 }
-async function refresh(){try{const [o,l,e,t]=await Promise.all([api('/api/overview'),api('/api/live/status').catch(()=>null),api('/api/entities'),api('/api/tokens')]);state.overview=o;state.entities=e.items||[];state.tokens=t.items||[];renderOverview(l);if($('#page-feed')?.classList.contains('active-page'))renderFeed();}catch(e){toast(e.message)}}
+async function refresh(){
+  try{
+    const [o,l,e,t]=await Promise.all([
+      api('/api/overview'),
+      api('/api/live/status').catch(()=>null),
+      api('/api/entities'),
+      api('/api/tokens')
+    ]);
+    state.overview=o;
+    state.entities=e.items||[];
+    state.tokens=t.items||[];
+
+    if(currentPage==='overview')await renderOverview(l);
+    if(currentPage==='feed')renderFeed();
+    if(currentPage==='entities')renderEntities();
+    if(currentPage==='tokens')renderTokens();
+  }catch(e){
+    toast(e.message);
+  }
+}
 async function buildGlobalModel(){
  const details=await Promise.all(state.entities.slice(0,18).map(async e=>{try{return await api(`/api/entities/${e.id}`)}catch{return null}}));state.details.clear();details.filter(Boolean).forEach(d=>state.details.set(d.entity.id,d));
  const wallets=details.filter(Boolean).flatMap(d=>d.wallets||[]);
  const seen=new Set(),tokens=[];details.filter(Boolean).forEach(d=>(d.tokens||[]).forEach(t=>{if(!seen.has(t.mint)){seen.add(t.mint);tokens.push({...t,entity_id:d.entity.id})}}));
  return{entities:state.entities.slice(0,18),wallets:wallets.slice(0,36),tokens:tokens.slice(0,42),activity:details.flatMap(d=>d.incidents||[]).slice(0,80)}
 }
+/* SHADOW_GRAPH_BOOT_RECOVERY_V204_START */
+let shadowGraphBootPromise=null;
+
+async function ensureShadowGraph(){
+  if(typeof window.ShadowGraph==='function')return window.ShadowGraph;
+  if(shadowGraphBootPromise)return shadowGraphBootPromise;
+
+  shadowGraphBootPromise=new Promise((resolve,reject)=>{
+    const done=()=>{
+      if(typeof window.ShadowGraph==='function')resolve(window.ShadowGraph);
+      else reject(new Error('3D engine loaded but ShadowGraph is unavailable'));
+    };
+
+    document.querySelectorAll('script[data-shadow-graph-recovery]').forEach(x=>x.remove());
+
+    const tag=document.createElement('script');
+    tag.src='/si-graph.js?v=graph-recovery-2.0.4-20260913221305';
+    tag.dataset.shadowGraphRecovery='1';
+    tag.async=false;
+    tag.onload=done;
+    tag.onerror=()=>reject(new Error('Failed to load 3D engine'));
+    document.head.appendChild(tag);
+
+    setTimeout(()=>{
+      if(typeof window.ShadowGraph==='function')resolve(window.ShadowGraph);
+    },120);
+  });
+
+  try{
+    return await shadowGraphBootPromise;
+  }catch(error){
+    shadowGraphBootPromise=null;
+    throw error;
+  }
+}
+
+function bootGlobalGraph(model){
+  const root=$('#globalMap');
+  if(!root)throw new Error('3D root #globalMap is missing');
+
+  return ensureShadowGraph().then(Graph=>{
+    try{ state.graph?.destroy?.(); }catch(error){ console.warn('Previous graph destroy failed',error); }
+    state.graph=null;
+
+    root.replaceChildren();
+
+    const instance=new Graph(root,model,{onSelect:openObject});
+    state.graph=instance;
+
+    try{
+      if(instance.raf){
+        cancelAnimationFrame(instance.raf);
+        instance.raf=0;
+      }
+      instance.resize?.();
+      instance.render?.();
+    }catch(error){
+      try{instance.destroy?.()}catch{}
+      state.graph=null;
+      throw error;
+    }
+
+    return instance;
+  });
+}
+/* SHADOW_GRAPH_BOOT_RECOVERY_V204_END */
+
 async function renderOverview(live){
  const o=state.overview, model=await buildGlobalModel();$('#mapCounts').textContent=`${model.entities.length} entities · ${model.wallets.length} wallets · ${model.tokens.length} tokens`;
- if(state.graph)state.graph.destroy();state.graph=new ShadowGraph($('#globalMap'),model,{onSelect:openObject});$('#focusPanel').innerHTML=o.selected?focusHtml(o.selected):'<div class="guest-note">Add an entity to begin mapping intelligence.</div>';renderLive(o.feed||[]);renderEntitiesStrip();renderConnections(model);
+ try{
+   await bootGlobalGraph(model);
+ }catch(error){
+   console.error('Shadow 3D boot failed:',error);
+   const root=$('#globalMap');
+   if(root){
+     root.innerHTML='<div class="si-graph-recovery-error">3D renderer unavailable. Tap Map to retry.</div>';
+   }
+   toast('3D renderer failed to start');
+ }$('#focusPanel').innerHTML=o.selected?focusHtml(o.selected):'<div class="guest-note">Add an entity to begin mapping intelligence.</div>';renderLive(o.feed||[]);renderEntitiesStrip();renderConnections(model);
  $('#railStatus').textContent=live?.solana?.status==='online'?'online':'check';
 }
 function focusHtml(e){const d=state.details.get(e.id),ws=d?.wallets?.length??e.walletCount??0,ts=d?.tokens?.length??0;return`<div class="si-focus-main">${avatar(e,'lg')}<div><h3>${esc(e.name)}</h3><p>${esc(e.x_handle||'')} · ${e.confidence||0}% confidence</p></div></div><div class="si-metrics"><div class="si-metric"><strong>${ws}</strong><small>Wallets</small></div><div class="si-metric"><strong>${ts}</strong><small>Tokens</small></div><div class="si-metric"><strong>${e.riskScore||0}</strong><small>Signal</small></div></div>`}
@@ -124,40 +228,96 @@ function tokenDetail(t){const related=state.overview?.feed?.filter(x=>x.symbol==
 function entityModal(){modal(`<h2>Add entity</h2><form id="entityForm" class="si-modal-form"><label>Name<input name="name" required placeholder="Entity name"></label><label>X handle<input name="xHandle" placeholder="@handle"></label><label>Avatar URL<input name="avatar" placeholder="https://…"></label><label>Initial wallet<input name="wallet" placeholder="Solana address"></label><label>Notes<textarea name="notes" rows="4"></textarea></label><button class="si-button primary">Create entity</button></form>`);$('#entityForm').onsubmit=async e=>{e.preventDefault();const b=Object.fromEntries(new FormData(e.target));try{const x=await api('/api/entities',{method:'POST',body:JSON.stringify(b)});if(b.wallet)await api(`/api/entities/${x.id}/wallets`,{method:'POST',body:JSON.stringify({address:b.wallet,label:'Main wallet'})});closeModal();toast('Entity created');await refresh();nav('entities')}catch(x){toast(x.message)}}}
 function evidenceModal(){modal(`<h2>Add evidence</h2><form id="evidenceForm" class="si-modal-form"><label>Title<input name="title" required></label><label>Entity<select name="entityId"><option value="">General</option>${state.entities.map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join('')}</select></label><label>Type<select name="kind"><option value="x_post">X post</option><option value="profile">Profile</option><option value="transaction">Transaction</option><option value="screenshot">Screenshot</option><option value="note">Research note</option></select></label><label>Source URL<input name="sourceUrl" type="url"></label><label>Note<textarea name="note" rows="5"></textarea></label><button class="si-button primary">Submit evidence</button></form>`);$('#evidenceForm').onsubmit=async e=>{e.preventDefault();try{await api('/api/evidence',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});closeModal();toast('Evidence saved');loadEvidence()}catch(x){toast(x.message)}}}
 async function loadEvidence(){try{const d=await api('/api/evidence');$('#evidenceGrid').innerHTML=d.items.map(e=>`<article class="si-panel"><div class="si-eyebrow">${esc(e.kind)}</div><h3>${esc(e.title)}</h3><p>${esc(e.entityName||'General')} · ${ago(e.created_at)}</p><p>${esc(e.note||e.source_url||'')}</p></article>`).join('')||'<div class="guest-note">No evidence yet.</div>'}catch(e){toast(e.message)}}
+let chatLoadSeq=0;
+
 async function loadChat(){
   const box=$('#chatMessages');
   if(!box)return;
 
+  const seq=++chatLoadSeq;
+  box.setAttribute('aria-busy','true');
+
+  if(!box.childElementCount){
+    box.innerHTML='<div class="si-chat-loading">Loading messages…</div>';
+  }
+
   try{
     const d=await api('/api/chat/messages');
+    if(seq!==chatLoadSeq)return;
+
     const items=Array.isArray(d.items)?d.items:[];
 
     box.innerHTML=items.map(m=>`<div class="si-chat-message">${avatar(m,'sm')}<div class="si-chat-bubble"><strong>${esc(m.displayName)}</strong><time>${ago(m.createdAt)}</time><p>${esc(m.body)}</p></div></div>`).join('')||'<div class="guest-note">Start the conversation.</div>';
+    box.removeAttribute('aria-busy');
 
-    // Server already returns chronological order: oldest -> newest.
-    // Open directly on the latest message inside the message viewport.
-    const latest=()=>{ box.scrollTop=box.scrollHeight; };
-    latest();
-    requestAnimationFrame(latest);
-    setTimeout(latest,80);
+    const toLatest=()=>{ box.scrollTop=Math.max(0,box.scrollHeight-box.clientHeight); };
+    toLatest();
+    requestAnimationFrame(toLatest);
+    requestAnimationFrame(()=>requestAnimationFrame(toLatest));
   }catch(e){
+    if(seq!==chatLoadSeq)return;
+    box.removeAttribute('aria-busy');
     box.innerHTML=`<div class="guest-note">${esc(e.message)}</div>`;
   }
 }
 
 async function sendChat(e){
   e.preventDefault();
+
   const i=$('#chatInput');
-  if(!i.value.trim())return;
+  const box=$('#chatMessages');
+  const body=(i?.value||'').trim();
+
+  if(!body||!box)return;
+
+  // Render immediately. Do NOT wait for network / reload.
+  const tempId='chat_tmp_'+Date.now()+'_'+Math.random().toString(36).slice(2,8);
+  const me=state.user||{displayName:'You',avatar:''};
+
+  box.insertAdjacentHTML('beforeend',`
+    <div class="si-chat-message" data-chat-temp="${tempId}">
+      ${avatar(me,'sm')}
+      <div class="si-chat-bubble">
+        <strong>${esc(me.displayName||'You')}</strong>
+        <time>sending...</time>
+        <p>${esc(body)}</p>
+      </div>
+    </div>
+  `);
+
+  i.value='';
+
+  const optimistic=box.querySelector(`[data-chat-temp="${tempId}"]`);
+  const time=optimistic?.querySelector('time');
+
+  const toBottom=()=>{
+    box.scrollTop=Math.max(0,box.scrollHeight-box.clientHeight);
+  };
+  toBottom();
+  requestAnimationFrame(toBottom);
 
   try{
-    await api('/api/chat/messages',{
+    const saved=await api('/api/chat/messages',{
       method:'POST',
-      body:JSON.stringify({body:i.value})
+      body:JSON.stringify({body})
     });
-    i.value='';
-    await loadChat();
+
+    // Server confirmation: keep the already-visible message.
+    if(optimistic){
+      optimistic.removeAttribute('data-chat-temp');
+      if(saved?.item?.id)optimistic.dataset.chatId=saved.item.id;
+    }
+    if(time)time.textContent='now';
+
   }catch(x){
+    // Keep failed bubble visible and restore draft for retry.
+    if(time){
+      time.textContent='not sent';
+      time.style.color='var(--si-pink)';
+    }
+    optimistic?.setAttribute('data-chat-failed','true');
+
+    if(i && !i.value)i.value=body;
     toast(x.message);
   }
 }
