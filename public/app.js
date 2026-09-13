@@ -10,13 +10,66 @@ function avatar(item,size='md'){const src=item?.avatar||item?.image||'';const ke
 function setAuth(){document.body.classList.toggle('is-auth',!!state.user);document.body.classList.toggle('is-owner',['owner','admin'].includes(state.user?.role));$('#userLabel').textContent=state.user?.displayName||'Sign in';$('#userAvatar').outerHTML=avatar(state.user,'sm').replace('class="avatar','id="userAvatar" class="avatar');$$('.auth-only').forEach(x=>x.style.display=state.user?'':'none');$$('.guest-only').forEach(x=>x.style.display=state.user?'none':'');$$('.owner-only').forEach(x=>x.style.display=['owner','admin'].includes(state.user?.role)?'':'none')}
 function theme(){return document.documentElement.dataset.theme==='dark'?'dark':'light'}
 function toggleTheme(){const n=theme()==='dark'?'light':'dark';document.documentElement.dataset.theme=n;localStorage.setItem('si-theme',n);state.graph?.schedule();state.detailGraph?.schedule()}
-function nav(name){let page=$(`#page-${name}`);if(!page)return;if(['messages'].includes(name)&&!state.user)return authModal('login');if(name==='settings'&&!['owner','admin'].includes(state.user?.role))return toast('Owner access required');$$('.si-page').forEach(p=>p.classList.remove('active-page'));page.classList.add('active-page');$$('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav===name));window.scrollTo({top:0,behavior:'instant'});if(name==='entities')renderEntities();if(name==='wallets')renderWallets();if(name==='tokens')renderTokens();if(name==='feed')renderFeed();if(name==='evidence')loadEvidence();if(name==='chat')loadChat();if(name==='messages')loadConversations();if(name==='settings')loadSettings()}
+let currentPage='overview';
+
+function nav(name,{push=true,replace=false}={}){
+  const page=$(`#page-${name}`);
+  if(!page)return;
+  if(['messages'].includes(name)&&!state.user)return authModal('login');
+  if(name==='settings'&&!['owner','admin'].includes(state.user?.role))return toast('Owner access required');
+
+  if(!$('#modal')?.classList.contains('hidden'))closeModal();
+
+  const previous=currentPage;
+  currentPage=name;
+  $$('.si-page').forEach(p=>p.classList.remove('active-page'));
+  page.classList.add('active-page');
+  $$('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav===name));
+
+  if(push && name!==previous){
+    const url=new URL(location.href);
+    url.hash=name==='overview'?'':name;
+    const hist={...(history.state||{}),shadowPage:name};
+    if(replace)history.replaceState(hist,'',url);
+    else history.pushState(hist,'',url);
+  }else if(replace){
+    const url=new URL(location.href);
+    url.hash=name==='overview'?'':name;
+    history.replaceState({...(history.state||{}),shadowPage:name},'',url);
+  }
+
+  try{page.scrollTo({top:0,behavior:'instant'})}catch{page.scrollTop=0}
+
+  if(name==='entities')renderEntities();
+  if(name==='wallets')renderWallets();
+  if(name==='tokens')renderTokens();
+  if(name==='feed')renderFeed();
+  if(name==='evidence')loadEvidence();
+  if(name==='chat')loadChat();
+  if(name==='messages')loadConversations();
+  if(name==='settings')loadSettings();
+}
+
+function backPage(){
+  if(currentPage==='overview')return;
+  if(history.state?.shadowPage===currentPage && history.length>1){
+    history.back();
+    return;
+  }
+  nav('overview',{push:false,replace:true});
+}
+
 async function boot(){
  try{const me=await api('/api/me');state.user=me.user;state.settings=me.settings||{};document.title=state.settings.platformName||'Shadow Intelligence'}catch{}
- setAuth();bind();await refresh();nav('overview');setInterval(refresh,7000);
+ setAuth();bind();await refresh();nav('overview',{push:false,replace:true});setInterval(refresh,7000);
 }
 function bind(){
  $$('[data-nav]').forEach(b=>b.onclick=()=>nav(b.dataset.nav));$('#themeToggle').onclick=toggleTheme;$('#adminTheme').onclick=toggleTheme;$('#userButton').onclick=()=>state.user?nav('messages'):authModal('login');$('#modalClose').onclick=closeModal;$('#modal').onclick=e=>{if(e.target.id==='modal')closeModal()};$('#addEntityBtn').onclick=entityModal;$('#entitiesAddBtn').onclick=entityModal;$('#evidenceAddBtn').onclick=evidenceModal;$('#chatForm').onsubmit=sendChat;$('#dmForm').onsubmit=sendDm;$('#userSearch').oninput=()=>searchUsers($('#userSearch').value);$('#settingsForm').onsubmit=saveSettings;$('#globalSearch').onkeydown=e=>{if(e.key==='Enter')searchGlobal(e.target.value)};$('#fitMap').onclick=()=>state.graph?.fit();
+  $('#pageBack').onclick=backPage;
+  window.addEventListener('popstate',e=>{
+    const name=e.state?.shadowPage||'overview';
+    nav(name,{push:false});
+  });
 }
 async function refresh(){try{const [o,l,e,t]=await Promise.all([api('/api/overview'),api('/api/live/status').catch(()=>null),api('/api/entities'),api('/api/tokens')]);state.overview=o;state.entities=e.items||[];state.tokens=t.items||[];renderOverview(l);if($('#page-feed')?.classList.contains('active-page'))renderFeed();}catch(e){toast(e.message)}}
 async function buildGlobalModel(){
@@ -41,33 +94,29 @@ function renderTokens(){const a=state.tokens;$('#tokensGrid').innerHTML=a.map(t=
 function renderFeed(){const a=state.overview?.feed||[];$('#fullFeed').innerHTML=a.map(x=>`<div class="si-feed-row">${avatar(x,'md')}<div><h3>${esc(x.title||x.type||'Activity')}</h3><p>${esc(x.detail||x.symbol||x.walletAddress||'')}</p><time>${esc(x.entityName||'Unknown')} · ${ago(x.createdAt)}</time></div><strong class="${Number(x.value)<0?'neg':'pos'}">${x.value!=null?(Number(x.value)>0?'+':'')+esc(x.value)+'%':''}</strong></div>`).join('')||'<div class="guest-note">No live events yet.</div>';loadHealth()}
 async function loadHealth(){try{const h=await api('/api/health');$('#liveHealth').innerHTML=`<div class="si-health-line"><span>Solana</span><strong>${esc(h.live?.solana?.status||'unknown')}</strong></div><div class="si-health-line"><span>Provider</span><strong>${esc(h.live?.solana?.provider||'')}</strong></div><div class="si-health-line"><span>X API</span><strong>${h.intelligence?.x?.configured?'configured':'not configured'}</strong></div>`}catch{}}
 function modal(html){
-  // SINGLE-WINDOW RULE:
-  // The immersive navigation pages are sheets over the map.
-  // Before opening a detail/modal, collapse any active sheet so we never
-  // show sheet + modal at the same time (double chrome / double X).
-  $$('.si-page').forEach(page=>{
-    if(page.id!=='page-overview') page.classList.remove('active-page');
-  });
-  $('#page-overview')?.classList.add('active-page');
+  const wasHidden=$('#modal')?.classList.contains('hidden');
 
-  // Keep the dock/navigation visually on Map while a detail window is open.
-  $$('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav==='overview'));
-
-  // Reuse ONE modal shell. Replacing innerHTML means opening wallet/token/
-  // entity from inside an already-open detail replaces the current content
-  // instead of creating another visual layer.
   state.detailGraph?.destroy();
   state.detailGraph=null;
+
   $('#modalBody').innerHTML=html;
   $('#modal').classList.remove('hidden');
   $('#modalBody').scrollTop=0;
+  document.body.classList.add('si-detail-page-open');
+
+  if(wasHidden){
+    const active=$('.si-page.active-page');
+    document.body.dataset.detailReturnPage=active?.id||'page-overview';
+  }
 }
-function closeModal(){state.detailGraph?.destroy();state.detailGraph=null;$('#modal').classList.add('hidden');$('#modalBody').innerHTML=''}
-function authModal(mode){const login=mode==='login';modal(`<h2>${login?'Welcome back':'Create account'}</h2><p>${login?'Sign in to access private features.':'The first registered account becomes owner when no owner exists.'}</p><form id="authForm" class="si-modal-form">${login?'':'<label>Display name<input name="displayName" required></label>'}<label>Email<input name="email" type="email" required></label><label>Password<input name="password" type="password" minlength="8" required></label><button class="si-button primary">${login?'Sign in':'Create account'}</button><button type="button" id="authSwitch" class="si-button secondary">${login?'Create an account':'Sign in instead'}</button></form>`);$('#authSwitch').onclick=()=>authModal(login?'register':'login');$('#authForm').onsubmit=async e=>{e.preventDefault();try{const d=await api(`/api/auth/${login?'login':'register'}`,{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});state.user=d.user;setAuth();closeModal();toast('Signed in');refresh()}catch(e){toast(e.message)}}}
-async function openObject(kind,raw){
- if(kind==='entity'){try{const d=state.details.get(raw.id)||await api(`/api/entities/${raw.id}`);state.details.set(raw.id,d);entityDetail(d)}catch(e){toast(e.message)}}
- if(kind==='wallet'){try{const a=await api(`/api/wallets/${raw.id}/activity?limit=120`);walletDetail(raw,a.items||[])}catch(e){toast(e.message)}}
- if(kind==='token'){const t=state.tokens.find(x=>x.mint===raw.mint)||raw;tokenDetail(t)}
+
+function closeModal(){
+  state.detailGraph?.destroy();
+  state.detailGraph=null;
+  $('#modal').classList.add('hidden');
+  $('#modalBody').innerHTML='';
+  document.body.classList.remove('si-detail-page-open');
+  delete document.body.dataset.detailReturnPage;
 }
 function entityDetail(d){const e=d.entity, model={entities:[e],wallets:d.wallets||[],tokens:(d.tokens||[]).map(t=>({...t,entity_id:e.id})),activity:d.incidents||[]};modal(`<div class="si-detail-layout"><aside class="si-detail-side"><div class="si-panel" style="box-shadow:none">${avatar(e,'xl')}<h2>${esc(e.name)}</h2><p>${esc(e.xHandle||e.x_handle||'')} · ${e.confidence||0}% confidence</p><div class="si-metrics"><div class="si-metric"><strong>${d.wallets?.length||0}</strong><small>Wallets</small></div><div class="si-metric"><strong>${d.tokens?.length||0}</strong><small>Tokens</small></div><div class="si-metric"><strong>${e.riskScore||0}</strong><small>Signal</small></div></div>${['owner','admin'].includes(state.user?.role)?'<button id="syncEntity" class="si-button primary" style="margin-top:12px;width:100%">Sync now</button>':''}</div><div class="si-panel" style="box-shadow:none;margin-top:12px"><div class="si-panel-head"><span>LIVE ACTIVITY</span></div><div class="si-detail-activity">${(d.incidents||[]).slice(0,14).map(eventHtml).join('')||'<div class="guest-note">No activity yet.</div>'}</div></div></aside><section class="si-detail-map"><div id="detailGraph" class="si-graph"></div></section></div>`);state.detailGraph=new ShadowGraph($('#detailGraph'),model,{onSelect:openObject});const b=$('#syncEntity');if(b)b.onclick=async()=>{b.disabled=true;try{const r=await api(`/api/entities/${e.id}/sync`,{method:'POST',body:'{}'});toast(`Sync complete · ${r.wallets?.reduce((n,x)=>n+(x.newActivity||0),0)||0} new activity`);const nd=await api(`/api/entities/${e.id}`);entityDetail(nd)}catch(x){toast(x.message)}finally{b.disabled=false}}}
 function walletDetail(w,items){const model={entities:state.entities.filter(e=>e.id===w.entity_id),wallets:[w],tokens:state.tokens.filter(t=>items.some(a=>a.mint===t.mint)).map(t=>({...t,entity_id:w.entity_id})),activity:items};modal(`<div class="si-detail-layout"><aside class="si-detail-side"><div class="si-panel" style="box-shadow:none">${avatar(w,'xl')}<h2>Wallet</h2><p>${short(w.address)}</p><div class="si-metrics"><div class="si-metric"><strong>${esc(w.sync_status||'pending')}</strong><small>Status</small></div><div class="si-metric"><strong>${items.length}</strong><small>Events</small></div><div class="si-metric"><strong>${esc(w.chain||'solana')}</strong><small>Chain</small></div></div></div><div class="si-panel" style="box-shadow:none;margin-top:12px"><div class="si-panel-head"><span>ACTIVITY</span></div>${items.slice(0,18).map(a=>eventHtml({type:a.type,title:(a.type||'activity').toUpperCase(),detail:a.mint?short(a.mint):'',createdAt:a.block_time})).join('')||'<div class="guest-note">No activity.</div>'}</div></aside><section class="si-detail-map"><div id="detailGraph" class="si-graph"></div></section></div>`);state.detailGraph=new ShadowGraph($('#detailGraph'),model,{onSelect:openObject})}
@@ -75,8 +124,44 @@ function tokenDetail(t){const related=state.overview?.feed?.filter(x=>x.symbol==
 function entityModal(){modal(`<h2>Add entity</h2><form id="entityForm" class="si-modal-form"><label>Name<input name="name" required placeholder="Entity name"></label><label>X handle<input name="xHandle" placeholder="@handle"></label><label>Avatar URL<input name="avatar" placeholder="https://…"></label><label>Initial wallet<input name="wallet" placeholder="Solana address"></label><label>Notes<textarea name="notes" rows="4"></textarea></label><button class="si-button primary">Create entity</button></form>`);$('#entityForm').onsubmit=async e=>{e.preventDefault();const b=Object.fromEntries(new FormData(e.target));try{const x=await api('/api/entities',{method:'POST',body:JSON.stringify(b)});if(b.wallet)await api(`/api/entities/${x.id}/wallets`,{method:'POST',body:JSON.stringify({address:b.wallet,label:'Main wallet'})});closeModal();toast('Entity created');await refresh();nav('entities')}catch(x){toast(x.message)}}}
 function evidenceModal(){modal(`<h2>Add evidence</h2><form id="evidenceForm" class="si-modal-form"><label>Title<input name="title" required></label><label>Entity<select name="entityId"><option value="">General</option>${state.entities.map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join('')}</select></label><label>Type<select name="kind"><option value="x_post">X post</option><option value="profile">Profile</option><option value="transaction">Transaction</option><option value="screenshot">Screenshot</option><option value="note">Research note</option></select></label><label>Source URL<input name="sourceUrl" type="url"></label><label>Note<textarea name="note" rows="5"></textarea></label><button class="si-button primary">Submit evidence</button></form>`);$('#evidenceForm').onsubmit=async e=>{e.preventDefault();try{await api('/api/evidence',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});closeModal();toast('Evidence saved');loadEvidence()}catch(x){toast(x.message)}}}
 async function loadEvidence(){try{const d=await api('/api/evidence');$('#evidenceGrid').innerHTML=d.items.map(e=>`<article class="si-panel"><div class="si-eyebrow">${esc(e.kind)}</div><h3>${esc(e.title)}</h3><p>${esc(e.entityName||'General')} · ${ago(e.created_at)}</p><p>${esc(e.note||e.source_url||'')}</p></article>`).join('')||'<div class="guest-note">No evidence yet.</div>'}catch(e){toast(e.message)}}
-async function loadChat(){try{const d=await api('/api/chat/messages');$('#chatMessages').innerHTML=d.items.map(m=>`<div class="si-chat-message">${avatar(m,'sm')}<div class="si-chat-bubble"><strong>${esc(m.displayName)}</strong><time>${ago(m.createdAt)}</time><p>${esc(m.body)}</p></div></div>`).join('')||'<div class="guest-note">Start the conversation.</div>'}catch(e){$('#chatMessages').innerHTML=`<div class="guest-note">${esc(e.message)}</div>`}}
-async function sendChat(e){e.preventDefault();const i=$('#chatInput');if(!i.value.trim())return;try{await api('/api/chat/messages',{method:'POST',body:JSON.stringify({body:i.value})});i.value='';loadChat()}catch(x){toast(x.message)}}
+async function loadChat(){
+  const box=$('#chatMessages');
+  if(!box)return;
+
+  try{
+    const d=await api('/api/chat/messages');
+    const items=Array.isArray(d.items)?d.items:[];
+
+    box.innerHTML=items.map(m=>`<div class="si-chat-message">${avatar(m,'sm')}<div class="si-chat-bubble"><strong>${esc(m.displayName)}</strong><time>${ago(m.createdAt)}</time><p>${esc(m.body)}</p></div></div>`).join('')||'<div class="guest-note">Start the conversation.</div>';
+
+    // Server already returns chronological order: oldest -> newest.
+    // Open directly on the latest message inside the message viewport.
+    const latest=()=>{ box.scrollTop=box.scrollHeight; };
+    latest();
+    requestAnimationFrame(latest);
+    setTimeout(latest,80);
+  }catch(e){
+    box.innerHTML=`<div class="guest-note">${esc(e.message)}</div>`;
+  }
+}
+
+async function sendChat(e){
+  e.preventDefault();
+  const i=$('#chatInput');
+  if(!i.value.trim())return;
+
+  try{
+    await api('/api/chat/messages',{
+      method:'POST',
+      body:JSON.stringify({body:i.value})
+    });
+    i.value='';
+    await loadChat();
+  }catch(x){
+    toast(x.message);
+  }
+}
+
 async function loadConversations(){try{const d=await api('/api/conversations');renderConversations(d.items)}catch(e){toast(e.message)}}
 function renderConversations(a){$('#conversationList').innerHTML=a.map(u=>`<div class="si-conversation" data-user="${u.id}">${avatar(u,'sm')}<div><strong>${esc(u.displayName)}</strong><small>${esc(u.lastBody||u.xHandle||'Start')}</small></div></div>`).join('')||'<div class="guest-note">No conversations.</div>';$$('[data-user]').forEach(x=>x.onclick=()=>openDm(x.dataset.user))}
 async function searchUsers(q){if(!q.trim())return loadConversations();try{const d=await api('/api/users?q='+encodeURIComponent(q));renderConversations(d.items)}catch(e){toast(e.message)}}
@@ -86,3 +171,28 @@ async function loadSettings(){try{const s=await api('/api/settings');$('#setPlat
 async function saveSettings(e){e.preventDefault();try{const b={platform_name:$('#setPlatformName').value,registration_enabled:$('#setRegistration').checked,community_chat_enabled:$('#setChat').checked,copy_trading_enabled:$('#setCopy').checked,risk_high_threshold:$('#setRiskThreshold').value,demo_mode:$('#setDemo').checked,live_monitor_enabled:$('#setLiveMonitor').checked,live_poll_seconds:$('#setPollSeconds').value,wallet_history_limit:$('#setHistoryLimit').value,x_monitor_enabled:$('#setXMonitor').checked};const s=await api('/api/settings',{method:'PATCH',body:JSON.stringify(b)});document.querySelectorAll('[data-platform-name]').forEach(x=>x.textContent=s.platform_name);toast('Settings saved')}catch(e){toast(e.message)}}
 function searchGlobal(q){q=q.trim().toLowerCase();if(!q)return;const e=state.entities.find(x=>[x.name,x.x_handle].join(' ').toLowerCase().includes(q));if(e)return openObject('entity',e);const t=state.tokens.find(x=>[x.symbol,x.name,x.mint].join(' ').toLowerCase().includes(q));if(t)return openObject('token',t);const w=[...state.details.values()].flatMap(d=>d.wallets||[]).find(x=>String(x.address).toLowerCase().includes(q));if(w)return openObject('wallet',w);toast('Nothing found')}
 boot();
+
+/* SHADOW_VIEWPORT_LOCK_V193_START */
+function installShadowViewportLock193(){
+  if(window.__shadowViewportLock193)return;
+  window.__shadowViewportLock193=true;
+
+  for(const type of ['gesturestart','gesturechange','gestureend']){
+    document.addEventListener(type,e=>{
+      e.preventDefault();
+    },{passive:false});
+  }
+
+  document.addEventListener('dblclick',e=>{
+    if(!(e.target instanceof Element && e.target.closest('.si-graph'))){
+      e.preventDefault();
+    }
+  },{passive:false});
+
+  document.addEventListener('wheel',e=>{
+    if(e.ctrlKey||e.metaKey)e.preventDefault();
+  },{passive:false});
+}
+
+installShadowViewportLock193();
+/* SHADOW_VIEWPORT_LOCK_V193_END */

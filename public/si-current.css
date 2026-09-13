@@ -1,5 +1,4 @@
-/* === SOURCE: si-shell.css === */
-/* Shadow Intelligence unified X-style shell */
+/* Shadow Intelligence — canonical full-page application stylesheet v1.9.1 */
 :root{--si-bg:#fff;--si-panel:#fff;--si-text:#0f1419;--si-muted:#536471;--si-line:#eff3f4;--si-blue:#1d9bf0;--si-green:#00ba7c;--si-pink:#f91880;--si-shadow:0 1px 3px rgba(15,20,25,.04)}
 html[data-theme=dark]{--si-bg:#000;--si-panel:#000;--si-text:#e7e9ea;--si-muted:#71767b;--si-line:#2f3336;--si-shadow:none}
 *{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--si-bg);color:var(--si-text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif}button,input,textarea,select{font:inherit}button{color:inherit}
@@ -26,7 +25,6 @@ body{overflow-x:hidden}.si-app{min-height:100vh;background:var(--si-bg)}
 @media(max-width:1050px){.si-topbar{grid-template-columns:auto 1fr auto}.si-mainnav{display:none}.si-layout{grid-template-columns:74px minmax(0,1fr)}.si-rail{padding:18px 8px}.si-rail-label,.si-rail button:not(.active) b{display:none}.si-rail button{justify-content:center}.si-rail button i{width:auto}.si-rail-bottom{font-size:0;justify-content:center}.si-map-layout{grid-template-columns:1fr}.si-side-stack{display:grid;grid-template-columns:1fr 1fr}.si-entity-strip{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:720px){.si-topbar{height:58px;padding:0 12px;grid-template-columns:auto 1fr auto}.si-brand span,.si-user span:not(.avatar){display:none}.si-search{width:auto;flex:1}.si-top-actions{gap:6px}.si-layout{display:block}.si-rail{display:none}.si-page{padding:16px 12px 76px}.si-map-header,.si-page-head{align-items:flex-start;flex-direction:column}.si-map-header h1,.si-page-head h1{font-size:24px}.si-map-actions{width:100%}.si-map-actions .si-button{flex:1}.si-graph{height:68vh;min-height:480px}.si-map-footer{font-size:9px}.si-map-footer span:first-child{max-width:55%}.si-side-stack,.si-bottom-grid,.si-feed-layout,.si-settings,.si-messages-layout{grid-template-columns:1fr}.si-entity-strip{grid-template-columns:1fr 1fr}.si-mobile-bottom{display:flex}.si-mainnav{display:none}.si-detail-layout{grid-template-columns:1fr}.si-detail-map{min-height:440px}.si-detail-map .si-graph{min-height:440px}.si-modal{padding:8px}.si-modal-card{max-height:94vh;border-radius:15px;padding:17px}.si-feed-row{grid-template-columns:auto 1fr}.si-feed-row>strong{grid-column:2}.si-table th:nth-child(n+4),.si-table td:nth-child(n+4){display:none}}
 
-/* === SOURCE: si-immersive.css === */
 /* Shadow Intelligence — Immersive Map Shell v1.0
    Additive layout layer. Keeps the existing data/model/UI logic intact. */
 :root{
@@ -167,58 +165,76 @@ body{overflow:hidden!important;background:var(--si-bg)}
 .si-immersive-dock svg{width:18px;height:18px;display:block;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .si-immersive-dock span{font-size:9px;font-weight:720;letter-spacing:.01em;line-height:1}
 
-/* All secondary sections become floating bottom sheets over the live graph. */
+/* Secondary sections are real full-screen application pages. */
 .si-page:not(#page-overview){display:none!important}
 .si-page:not(#page-overview).active-page{
-  display:block!important;position:fixed!important;left:50%!important;right:auto!important;
-  bottom:calc(env(safe-area-inset-bottom,0px) + 76px)!important;transform:translateX(-50%)!important;
-  z-index:60!important;width:min(1120px,calc(100vw - 24px))!important;
-  max-width:none!important;max-height:calc(100dvh - env(safe-area-inset-top,0px) - 92px)!important;
-  margin:0!important;padding:27px 20px 22px!important;overflow:auto!important;overscroll-behavior:contain!important;
-  border:1px solid var(--imm-line)!important;border-radius:26px!important;background:var(--imm-sheet)!important;
-  box-shadow:var(--imm-shadow)!important;backdrop-filter:blur(28px) saturate(150%)!important;
-  -webkit-backdrop-filter:blur(28px) saturate(150%)!important;
-  animation:si-sheet-in .22s cubic-bezier(.2,.8,.2,1) both;
+  display:block!important;position:fixed!important;inset:0!important;z-index:100!important;
+  width:100vw!important;height:100dvh!important;max-width:none!important;max-height:none!important;
+  margin:0!important;padding:calc(env(safe-area-inset-top,0px) + 72px) 22px calc(env(safe-area-inset-bottom,0px) + 30px)!important;
+  overflow:auto!important;overscroll-behavior:contain!important;-webkit-overflow-scrolling:touch;
+  border:0!important;border-radius:0!important;background:var(--si-bg)!important;box-shadow:none!important;
+  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;transform:none!important;
+  animation:si-full-page-in .20s cubic-bezier(.2,.8,.2,1) both;
 }
-.si-page:not(#page-overview).active-page::before{
-  content:"";position:sticky;display:block;top:-19px;margin:-2px auto 15px;width:36px;height:4px;border-radius:999px;
-  background:color-mix(in srgb,var(--si-muted) 58%,transparent);z-index:2;
+.si-page:not(#page-overview).active-page::before{content:none!important}
+
+.si-page:not(#page-overview).active-page>.si-page-head,
+.si-page:not(#page-overview).active-page>.si-card-grid,
+.si-page:not(#page-overview).active-page>.si-panel,
+.si-page:not(#page-overview).active-page>.si-feed-layout,
+.si-page:not(#page-overview).active-page>.si-settings,
+.si-page:not(#page-overview).active-page>.si-chat,
+.si-page:not(#page-overview).active-page>.si-messages-layout{
+  width:min(1120px,100%)!important;margin-left:auto!important;margin-right:auto!important;
 }
-.si-page:not(#page-overview).active-page .si-page-head{margin:0 0 17px!important;align-items:center!important}
-.si-page:not(#page-overview).active-page .si-page-head h1{font-size:22px!important;margin:2px 0!important}
-.si-page:not(#page-overview).active-page .si-page-head p{font-size:12px!important}
-.si-page:not(#page-overview).active-page .si-panel{box-shadow:none!important;background:color-mix(in srgb,var(--si-panel) 76%,transparent)!important;border-color:var(--imm-line)!important}
-#page-entities.active-page,#page-wallets.active-page,#page-tokens.active-page,#page-feed.active-page,#page-evidence.active-page{height:min(74dvh,740px)!important}
-#page-messages.active-page{height:min(80dvh,820px)!important}
-#page-settings.active-page{height:min(84dvh,860px)!important}
+.si-page:not(#page-overview).active-page .si-page-head{margin:0 auto 20px!important;align-items:flex-end!important}
+.si-page:not(#page-overview).active-page .si-page-head h1{font-size:28px!important;margin:4px 0!important}
+.si-page:not(#page-overview).active-page .si-page-head p{font-size:14px!important}
 
-/* Chat is intentionally compact: a lower-third conversation tray. */
-#page-chat.active-page{height:min(38dvh,410px)!important;min-height:290px!important;padding:18px 16px 14px!important;overflow:hidden!important}
-#page-chat.active-page::before{top:-10px;margin:0 auto 8px}
-#page-chat .si-page-head{display:none!important}
-#page-chat .si-chat{height:100%!important;max-width:none!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important;display:flex!important;flex-direction:column!important}
-#page-chat .si-chat-messages{flex:1!important;min-height:0!important;height:auto!important;overflow:auto!important;padding:2px 2px 6px!important}
-#page-chat .si-composer{flex:0 0 auto!important;margin:4px 0 0!important;padding-top:9px!important}
-#page-chat .guest-note{padding:8px 0!important}
-
-/* Messages / settings use the full sheet comfortably. */
-#page-messages .si-messages-layout{height:calc(100% - 82px)!important;min-height:0!important}
-#page-messages .si-messages-layout>.si-panel{min-height:0!important;overflow:auto!important}
-#page-messages .si-dm-messages{height:calc(100% - 94px)!important;min-height:220px!important}
-#page-settings .si-settings{padding-bottom:8px!important}
-
-/* Close control for any open sheet. */
-.si-sheet-close{
-  position:fixed;right:14px;top:calc(env(safe-area-inset-top,0px) + 67px);z-index:88;
-  width:42px;height:42px;border:1px solid var(--imm-line);border-radius:14px;
-  display:grid;place-items:center;background:var(--imm-glass);color:var(--si-text);box-shadow:var(--imm-dock-shadow);
-  backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);
-  opacity:0;pointer-events:none;transform:scale(.92);transition:opacity .15s ease,transform .15s ease;cursor:pointer;
+#page-chat .si-page-head{display:flex!important}
+#page-chat .si-chat{
+  height:calc(100dvh - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px) - 180px)!important;
+  max-width:900px!important;padding:0!important;border:0!important;background:transparent!important;
+  display:flex!important;flex-direction:column!important;
 }
-.si-sheet-close svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round}
-body:has(.si-page.active-page:not(#page-overview)) .si-sheet-close{opacity:1;pointer-events:auto;transform:scale(1)}
-body:has(.si-page.active-page:not(#page-overview)) #page-overview{filter:brightness(.84) saturate(.78);transition:filter .18s ease}
-body:not(:has(.si-page.active-page:not(#page-overview))) #page-overview{filter:none;transition:filter .18s ease}
+#page-chat .si-chat-messages{flex:1!important;min-height:0!important;height:auto!important;overflow:auto!important}
+#page-chat .si-composer{flex:0 0 auto!important}
+#page-messages .si-messages-layout{min-height:calc(100dvh - 190px)!important}
+#page-settings .si-settings{padding-bottom:20px!important}
+
+.si-page-back{
+  position:fixed;left:16px;top:calc(env(safe-area-inset-top,0px) + 14px);z-index:170;
+  width:42px;height:42px;padding:0;border:1px solid var(--imm-line);border-radius:50%;
+  display:grid;place-items:center;background:var(--imm-glass-strong);color:var(--si-text);
+  box-shadow:var(--imm-dock-shadow);backdrop-filter:blur(20px) saturate(150%);
+  -webkit-backdrop-filter:blur(20px) saturate(150%);cursor:pointer;
+  opacity:0;visibility:hidden;pointer-events:none;transition:transform .15s ease,opacity .15s ease;
+}
+.si-page-back svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.si-page-back:active{transform:scale(.94)}
+body:has(.si-page.active-page:not(#page-overview)) .si-page-back{opacity:1;visibility:visible;pointer-events:auto}
+
+body:has(.si-page.active-page:not(#page-overview)) .si-topbar,
+body:has(.si-page.active-page:not(#page-overview)) .si-immersive-dock,
+body:has(.si-page.active-page:not(#page-overview)) #page-overview .si-graph-hud,
+body:has(.si-page.active-page:not(#page-overview)) #page-overview .si-map-footer,
+body:has(.si-page.active-page:not(#page-overview)) #page-overview .si-map-header{
+  opacity:0!important;visibility:hidden!important;pointer-events:none!important;
+}
+
+@keyframes si-full-page-in{from{opacity:0;transform:translateX(18px)}to{opacity:1;transform:translateX(0)}}
+
+@media(max-width:720px){
+  .si-page:not(#page-overview).active-page{
+    padding:calc(env(safe-area-inset-top,0px) + 68px) 16px calc(env(safe-area-inset-bottom,0px) + 22px)!important;
+  }
+  .si-page:not(#page-overview).active-page .si-page-head h1{font-size:25px!important}
+  .si-page:not(#page-overview).active-page .si-page-head p{font-size:13px!important}
+  .si-page-back{left:12px;top:calc(env(safe-area-inset-top,0px) + 12px);width:40px;height:40px}
+  #page-chat .si-chat{
+    height:calc(100dvh - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px) - 165px)!important;
+  }
+}
 
 /* Detail/auth/add forms also slide from the bottom rather than taking over the scene. */
 .si-modal{
@@ -253,11 +269,6 @@ body:not(:has(.si-page.active-page:not(#page-overview))) #page-overview{filter:n
   .si-immersive-dock button{min-width:46px;height:46px;padding:4px 7px}
   .si-immersive-dock svg{width:17px;height:17px}
   .si-immersive-dock span{font-size:8.5px}
-  .si-page:not(#page-overview).active-page{bottom:calc(env(safe-area-inset-bottom,0px) + 70px)!important;width:calc(100vw - 12px)!important;padding:23px 14px 17px!important;border-radius:24px!important;max-height:calc(100dvh - env(safe-area-inset-top,0px) - 82px)!important}
-  #page-chat.active-page{height:min(39dvh,390px)!important;min-height:285px!important;padding:16px 12px 12px!important}
-  #page-messages.active-page,#page-settings.active-page{height:84dvh!important}
-  #page-entities.active-page,#page-wallets.active-page,#page-tokens.active-page,#page-feed.active-page,#page-evidence.active-page{height:76dvh!important}
-  .si-sheet-close{right:10px;top:calc(env(safe-area-inset-top,0px) + 63px);width:40px;height:40px;border-radius:13px}
   .si-modal{padding:8px 6px 0!important}
   .si-modal-card{max-height:90dvh!important;border-radius:25px 25px 0 0!important;padding:24px 15px calc(18px + env(safe-area-inset-bottom,0px))!important}
   .si-detail-layout{grid-template-columns:1fr!important}
@@ -269,11 +280,10 @@ body:not(:has(.si-page.active-page:not(#page-overview))) #page-overview{filter:n
   .si-immersive-dock button{min-width:43px;padding-inline:5px}
   .si-immersive-dock span{font-size:8px}
 }
-@media(prefers-reduced-motion:reduce){.si-page:not(#page-overview).active-page,.si-modal-card{animation:none!important}.si-immersive-dock button,.si-sheet-close{transition:none!important}}
-@supports not ((backdrop-filter:blur(2px)) or (-webkit-backdrop-filter:blur(2px))){.si-topbar .si-brand,.si-search,.si-icon,.si-user,.si-immersive-dock,.si-map-footer,.si-graph-hud,.si-sheet-close{background:var(--imm-glass-strong)!important}.si-page:not(#page-overview).active-page,.si-modal-card{background:var(--si-panel)!important}}
+@media(prefers-reduced-motion:reduce){.si-page:not(#page-overview).active-page,.si-modal-card{animation:none!important}.si-immersive-dock button,.si-page-back{transition:none!important}}
+@supports not ((backdrop-filter:blur(2px)) or (-webkit-backdrop-filter:blur(2px))){.si-topbar .si-brand,.si-search,.si-icon,.si-user,.si-immersive-dock,.si-map-footer,.si-graph-hud,.si-page-back{background:var(--imm-glass-strong)!important}.si-page:not(#page-overview).active-page,.si-modal-card{background:var(--si-panel)!important}}
 
-/* === SOURCE: si-interaction-recovery.css === */
-/* Shadow Interaction Recovery v1.4.0 */
+/* Canonical interaction safeguards */
 
 /* Nothing invisible should intercept taps. */
 .si-page:not(#page-overview):not(.active-page){
@@ -293,7 +303,6 @@ body:not(:has(.si-page.active-page:not(#page-overview))) #page-overview{filter:n
 .si-immersive-dock,
 .si-immersive-dock button,
 .si-topbar > *,
-.si-sheet-close,
 .si-button,
 button[data-nav],
 [data-entity],
@@ -367,12 +376,388 @@ button[data-nav],
 .si-immersive-dock{
   z-index:140 !important;
 }
-.si-sheet-close{
-  z-index:145 !important;
-}
 
 /* Graph itself remains interactive when no sheet is covering it. */
 .si-graph,
 .si-graph-canvas{
   pointer-events:auto !important;
 }
+
+/* SHADOW_VIEWPORT_LOCK_V193_START */
+html,body{
+  width:100%;
+  min-width:100%;
+  max-width:100%;
+  overflow-x:hidden;
+  -webkit-text-size-adjust:100%;
+  text-size-adjust:100%;
+}
+
+#app,.si-app{
+  width:100%;
+  max-width:100%;
+  overflow-x:hidden;
+}
+
+@media(max-width:900px){
+  input,
+  textarea,
+  select{
+    font-size:16px!important;
+  }
+}
+
+button,
+a,
+input,
+textarea,
+select,
+label{
+  touch-action:manipulation;
+}
+
+.si-graph,
+.si-graph canvas,
+.si-graph-canvas{
+  touch-action:none!important;
+}
+/* SHADOW_VIEWPORT_LOCK_V193_END */
+
+/* SHADOW_DETAIL_FULL_PAGE_V194_START */
+.si-modal:not(.hidden){
+  position:fixed!important;
+  inset:0!important;
+  z-index:300!important;
+  width:100vw!important;
+  height:100dvh!important;
+  display:block!important;
+  padding:0!important;
+  overflow:hidden!important;
+  background:var(--si-bg)!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+}
+
+.si-modal:not(.hidden) .si-modal-card{
+  position:relative!important;
+  inset:auto!important;
+  width:100%!important;
+  height:100%!important;
+  max-width:none!important;
+  max-height:none!important;
+  margin:0!important;
+  padding:0!important;
+  overflow:hidden!important;
+  border:0!important;
+  border-radius:0!important;
+  background:var(--si-bg)!important;
+  box-shadow:none!important;
+  transform:none!important;
+}
+
+.si-modal:not(.hidden) .si-modal-card::before{
+  content:none!important;
+  display:none!important;
+}
+
+.si-modal:not(.hidden) #modalBody{
+  width:min(1120px,100%)!important;
+  height:100dvh!important;
+  max-height:none!important;
+  margin:0 auto!important;
+  padding:calc(env(safe-area-inset-top,0px) + 72px) 22px calc(env(safe-area-inset-bottom,0px) + 28px)!important;
+  overflow-y:auto!important;
+  overflow-x:hidden!important;
+  overscroll-behavior:contain!important;
+  -webkit-overflow-scrolling:touch;
+  background:var(--si-bg)!important;
+}
+
+.si-modal:not(.hidden) .si-modal-close{
+  position:fixed!important;
+  left:16px!important;
+  right:auto!important;
+  top:calc(env(safe-area-inset-top,0px) + 14px)!important;
+  z-index:330!important;
+  width:42px!important;
+  height:42px!important;
+  display:grid!important;
+  place-items:center!important;
+  padding:0!important;
+  margin:0!important;
+  border:1px solid var(--imm-line)!important;
+  border-radius:50%!important;
+  background:var(--imm-glass-strong)!important;
+  color:var(--si-text)!important;
+  box-shadow:var(--imm-dock-shadow)!important;
+  backdrop-filter:blur(20px) saturate(150%)!important;
+  -webkit-backdrop-filter:blur(20px) saturate(150%)!important;
+  pointer-events:auto!important;
+  cursor:pointer!important;
+}
+
+.si-modal:not(.hidden) .si-modal-close svg{
+  width:22px!important;
+  height:22px!important;
+  display:block!important;
+  fill:none!important;
+  stroke:currentColor!important;
+  stroke-width:1.9!important;
+  stroke-linecap:round!important;
+  stroke-linejoin:round!important;
+}
+
+body.si-detail-page-open .si-topbar,
+body.si-detail-page-open .si-immersive-dock,
+body.si-detail-page-open .si-page-back{
+  opacity:0!important;
+  visibility:hidden!important;
+  pointer-events:none!important;
+}
+
+@media(max-width:720px){
+  .si-modal:not(.hidden) #modalBody{
+    width:100%!important;
+    padding:calc(env(safe-area-inset-top,0px) + 66px) 14px calc(env(safe-area-inset-bottom,0px) + 20px)!important;
+  }
+
+  .si-modal:not(.hidden) .si-modal-close{
+    left:12px!important;
+    top:calc(env(safe-area-inset-top,0px) + 12px)!important;
+    width:40px!important;
+    height:40px!important;
+  }
+}
+/* SHADOW_DETAIL_FULL_PAGE_V194_END */
+
+/* SHADOW_CHAT_RESTORE_V201_START */
+/*
+  CHAT v2.0.1 — simple, deterministic messenger layout.
+
+  Page: fixed, never scrolls.
+  Messages: only scrollable region.
+  Composer: separate bottom row, always visible.
+*/
+
+html:has(#page-chat.active-page),
+body:has(#page-chat.active-page){
+  overflow:hidden!important;
+  overscroll-behavior:none!important;
+}
+
+body:has(#page-chat.active-page){
+  position:fixed!important;
+  inset:0!important;
+  width:100%!important;
+  height:100%!important;
+  margin:0!important;
+}
+
+/* The page is the actual browser viewport; no nested page scrolling. */
+#page-chat.active-page{
+  position:fixed!important;
+  inset:0!important;
+  box-sizing:border-box!important;
+
+  width:auto!important;
+  height:auto!important;
+  min-height:0!important;
+  max-height:none!important;
+
+  margin:0!important;
+  padding:
+    calc(env(safe-area-inset-top,0px) + 64px)
+    16px
+    calc(env(safe-area-inset-bottom,0px) + 8px)!important;
+
+  display:flex!important;
+  flex-direction:column!important;
+
+  overflow:hidden!important;
+  overscroll-behavior:none!important;
+}
+
+/* Heading stays fixed and aligned like other full pages. */
+#page-chat.active-page .si-page-head{
+  flex:0 0 auto!important;
+  width:100%!important;
+  max-width:none!important;
+
+  margin:0 0 14px!important;
+  padding:0!important;
+
+  display:block!important;
+  text-align:left!important;
+}
+
+#page-chat.active-page .si-page-head>div,
+#page-chat.active-page .si-page-head .si-eyebrow,
+#page-chat.active-page .si-page-head h1,
+#page-chat.active-page .si-page-head p{
+  text-align:left!important;
+}
+
+#page-chat.active-page .si-page-head>div{
+  width:100%!important;
+  max-width:none!important;
+}
+
+#page-chat.active-page .si-page-head .si-eyebrow{
+  margin:0 0 5px!important;
+}
+
+#page-chat.active-page .si-page-head h1{
+  margin:0 0 6px!important;
+  line-height:1.04!important;
+}
+
+#page-chat.active-page .si-page-head p{
+  margin:0!important;
+  line-height:1.28!important;
+}
+
+/*
+  Critical structure:
+  Row 1 = scrollable messages.
+  Row 2 = non-scrolling composer.
+*/
+#page-chat.active-page .si-chat{
+  flex:1 1 0!important;
+  min-height:0!important;
+
+  width:100%!important;
+  max-width:none!important;
+  height:auto!important;
+
+  margin:0!important;
+  padding:0!important;
+
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr)!important;
+  grid-template-rows:minmax(0,1fr) auto!important;
+
+  overflow:hidden!important;
+  overscroll-behavior:none!important;
+
+  border:0!important;
+  background:transparent!important;
+}
+
+/* ONLY this element scrolls. */
+#page-chat.active-page #chatMessages,
+#page-chat.active-page .si-chat-messages{
+  position:static!important;
+  inset:auto!important;
+
+  grid-row:1!important;
+  box-sizing:border-box!important;
+
+  width:100%!important;
+  height:auto!important;
+  min-height:0!important;
+  max-height:none!important;
+
+  margin:0!important;
+  padding:2px 0 10px!important;
+
+  overflow-x:hidden!important;
+  overflow-y:auto!important;
+  overscroll-behavior:contain!important;
+  -webkit-overflow-scrolling:touch!important;
+  touch-action:pan-y!important;
+
+  scroll-behavior:auto!important;
+}
+
+/* This never scrolls with messages. */
+#page-chat.active-page #chatForm,
+#page-chat.active-page .si-composer{
+  position:static!important;
+  inset:auto!important;
+
+  grid-row:2!important;
+  box-sizing:border-box!important;
+
+  width:100%!important;
+  height:auto!important;
+  min-height:60px!important;
+
+  margin:0!important;
+  padding:8px 0 2px!important;
+
+  display:flex!important;
+  align-items:center!important;
+  gap:8px!important;
+
+  flex:0 0 auto!important;
+
+  overflow:visible!important;
+  background:var(--si-bg)!important;
+  border-top:1px solid var(--si-line)!important;
+  z-index:5!important;
+}
+
+#page-chat.active-page #chatInput{
+  flex:1 1 auto!important;
+  min-width:0!important;
+  height:48px!important;
+  min-height:48px!important;
+  max-height:48px!important;
+  margin:0!important;
+}
+
+#page-chat.active-page #chatForm button{
+  flex:0 0 auto!important;
+  height:48px!important;
+  min-height:48px!important;
+  max-height:48px!important;
+  margin:0!important;
+}
+
+/* Outer layers can never become a second scroller. */
+body:has(#page-chat.active-page) #app,
+body:has(#page-chat.active-page) .si-app,
+body:has(#page-chat.active-page) .si-layout,
+body:has(#page-chat.active-page) .si-main,
+#page-chat.active-page,
+#page-chat.active-page .si-chat{
+  overflow:hidden!important;
+  overscroll-behavior:none!important;
+}
+
+/* On small phones, compact chrome; messages absorb the difference. */
+@media(max-height:720px){
+  #page-chat.active-page{
+    padding:
+      calc(env(safe-area-inset-top,0px) + 52px)
+      14px
+      calc(env(safe-area-inset-bottom,0px) + 5px)!important;
+  }
+
+  #page-chat.active-page .si-page-head{
+    margin-bottom:9px!important;
+  }
+
+  #page-chat.active-page .si-page-head h1{
+    font-size:23px!important;
+    margin-bottom:3px!important;
+  }
+
+  #page-chat.active-page .si-page-head p{
+    font-size:12px!important;
+  }
+
+  #page-chat.active-page #chatForm,
+  #page-chat.active-page .si-composer{
+    min-height:54px!important;
+    padding-top:6px!important;
+  }
+
+  #page-chat.active-page #chatInput,
+  #page-chat.active-page #chatForm button{
+    height:44px!important;
+    min-height:44px!important;
+    max-height:44px!important;
+  }
+}
+/* SHADOW_CHAT_RESTORE_V201_END */
