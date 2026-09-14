@@ -3,6 +3,88 @@ const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const ago=v=>{if(!v)return'—';const m=Math.max(0,Math.floor((Date.now()-new Date(v))/60000));if(m<1)return'now';if(m<60)return`${m}m`;if(m<1440)return`${Math.floor(m/60)}h`;return`${Math.floor(m/1440)}d`};
 const money=n=>{n=Number(n||0);const a=Math.abs(n),s=n<0?'-':n>0?'+':'';if(a>=1e6)return s+'$'+(a/1e6).toFixed(2)+'M';if(a>=1e3)return s+'$'+(a/1e3).toFixed(a>=100000?0:1)+'K';return s+'$'+a.toFixed(a<10?2:0)};
 const short=a=>{a=String(a||'');return a.length>13?a.slice(0,7)+'…'+a.slice(-5):a};
+/* SHADOW_TOKEN_ADDRESS_COPY_V220_START */
+async function copyTokenAddress(value){
+  const text=String(value||'').trim();
+  if(!text)return false;
+
+  try{
+    if(navigator.clipboard?.writeText){
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  }catch{}
+
+  try{
+    const ta=document.createElement('textarea');
+    ta.value=text;
+    ta.setAttribute('readonly','');
+    ta.style.position='fixed';
+    ta.style.opacity='0';
+    ta.style.pointerEvents='none';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0,ta.value.length);
+    const ok=document.execCommand('copy');
+    ta.remove();
+    return !!ok;
+  }catch{
+    return false;
+  }
+}
+
+function tokenAddressCopyHtml(mint){
+  const address=String(mint||'').trim();
+  if(!address)return '<span>—</span>';
+
+  return `<span class="si-token-address-copy" style="display:inline-flex;align-items:center;gap:8px;max-width:100%">
+    <span style="min-width:0">${esc(short(address))}</span>
+    <button
+      type="button"
+      data-copy-token-address="${esc(address)}"
+      aria-label="Copy token address"
+      title="Copy token address"
+      style="
+        width:30px;height:30px;min-width:30px;padding:0;
+        display:inline-grid;place-items:center;
+        border:0;background:transparent;color:currentColor;
+        opacity:.72;cursor:pointer;border-radius:8px;
+        -webkit-tap-highlight-color:transparent
+      "
+    >
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="9" y="9" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/>
+        <path d="M15 9V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      </svg>
+    </button>
+  </span>`;
+}
+
+function bindTokenAddressCopy(root=document){
+  root.querySelectorAll?.('[data-copy-token-address]').forEach(button=>{
+    button.onclick=async event=>{
+      event.preventDefault();
+      event.stopPropagation();
+
+      const address=button.dataset.copyTokenAddress||'';
+      const ok=await copyTokenAddress(address);
+
+      if(ok){
+        const oldTitle=button.getAttribute('title')||'Copy token address';
+        button.setAttribute('title','Copied');
+        button.style.opacity='1';
+        toast('Token address copied');
+        setTimeout(()=>{
+          button.setAttribute('title',oldTitle);
+          button.style.opacity='.72';
+        },1200);
+      }else{
+        toast('Could not copy token address');
+      }
+    };
+  });
+}
+/* SHADOW_TOKEN_ADDRESS_COPY_V220_END */
 const state={user:null,settings:{},entities:[],tokens:[],overview:null,details:new Map(),graph:null,detailGraph:null,lastEventIds:new Set(),activeDm:null};
 async function api(url,opt={}){const r=await fetch(url,{...opt,headers:{'content-type':'application/json',...(opt.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||`HTTP ${r.status}`);return d}
 function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove('show'),2400)}
@@ -1112,9 +1194,9 @@ function entityDetail(d){
 /* SHADOW_ENTITY_TOKENS_V210_END */
 
 function walletDetail(w,items){const model={entities:state.entities.filter(e=>e.id===w.entity_id),wallets:[w],tokens:state.tokens.filter(t=>items.some(a=>a.mint===t.mint)).map(t=>({...t,entity_id:w.entity_id})),activity:items};modal(`<div class="si-detail-layout"><aside class="si-detail-side"><div class="si-panel" style="box-shadow:none">${avatar(w,'xl')}<h2>Wallet</h2><p>${short(w.address)}</p><div class="si-metrics"><div class="si-metric"><strong>${esc(w.sync_status||'pending')}</strong><small>Status</small></div><div class="si-metric"><strong>${items.length}</strong><small>Events</small></div><div class="si-metric"><strong>${esc(w.chain||'solana')}</strong><small>Chain</small></div></div></div><div class="si-panel" style="box-shadow:none;margin-top:12px"><div class="si-panel-head"><span>ACTIVITY</span></div>${items.slice(0,18).map(a=>eventHtml({type:a.type,title:(a.type||'activity').toUpperCase(),detail:a.mint?short(a.mint):'',createdAt:a.block_time})).join('')||'<div class="guest-note">No activity.</div>'}</div></aside><section class="si-detail-map"><div id="detailGraph" class="si-graph"></div></section></div>`);state.detailGraph=new ShadowGraph($('#detailGraph'),model,{onSelect:openObject})}
-function tokenDetail(t){const related=state.overview?.feed?.filter(x=>x.symbol===t.symbol||x.tokenName===t.name)||[];modal(`<div class="si-detail-layout"><aside class="si-detail-side"><div class="si-panel" style="box-shadow:none">${avatar(t,'xl')}<h2>${esc(t.symbol||'Token')}</h2><p>${esc(t.name||'Unknown')}</p><p>${short(t.mint)}</p><div class="si-metrics"><div class="si-metric"><strong>${money(t.market_cap||0)}</strong><small>Market cap</small></div><div class="si-metric"><strong class="${Number(t.price_change)>=0?'pos':'neg'}">${Number(t.price_change)>=0?'+':''}${Number(t.price_change||0).toFixed(1)}%</strong><small>Change</small></div><div class="si-metric"><strong>${money(t.liquidity_usd||0)}</strong><small>Liquidity</small></div></div></div><div class="si-panel" style="box-shadow:none;margin-top:12px"><div class="si-panel-head"><span>RECENT SIGNALS</span></div>${related.slice(0,12).map(eventHtml).join('')||'<div class="guest-note">No recent incident records.</div>'}</div></aside><section class="si-detail-map"><div id="detailGraph" class="si-graph"></div></section></div>`);const entities=state.entities.filter(e=>related.some(x=>x.entityId===e.id));state.detailGraph=new ShadowGraph($('#detailGraph'),{entities:entities.length?entities:[state.overview?.selected].filter(Boolean),wallets:[],tokens:[t]},{onSelect:openObject})}
+function tokenDetail(t){const related=state.overview?.feed?.filter(x=>x.symbol===t.symbol||x.tokenName===t.name)||[];modal(`<div class="si-detail-layout"><aside class="si-detail-side"><div class="si-panel" style="box-shadow:none">${avatar(t,'xl')}<h2>${esc(t.symbol||'Token')}</h2><p>${esc(t.name||'Unknown')}</p><p>${tokenAddressCopyHtml(t.mint)}</p><div class="si-metrics"><div class="si-metric"><strong>${money(t.market_cap||0)}</strong><small>Market cap</small></div><div class="si-metric"><strong class="${Number(t.price_change)>=0?'pos':'neg'}">${Number(t.price_change)>=0?'+':''}${Number(t.price_change||0).toFixed(1)}%</strong><small>Change</small></div><div class="si-metric"><strong>${money(t.liquidity_usd||0)}</strong><small>Liquidity</small></div></div></div><div class="si-panel" style="box-shadow:none;margin-top:12px"><div class="si-panel-head"><span>RECENT SIGNALS</span></div>${related.slice(0,12).map(eventHtml).join('')||'<div class="guest-note">No recent incident records.</div>'}</div></aside><section class="si-detail-map"><div id="detailGraph" class="si-graph"></div></section></div>`);const entities=state.entities.filter(e=>related.some(x=>x.entityId===e.id));state.detailGraph=new ShadowGraph($('#detailGraph'),{entities:entities.length?entities:[state.overview?.selected].filter(Boolean),wallets:[],tokens:[t]},{onSelect:openObject});bindTokenAddressCopy($('#modalBody')||document)}
 function entityModal(){modal(`<h2>Add entity</h2><form id="entityForm" class="si-modal-form"><label>Name<input name="name" required placeholder="Entity name"></label><label>X handle<input name="xHandle" placeholder="@handle"></label><label>Avatar URL<input name="avatar" placeholder="Optional — auto from Pump.fun wallet"></label><label>Initial wallet<input name="wallet" placeholder="Solana address"></label><label>Notes<textarea name="notes" rows="4"></textarea></label><button class="si-button primary">Create entity</button></form>`);$('#entityForm').onsubmit=async e=>{e.preventDefault();const b=Object.fromEntries(new FormData(e.target));try{const x=await api('/api/entities',{method:'POST',body:JSON.stringify(b)});if(b.wallet)await api(`/api/entities/${x.id}/wallets`,{method:'POST',body:JSON.stringify({address:b.wallet,label:'Main wallet'})});closeModal();toast('Entity created');await refresh();nav('entities')}catch(x){toast(x.message)}}}
-/* SHADOW_ADMIN_ENTITY_UI_V212_START */
+/* SHADOW_ADMIN_ENTITY_UI_V213_START */
 async function reloadEntityDetail(id){
   const nd=await api(`/api/entities/${id}`);
   state.details.set(id,nd);
@@ -1137,7 +1219,7 @@ function entityEditModal(d){
     <h2>Edit entity</h2>
     <p class="guest-note" style="margin-top:-4px">Admin only · ${esc(e.xHandle||e.x_handle||e.name||e.id||'entity')}</p>
 
-    <form id="entityEditForm" class="si-modal-form">
+    <form id="entityEditForm" class="si-modal-form" novalidate>
       <label>Name
         <input name="name" required maxlength="80" value="${esc(e.name||'')}">
       </label>
@@ -1170,7 +1252,7 @@ function entityEditModal(d){
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <button id="entityEditCancel" class="si-button" type="button">Cancel</button>
-        <button class="si-button primary" type="submit">Save changes</button>
+        <button id="entitySaveChanges" class="si-button primary" type="button">Save changes</button>
       </div>
     </form>
   </div>`);
@@ -1179,29 +1261,55 @@ function entityEditModal(d){
   if(cancel)cancel.onclick=()=>reloadEntityDetail(e.id).catch(x=>toast(x.message));
 
   const form=$('#entityEditForm');
-  if(form)form.onsubmit=async ev=>{
-    ev.preventDefault();
-    const submit=form.querySelector('button[type="submit"]');
-    if(submit)submit.disabled=true;
+  const save=$('#entitySaveChanges');
+
+  if(save&&form)save.onclick=async()=>{
+    const name=String(form.elements.name?.value||'').trim();
+    if(!name){
+      form.elements.name?.focus();
+      toast('Name is required');
+      return;
+    }
+
+    const confidence=Number(form.elements.confidence?.value);
+    const riskScore=Number(form.elements.riskScore?.value);
+
+    if(!Number.isFinite(confidence)||confidence<0||confidence>100){
+      toast('Confidence must be 0–100');
+      return;
+    }
+    if(!Number.isFinite(riskScore)||riskScore<0||riskScore>100){
+      toast('Signal must be 0–100');
+      return;
+    }
+
+    const originalText=save.textContent;
+    save.disabled=true;
+    save.textContent='Saving…';
 
     try{
       const body=Object.fromEntries(new FormData(form));
-      body.confidence=Number(body.confidence);
-      body.riskScore=Number(body.riskScore);
+      body.confidence=confidence;
+      body.riskScore=riskScore;
 
-      await api(`/api/entities/${e.id}`,{
-        method:'PATCH',
+      const result=await api(`/api/entities/${e.id}/update`,{
+        method:'POST',
         body:JSON.stringify(body)
       });
+
+      if(!result?.ok||result?.mutation!=='update'){
+        throw new Error('Server did not confirm the update');
+      }
 
       state.details.delete(e.id);
       await refresh();
       await reloadEntityDetail(e.id);
-      toast('Entity updated');
+      toast('Changes saved');
     }catch(x){
-      toast(x.message);
-    }finally{
-      if(submit)submit.disabled=false;
+      console.error('Entity save failed:',x);
+      toast(`Save failed: ${x.message}`);
+      save.disabled=false;
+      save.textContent=originalText;
     }
   };
 }
@@ -1220,14 +1328,14 @@ function entityDeleteModal(e){
     <p>This permanently removes <strong>${esc(display)}</strong> from Shadow Intelligence.</p>
     <p class="guest-note">Linked wallets, wallet activity, incidents, social records and entity evidence will also be deleted. Orphan token records are cleaned up automatically.</p>
 
-    <form id="entityDeleteForm" class="si-modal-form">
+    <form id="entityDeleteForm" class="si-modal-form" novalidate>
       <label>Type <strong>${esc(display)}</strong> to confirm
-        <input name="confirm" autocomplete="off" required placeholder="${esc(display)}">
+        <input name="confirm" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${esc(display)}">
       </label>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <button id="entityDeleteCancel" class="si-button" type="button">Cancel</button>
-        <button class="si-button" type="submit" style="border-color:rgba(255,75,75,.55);color:#ff5c5c">Delete permanently</button>
+        <button id="entityDeletePermanent" class="si-button" type="button" style="border-color:rgba(255,75,75,.55);color:#ff5c5c">Delete permanently</button>
       </div>
     </form>
   </div>`);
@@ -1236,31 +1344,51 @@ function entityDeleteModal(e){
   if(cancel)cancel.onclick=()=>reloadEntityDetail(e.id).catch(x=>toast(x.message));
 
   const form=$('#entityDeleteForm');
-  if(form)form.onsubmit=async ev=>{
-    ev.preventDefault();
-    const typed=String(new FormData(form).get('confirm')||'').trim();
+  const del=$('#entityDeletePermanent');
+
+  if(del&&form)del.onclick=async()=>{
+    const typed=String(form.elements.confirm?.value||'').trim();
     if(typed!==display){
-      toast('Confirmation text does not match');
+      form.elements.confirm?.focus();
+      toast(`Type ${display} exactly`);
       return;
     }
 
-    const submit=form.querySelector('button[type="submit"]');
-    if(submit)submit.disabled=true;
+    const originalText=del.textContent;
+    del.disabled=true;
+    del.textContent='Deleting…';
 
     try{
-      await api(`/api/entities/${e.id}`,{method:'DELETE'});
+      const result=await api(`/api/entities/${e.id}/delete`,{
+        method:'POST',
+        body:'{}'
+      });
+
+      if(!result?.ok||result?.mutation!=='delete'||result?.deletedId!==e.id){
+        throw new Error('Server did not confirm the deletion');
+      }
+
       state.details.delete(e.id);
+      state.entities=state.entities.filter(x=>x.id!==e.id);
+
+      if(state.overview?.selected?.id===e.id){
+        state.overview={...state.overview,selected:null};
+      }
+
+      graphEntityKey='';
       closeModal();
       await refresh();
       nav('entities');
       toast('Entity deleted permanently');
     }catch(x){
-      toast(x.message);
-      if(submit)submit.disabled=false;
+      console.error('Entity delete failed:',x);
+      toast(`Delete failed: ${x.message}`);
+      del.disabled=false;
+      del.textContent=originalText;
     }
   };
 }
-/* SHADOW_ADMIN_ENTITY_UI_V212_END */
+/* SHADOW_ADMIN_ENTITY_UI_V213_END */
 
 function evidenceModal(){modal(`<h2>Add evidence</h2><form id="evidenceForm" class="si-modal-form"><label>Title<input name="title" required></label><label>Entity<select name="entityId"><option value="">General</option>${state.entities.map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join('')}</select></label><label>Type<select name="kind"><option value="x_post">X post</option><option value="profile">Profile</option><option value="transaction">Transaction</option><option value="screenshot">Screenshot</option><option value="note">Research note</option></select></label><label>Source URL<input name="sourceUrl" type="url"></label><label>Note<textarea name="note" rows="5"></textarea></label><button class="si-button primary">Submit evidence</button></form>`);$('#evidenceForm').onsubmit=async e=>{e.preventDefault();try{await api('/api/evidence',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});closeModal();toast('Evidence saved');loadEvidence()}catch(x){toast(x.message)}}}
 async function loadEvidence(){try{const d=await api('/api/evidence');$('#evidenceGrid').innerHTML=d.items.map(e=>`<article class="si-panel"><div class="si-eyebrow">${esc(e.kind)}</div><h3>${esc(e.title)}</h3><p>${esc(e.entityName||'General')} · ${ago(e.created_at)}</p><p>${esc(e.note||e.source_url||'')}</p></article>`).join('')||'<div class="guest-note">No evidence yet.</div>'}catch(e){toast(e.message)}}

@@ -1,5 +1,5 @@
 import { id, nowIso, isSolanaAddress } from './utils.mjs';
-import { getRecentWalletActivity, solanaHealth } from './adapters/solana-rpc.mjs';
+import { getRecentWalletActivity, getWalletTokenHoldings, solanaHealth } from './adapters/solana-rpc.mjs';
 import { getTokenMarket } from './adapters/token-market.mjs';
 import { getXProfile, getXPosts, xConfigured } from './adapters/x-api.mjs';
 import { getSetting } from './db.mjs';
@@ -77,6 +77,66 @@ export function createLiveIntelligence(db,{fetchImpl=fetch}={}) {
     return true;
   }
 
+  /* SHADOW_CURRENT_HOLDINGS_V219_LIVE */
+  function saveWalletHoldingsSnapshot(wallet,holdings=[]) {
+    const at=nowIso();
+    const cleanRows=(Array.isArray(holdings)?holdings:[])
+      .filter(h=>h?.mint&&Number(h.amount)>1e-12);
+
+    db.exec('BEGIN IMMEDIATE');
+    try{
+      db.prepare('DELETE FROM wallet_holdings WHERE wallet_id=?').run(wallet.id);
+      const insert=db.prepare(`
+        INSERT INTO wallet_holdings
+          (wallet_id,entity_id,mint,amount,decimals,updated_at)
+        VALUES (?,?,?,?,?,?)
+      `);
+
+      for(const h of cleanRows){
+        insert.run(
+          wallet.id,
+          wallet.entity_id||null,
+          String(h.mint),
+          Number(h.amount),
+          Math.max(0,Number(h.decimals)||0),
+          at
+        );
+      }
+
+      db.prepare(`
+        INSERT INTO wallet_holdings_state
+          (wallet_id,last_success_at,last_attempt_at,sync_status,sync_error)
+        VALUES (?,?,?,'live','')
+        ON CONFLICT(wallet_id) DO UPDATE SET
+          last_success_at=excluded.last_success_at,
+          last_attempt_at=excluded.last_attempt_at,
+          sync_status='live',
+          sync_error=''
+      `).run(wallet.id,at,at);
+
+      db.exec('COMMIT');
+    }catch(error){
+      try{db.exec('ROLLBACK')}catch{}
+      throw error;
+    }
+
+    return {count:cleanRows.length,updatedAt:at};
+  }
+
+  function markWalletHoldingsError(wallet,error) {
+    const at=nowIso();
+    db.prepare(`
+      INSERT INTO wallet_holdings_state
+        (wallet_id,last_success_at,last_attempt_at,sync_status,sync_error)
+      VALUES (?,'',?,'error',?)
+      ON CONFLICT(wallet_id) DO UPDATE SET
+        last_attempt_at=excluded.last_attempt_at,
+        sync_status='error',
+        sync_error=excluded.sync_error
+    `).run(wallet.id,at,String(error?.message||error).slice(0,300));
+  }
+  /* SHADOW_CURRENT_HOLDINGS_V219_LIVE_END */
+
   async function syncWallet(walletId,{forceMarket=false}={}) {
     const wallet=db.prepare('SELECT * FROM wallets WHERE id=?').get(walletId);
     if(!wallet)throw new Error('Wallet not found');
@@ -86,6 +146,26 @@ export function createLiveIntelligence(db,{fetchImpl=fetch}={}) {
     }
     db.prepare("UPDATE wallets SET sync_status='syncing',sync_error='' WHERE id=?").run(wallet.id);
     try{
+      let holdingsSnapshot={ok:false,count:0};
+      try{
+        const onchain=await getWalletTokenHoldings(wallet.address,{fetchImpl});
+        const saved=saveWalletHoldingsSnapshot(wallet,onchain.holdings);
+        holdingsSnapshot={
+          ok:true,
+          provider:onchain.provider,
+          count:saved.count,
+          updatedAt:saved.updatedAt
+        };
+      }catch(holdingsError){
+        // Keep the previous successful snapshot on RPC failure.
+        // Activity sync continues independently.
+        markWalletHoldingsError(wallet,holdingsError);
+        holdingsSnapshot={
+          ok:false,
+          error:String(holdingsError?.message||holdingsError)
+        };
+      }
+
       const limit=Math.max(5,Math.min(Number(getSetting(db,'wallet_history_limit','30'))||30,100));
       const result=await getRecentWalletActivity(wallet.address,{limit,untilSignature:wallet.last_signature||'',fetchImpl});
       let inserted=0;
@@ -98,7 +178,7 @@ export function createLiveIntelligence(db,{fetchImpl=fetch}={}) {
       const newest=result.signatures?.[0]||wallet.last_signature||'';
       db.prepare("UPDATE wallets SET last_signature=?,last_scanned_at=?,sync_status='live',sync_error='' WHERE id=?").run(newest,nowIso(),wallet.id);
       recomputeEntity(wallet.entity_id);
-      return {ok:true,provider:result.provider,newTransactions:result.signatures?.length||0,newActivity:inserted,lastSignature:newest};
+      return {ok:true,provider:result.provider,newTransactions:result.signatures?.length||0,newActivity:inserted,lastSignature:newest,holdings:holdingsSnapshot};
     }catch(error){
       db.prepare("UPDATE wallets SET last_scanned_at=?,sync_status='error',sync_error=? WHERE id=?").run(nowIso(),String(error.message||error).slice(0,300),wallet.id);
       throw error;

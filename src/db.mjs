@@ -63,6 +63,27 @@ export function openDb(path = process.env.DB_PATH || './shadow-intelligence.db')
       id TEXT PRIMARY KEY,token_id TEXT NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,price_usd REAL DEFAULT 0,price_change REAL DEFAULT 0,
       market_cap REAL DEFAULT 0,liquidity_usd REAL DEFAULT 0,created_at TEXT NOT NULL
     );
+    /* SHADOW_CURRENT_HOLDINGS_V219_DB */
+    CREATE TABLE IF NOT EXISTS wallet_holdings (
+      wallet_id TEXT NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
+      entity_id TEXT REFERENCES entities(id) ON DELETE CASCADE,
+      mint TEXT NOT NULL,
+      amount REAL NOT NULL DEFAULT 0,
+      decimals INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (wallet_id,mint)
+    );
+    CREATE INDEX IF NOT EXISTS idx_wallet_holdings_mint ON wallet_holdings(mint);
+    CREATE INDEX IF NOT EXISTS idx_wallet_holdings_entity ON wallet_holdings(entity_id,mint);
+
+    CREATE TABLE IF NOT EXISTS wallet_holdings_state (
+      wallet_id TEXT PRIMARY KEY REFERENCES wallets(id) ON DELETE CASCADE,
+      last_success_at TEXT DEFAULT '',
+      last_attempt_at TEXT DEFAULT '',
+      sync_status TEXT NOT NULL DEFAULT 'pending',
+      sync_error TEXT DEFAULT ''
+    );
+    /* SHADOW_CURRENT_HOLDINGS_V219_DB_END */
   `);
 
   migrateColumns(db);

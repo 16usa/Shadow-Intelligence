@@ -227,8 +227,17 @@ async function api(req, res, db, url, live) {
     db.prepare(`INSERT INTO entities (id,name,x_handle,avatar,avatar_source,risk_score,confidence,incidents,follower_losses,status,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(entityId,name,clean(b.xHandle,50),avatar,avatar?'manual':'pending',Math.max(0,Math.min(100,Number.isFinite(Number(b.riskScore))?Number(b.riskScore):0)),Math.max(0,Math.min(100,Number.isFinite(Number(b.confidence))?Number(b.confidence):50)),0,0,clean(b.status,20)||'watch',clean(b.notes,500),nowIso());
     return json(res,201,{id:entityId});
   }
-  /* SHADOW_ADMIN_ENTITY_V212_START */
-  if (parts[0]==='api' && parts[1]==='entities' && parts[2] && parts.length===3 && method==='PATCH') {
+  /* SHADOW_ADMIN_ENTITY_V213_START */
+  // Admin entity mutations.
+  // POST aliases are the canonical UI path because they are reliable through
+  // mobile browsers / preview proxies. PATCH + DELETE remain supported.
+  const entityUpdateRoute =
+    parts[0]==='api' && parts[1]==='entities' && parts[2] && (
+      (parts.length===3 && method==='PATCH') ||
+      (parts.length===4 && parts[3]==='update' && method==='POST')
+    );
+
+  if (entityUpdateRoute) {
     if (!requireOwner(req,res,db)) return;
 
     const current=db.prepare('SELECT * FROM entities WHERE id=?').get(parts[2]);
@@ -259,15 +268,23 @@ async function api(req, res, db, url, live) {
     const notes=has('notes')?clean(b.notes,500):current.notes;
     const avatarSource=has('avatar')?(avatar?'manual':'pending'):current.avatar_source;
 
-    db.prepare(`UPDATE entities
+    const changed=db.prepare(`
+      UPDATE entities
       SET name=?,x_handle=?,avatar=?,avatar_source=?,risk_score=?,confidence=?,status=?,notes=?
-      WHERE id=?`)
-      .run(name,xHandle,avatar,avatarSource,riskScore,confidence,status,notes,current.id);
+      WHERE id=?
+    `).run(
+      name,xHandle,avatar,avatarSource,riskScore,confidence,status,notes,current.id
+    ).changes;
+
+    if(!changed)return json(res,409,{error:'Entity was not updated'});
 
     const updated=db.prepare('SELECT * FROM entities WHERE id=?').get(current.id);
     const walletCount=db.prepare('SELECT COUNT(*) AS n FROM wallets WHERE entity_id=?').get(current.id).n;
 
     return json(res,200,{
+      ok:true,
+      mutation:'update',
+      version:'2.1.3',
       entity:{
         ...updated,
         riskScore:updated.risk_score,
@@ -278,7 +295,13 @@ async function api(req, res, db, url, live) {
     });
   }
 
-  if (parts[0]==='api' && parts[1]==='entities' && parts[2] && parts.length===3 && method==='DELETE') {
+  const entityDeleteRoute =
+    parts[0]==='api' && parts[1]==='entities' && parts[2] && (
+      (parts.length===3 && method==='DELETE') ||
+      (parts.length===4 && parts[3]==='delete' && method==='POST')
+    );
+
+  if (entityDeleteRoute) {
     if (!requireOwner(req,res,db)) return;
 
     const entity=db.prepare('SELECT * FROM entities WHERE id=?').get(parts[2]);
@@ -302,13 +325,15 @@ async function api(req, res, db, url, live) {
       )
     `).all(entity.id,entity.id,entity.id,entity.id);
 
+    let removed={wallets:0,activity:0,evidence:0,incidents:0,social:0,orphanTokens:0};
+
     db.exec('BEGIN IMMEDIATE');
     try{
-      const evidence=db.prepare('DELETE FROM evidence WHERE entity_id=?').run(entity.id).changes;
-      const social=db.prepare('DELETE FROM social_posts WHERE entity_id=?').run(entity.id).changes;
-      const incidents=db.prepare('DELETE FROM incidents WHERE entity_id=?').run(entity.id).changes;
+      removed.evidence=db.prepare('DELETE FROM evidence WHERE entity_id=?').run(entity.id).changes;
+      removed.social=db.prepare('DELETE FROM social_posts WHERE entity_id=?').run(entity.id).changes;
+      removed.incidents=db.prepare('DELETE FROM incidents WHERE entity_id=?').run(entity.id).changes;
 
-      const activity=db.prepare(`
+      removed.activity=db.prepare(`
         DELETE FROM wallet_activity
         WHERE entity_id=?
            OR wallet_id IN (SELECT id FROM wallets WHERE entity_id=?)
@@ -319,10 +344,19 @@ async function api(req, res, db, url, live) {
         WHERE wallet_id IN (SELECT id FROM wallets WHERE entity_id=?)
       `).run(entity.id);
 
-      const wallets=db.prepare('DELETE FROM wallets WHERE entity_id=?').run(entity.id).changes;
-      db.prepare('DELETE FROM entities WHERE id=?').run(entity.id);
+      removed.wallets=db.prepare('DELETE FROM wallets WHERE entity_id=?').run(entity.id).changes;
 
-      let orphanTokens=0;
+      const deleted=db.prepare('DELETE FROM entities WHERE id=?').run(entity.id).changes;
+      if(deleted!==1)throw new Error('Entity delete did not remove exactly one record');
+
+      db.exec('COMMIT');
+    }catch(error){
+      try{db.exec('ROLLBACK')}catch{}
+      throw error;
+    }
+
+    let cleanupWarning='';
+    try{
       for(const token of affectedTokens){
         const stillUsed=db.prepare(`
           SELECT
@@ -332,24 +366,28 @@ async function api(req, res, db, url, live) {
         `).get(token.mint,token.id,token.mint);
 
         if(!stillUsed.inActivity && !stillUsed.inIncidents && !stillUsed.inEvidence){
-          orphanTokens+=db.prepare('DELETE FROM tokens WHERE id=?').run(token.id).changes;
+          removed.orphanTokens+=db.prepare('DELETE FROM tokens WHERE id=?').run(token.id).changes;
         }
       }
-
-      db.exec('COMMIT');
-
-      return json(res,200,{
-        ok:true,
-        deletedId:entity.id,
-        deletedName:entity.name,
-        removed:{wallets,activity,evidence,incidents,social,orphanTokens}
-      });
     }catch(error){
-      db.exec('ROLLBACK');
-      throw error;
+      cleanupWarning=String(error?.message||error);
+      console.warn('Post-delete orphan token cleanup failed:',cleanupWarning);
     }
+
+    const stillThere=db.prepare('SELECT 1 FROM entities WHERE id=?').get(entity.id);
+    if(stillThere)return json(res,500,{error:'Entity still exists after delete transaction'});
+
+    return json(res,200,{
+      ok:true,
+      mutation:'delete',
+      version:'2.1.3',
+      deletedId:entity.id,
+      deletedName:entity.name,
+      removed,
+      cleanupWarning
+    });
   }
-  /* SHADOW_ADMIN_ENTITY_V212_END */
+  /* SHADOW_ADMIN_ENTITY_V213_END */
 
   if (parts[0]==='api' && parts[1]==='entities' && parts[2] && parts.length===3 && method==='GET') {
     const e=db.prepare('SELECT * FROM entities WHERE id=?').get(parts[2]); if(!e)return json(res,404,{error:'Entity not found'});
@@ -394,7 +432,72 @@ async function api(req, res, db, url, live) {
     try { return json(res,200,await live.syncEntity(parts[2])); }
     catch(error){ return json(res,502,{error:error.message}); }
   }
-  if (route === '/api/tokens' && method === 'GET') return json(res,200,{items:db.prepare('SELECT * FROM tokens ORDER BY COALESCE(last_market_at,created_at) DESC').all()});
+  /* SHADOW_CURRENT_HOLDINGS_V219_API */
+  if (route === '/api/tokens' && method === 'GET') {
+    const items=db.prepare(`
+      WITH current_positions AS (
+        SELECT
+          h.wallet_id,
+          h.entity_id,
+          h.mint,
+          h.amount
+        FROM wallet_holdings h
+        JOIN wallets w ON w.id=h.wallet_id
+        JOIN wallet_holdings_state s ON s.wallet_id=h.wallet_id
+        WHERE w.entity_id IS NOT NULL
+          AND COALESCE(s.last_success_at,'')<>''
+          AND h.amount>1e-12
+
+        UNION ALL
+
+        -- Startup fallback only. Once a wallet has one successful on-chain
+        -- snapshot, this branch is permanently disabled for that wallet.
+        SELECT
+          a.wallet_id,
+          a.entity_id,
+          a.mint,
+          SUM(COALESCE(a.token_amount,0)) AS amount
+        FROM wallet_activity a
+        JOIN wallets w ON w.id=a.wallet_id
+        LEFT JOIN wallet_holdings_state s ON s.wallet_id=a.wallet_id
+        WHERE w.entity_id IS NOT NULL
+          AND COALESCE(s.last_success_at,'')=''
+          AND COALESCE(a.mint,'')<>''
+        GROUP BY a.wallet_id,a.entity_id,a.mint
+        HAVING SUM(COALESCE(a.token_amount,0))>1e-12
+      ),
+      held AS (
+        SELECT
+          mint,
+          SUM(amount) AS held_amount,
+          COUNT(DISTINCT wallet_id) AS holder_wallets,
+          COUNT(DISTINCT entity_id) AS holder_entities
+        FROM current_positions
+        GROUP BY mint
+        HAVING SUM(amount)>1e-12
+      )
+      SELECT
+        t.*,
+        held.held_amount AS held_amount,
+        held.holder_wallets AS holder_wallets,
+        held.holder_entities AS holder_entities,
+        (
+          SELECT MAX(h.updated_at)
+          FROM wallet_holdings h
+          WHERE h.mint=t.mint
+        ) AS holdings_updated_at
+      FROM tokens t
+      JOIN held ON held.mint=t.mint
+      ORDER BY COALESCE(t.last_market_at,t.created_at) DESC
+    `).all();
+
+    return json(res,200,{
+      items,
+      mode:'current-entity-holdings',
+      authoritative:true
+    });
+  }
+  /* SHADOW_CURRENT_HOLDINGS_V219_API_END */
   if (route === '/api/evidence' && method === 'GET') return json(res,200,{items:db.prepare(`SELECT e.*,u.display_name AS userName,en.name AS entityName FROM evidence e LEFT JOIN users u ON u.id=e.user_id LEFT JOIN entities en ON en.id=e.entity_id ORDER BY e.created_at DESC LIMIT 100`).all()});
   if (route === '/api/evidence' && method === 'POST') {
     const user=requireUser(req,res,db); if(!user)return; const b=await readJson(req);

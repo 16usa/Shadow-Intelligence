@@ -3,6 +3,10 @@ import { isSafeHttpUrl, isSolanaAddress } from '../utils.mjs';
 export const PUMP_PROGRAM = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
 export const PUMP_AMM_PROGRAM = 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA';
 export const WSOL_MINT = 'So11111111111111111111111111111111111111112';
+/* SHADOW_CURRENT_HOLDINGS_V219_RPC */
+export const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+export const TOKEN_2022_PROGRAM = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+/* SHADOW_CURRENT_HOLDINGS_V219_RPC_END */
 const STABLE_MINTS = new Set([
   'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
   'Es9vMFrzaCERmJfrF4H2FYD3Bj4yN3nSboERoAaiQh4H' // legacy USDT
@@ -235,6 +239,64 @@ async function heliusSince(address, { limit = 20, untilSignature = '', fetchImpl
   }
   return collected;
 }
+
+/* SHADOW_CURRENT_HOLDINGS_V219_RPC */
+function parsedTokenAccountHolding(row) {
+  const info=row?.account?.data?.parsed?.info;
+  const mint=String(info?.mint||'');
+  const amountInfo=info?.tokenAmount;
+  if(!mint||!amountInfo)return null;
+
+  const decimals=Math.max(0,Number(amountInfo.decimals||0));
+  let amount=Number(amountInfo.uiAmountString);
+  if(!Number.isFinite(amount)){
+    if(amountInfo.uiAmount!=null) amount=Number(amountInfo.uiAmount);
+    else amount=Number(amountInfo.amount||0)/(10**decimals);
+  }
+
+  if(!Number.isFinite(amount)||amount<=1e-12)return null;
+  if(mint===WSOL_MINT||STABLE_MINTS.has(mint))return null;
+  return {mint,amount,decimals};
+}
+
+export async function getWalletTokenHoldings(address,{fetchImpl=fetch}={}) {
+  if(!isSolanaAddress(address))throw new Error('Invalid Solana wallet address');
+
+  const fetchProgram=async programId=>{
+    const result=await rpc('getTokenAccountsByOwner',[
+      address,
+      {programId},
+      {encoding:'jsonParsed',commitment:'confirmed'}
+    ],{fetchImpl});
+    return Array.isArray(result?.value)?result.value:[];
+  };
+
+  // A snapshot is only committed if both token programs succeed.
+  // This prevents a temporary RPC problem from writing a partial portfolio.
+  const [classic,token2022]=await Promise.all([
+    fetchProgram(TOKEN_PROGRAM),
+    fetchProgram(TOKEN_2022_PROGRAM)
+  ]);
+
+  const byMint=new Map();
+  for(const row of [...classic,...token2022]){
+    const h=parsedTokenAccountHolding(row);
+    if(!h)continue;
+    const current=byMint.get(h.mint);
+    if(current){
+      current.amount+=h.amount;
+      current.decimals=Math.max(current.decimals,h.decimals);
+    }else{
+      byMint.set(h.mint,{...h});
+    }
+  }
+
+  return {
+    provider:process.env.HELIUS_API_KEY?'helius-rpc':process.env.SOLANA_RPC_URL?'custom-rpc':'public-rpc',
+    holdings:[...byMint.values()].filter(h=>h.amount>1e-12)
+  };
+}
+/* SHADOW_CURRENT_HOLDINGS_V219_RPC_END */
 
 export async function getRecentWalletActivity(address, { limit = 20, untilSignature = '', fetchImpl = fetch } = {}) {
   if (!isSolanaAddress(address)) throw new Error('Invalid Solana wallet address');
