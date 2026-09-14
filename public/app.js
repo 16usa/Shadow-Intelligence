@@ -98,6 +98,7 @@ async function boot(){
  bind();
  nav('overview',{push:false,replace:true});
  refresh();
+ startMapSignalPoll();
  setInterval(()=>{
    if(!['chat','messages','settings'].includes(currentPage))refresh();
  },7000);
@@ -135,6 +136,76 @@ function updateMapCounts(){
   const c=currentMapCounts();
   el.textContent=`${c.entities} entities · ${c.wallets} wallets · ${c.tokens} tokens`;
 }
+
+/* SHADOW_LIVE_TRADE_BEACON_V214_START */
+let mapSignalPollTimer=0;
+let mapSignalPollBusy=false;
+let mapSignalSeeded=false;
+
+function mapSignalKind(event){
+  const type=String(event?.type||'').toLowerCase();
+  const title=String(event?.title||'').toLowerCase();
+
+  if(type==='buy'||type.includes('buy')||title.startsWith('bought ')||title.includes(' bought '))return 'buy';
+  if(type==='sell'||type.includes('sell')||title.startsWith('sold ')||title.includes(' sold '))return 'sell';
+  return '';
+}
+
+function rememberMapSignal(id){
+  if(!id)return;
+  state.lastEventIds.add(String(id));
+  while(state.lastEventIds.size>320){
+    const oldest=state.lastEventIds.values().next().value;
+    state.lastEventIds.delete(oldest);
+  }
+}
+
+function consumeMapSignals(items=[]){
+  const rows=Array.isArray(items)?items:[];
+
+  if(!mapSignalSeeded){
+    rows.forEach(event=>rememberMapSignal(event?.id));
+    mapSignalSeeded=true;
+    return;
+  }
+
+  const fresh=rows
+    .filter(event=>event?.id&&!state.lastEventIds.has(String(event.id)))
+    .reverse();
+
+  for(const event of fresh){
+    rememberMapSignal(event.id);
+    const kind=mapSignalKind(event);
+    if(!kind||!event?.entityId)continue;
+
+    if(
+      currentPage==='overview' &&
+      !document.body.classList.contains('si-detail-page-open')
+    ){
+      state.graph?.pulseEntity?.(event.entityId,kind);
+    }
+  }
+}
+
+async function pollMapSignals(){
+  if(mapSignalPollBusy||document.hidden)return;
+  mapSignalPollBusy=true;
+  try{
+    const data=await api('/api/feed?limit=30');
+    consumeMapSignals(data?.items||[]);
+  }catch(error){
+    console.debug('Map signal poll skipped:',error?.message||error);
+  }finally{
+    mapSignalPollBusy=false;
+  }
+}
+
+function startMapSignalPoll(){
+  if(mapSignalPollTimer)return;
+  pollMapSignals();
+  mapSignalPollTimer=setInterval(pollMapSignals,2000);
+}
+/* SHADOW_LIVE_TRADE_BEACON_V214_END */
 
 function renderOverviewChrome(live=state.liveStatus){
   const o=state.overview||{};
@@ -174,9 +245,19 @@ class ShadowDomSwarm{
 
     root.dataset.renderer='dom-v207';
     root.dataset.rendererState='booting';
+    /* SHADOW_DOM_PILL_WATERMARK_V214_START
+       Main Map watermark belongs to the active ShadowDomSwarm renderer.
+       SVG is DOM-based and sits behind entity nodes. */
     root.innerHTML=
+      '<div class="si-dom-pill-watermark" aria-hidden="true">'+
+        '<svg viewBox="0 0 400 184" focusable="false" aria-hidden="true">'+
+          '<rect x="8" y="8" width="384" height="168" rx="84" ry="84"></rect>'+
+          '<path d="M200 8V176"></path>'+
+        '</svg>'+
+      '</div>'+
       '<div class="si-dom-swarm" aria-label="Entity intelligence map"></div>'+
       '<div class="si-graph-empty">No network data yet.</div>';
+    /* SHADOW_DOM_PILL_WATERMARK_V214_END */
 
     this.layer=root.querySelector('.si-dom-swarm');
     this.empty=root.querySelector('.si-graph-empty');
@@ -551,6 +632,24 @@ class ShadowDomSwarm{
     this.schedule();
   }
 
+  pulseEntity(entityId,kind='buy'){
+    if(this.dead||!entityId)return false;
+
+    const node=this.nodes.find(n=>String(n.raw?.id||'')===String(entityId));
+    if(!node?.el)return false;
+
+    const existing=[...node.el.querySelectorAll('.si-entity-beacon')];
+    while(existing.length>=2)existing.shift()?.remove();
+
+    const beacon=document.createElement('span');
+    beacon.className=`si-entity-beacon ${kind==='sell'?'sell':'buy'}`;
+    beacon.setAttribute('aria-hidden','true');
+    node.el.appendChild(beacon);
+
+    setTimeout(()=>beacon.remove(),60000);
+    return true;
+  }
+
   setModel(model={}){
     this.model=model||{};
     this.entities=Array.isArray(this.model.entities)?this.model.entities:[];
@@ -674,15 +773,44 @@ async function refresh(){
   await Promise.allSettled([entitiesTask,tokensTask,overviewTask,liveTask]);
 }
 
+/* SHADOW_PUMP_LINKS_V217_START */
+function pumpFunCoinUrl(mint){
+  const value=String(mint||'').trim();
+  return value ? `https://pump.fun/coin/${encodeURIComponent(value)}` : '';
+}
+
+function pumpTokenLink(token,label){
+  const mint=String(token?.mint||token?.tokenMint||'').trim();
+  const text=esc(label||token?.symbol||token?.tokenName||token?.name||'Token');
+  if(!mint)return `<strong>${text}</strong>`;
+  return `<a class="si-token-trade-link" data-pump-token-link="1" href="${esc(pumpFunCoinUrl(mint))}" aria-label="Open ${text.replace(/<[^>]*>/g,'')} on Pump.fun"><span>${text}</span><span class="si-token-trade-arrow" aria-hidden="true">&#8599;</span></a>`;
+}
+/* SHADOW_PUMP_LINKS_V217_END */
+
 function focusHtml(e){const d=state.details.get(e.id),ws=d?.wallets?.length??e.walletCount??0,ts=d?.tokens?.length??0;return`<div class="si-focus-main">${avatar(e,'lg')}<div><h3>${esc(e.name)}</h3><p>${esc(e.x_handle||'')} · ${e.confidence||0}% confidence</p></div></div><div class="si-metrics"><div class="si-metric"><strong>${ws}</strong><small>Wallets</small></div><div class="si-metric"><strong>${ts}</strong><small>Tokens</small></div><div class="si-metric"><strong>${e.riskScore||0}</strong><small>Signal</small></div></div>`}
-function eventHtml(x){const type=String(x.type||'activity').toLowerCase(),sell=type.includes('sell')||type==='send',tr=type.includes('transfer')||type==='receive';return`<div class="si-event"><i class="si-event-dot ${sell?'sell':tr?'transfer':''}"></i><div><strong>${esc((x.title||type).replace(/^./,c=>c.toUpperCase()))}</strong><small>${esc(x.detail||x.symbol||x.tokenName||x.walletAddress||'Observed on-chain activity')}</small></div><time>${ago(x.createdAt||x.block_time)}</time></div>`}
+function eventHtml(x){
+  const type=String(x.type||'activity').toLowerCase(),sell=type.includes('sell')||type==='send',tr=type.includes('transfer')||type==='receive';
+  const title=(x.title||type).replace(/^./,c=>c.toUpperCase());
+  const titleHtml=x.tokenMint?pumpTokenLink({mint:x.tokenMint},title):`<strong>${esc(title)}</strong>`;
+  return `<div class="si-event"><i class="si-event-dot ${sell?'sell':tr?'transfer':''}"></i><div>${titleHtml}<small>${esc(x.detail||x.symbol||x.tokenName||x.walletAddress||'Observed on-chain activity')}</small></div><time>${ago(x.createdAt||x.block_time)}</time></div>`;
+}
 function renderLive(items){$('#overviewLive').innerHTML=(items||[]).slice(0,8).map(eventHtml).join('')||'<div class="guest-note">Waiting for live activity.</div>'}
 function renderEntitiesStrip(){const arr=state.entities.slice(0,4);$('#entityStrip').innerHTML=arr.map(e=>`<div class="si-entity-chip" data-open="${e.id}">${avatar(e,'sm')}<div><strong>${esc(e.name)}</strong><small>${esc(e.x_handle||'')} · ${e.walletCount||0} wallets</small></div></div>`).join('')||'<div class="guest-note">No tracked entities.</div>';$$('[data-open]',$('#entityStrip')).forEach(x=>x.onclick=()=>openObject('entity',{id:x.dataset.open}))}
 function renderConnections(model){const pairs=[];model.tokens.slice(0,12).forEach(t=>pairs.push(`${t.symbol||t.name||'Token'} ↔ ${short(t.mint)}`));$('#connectionStrip').innerHTML=pairs.map(x=>`<span class="si-connection">${esc(x)}</span>`).join('')||'<span class="guest-note">Connections appear after wallet activity.</span>'}
 function renderEntities(q=''){const query=(q||'').toLowerCase();const a=state.entities.filter(e=>!query||[e.name,e.x_handle,e.notes].join(' ').toLowerCase().includes(query));$('#entitiesGrid').innerHTML=a.map(e=>`<article class="si-panel si-entity-card" data-entity="${e.id}"><div class="si-card-top">${avatar(e,'lg')}<div><h3>${esc(e.name)}</h3><p>${esc(e.x_handle||'')} · ${e.confidence||0}% confidence</p></div></div><div class="si-card-stats"><div class="si-card-stat"><strong>${e.walletCount||0}</strong><small>Wallets</small></div><div class="si-card-stat"><strong>${e.incidents||0}</strong><small>Events</small></div><div class="si-card-stat"><strong>${e.riskScore||0}</strong><small>Signal</small></div></div></article>`).join('')||'<div class="guest-note">No entities found.</div>';$$('[data-entity]').forEach(x=>x.onclick=()=>openObject('entity',{id:x.dataset.entity}))}
 async function renderWallets(){try{const ds=await Promise.all(state.entities.map(e=>api(`/api/entities/${e.id}`)));const ws=ds.flatMap(d=>(d.wallets||[]).map(w=>({...w,entityName:d.entity.name,xHandle:d.entity.x_handle})));$('#walletsTable').innerHTML=`<table class="si-table"><thead><tr><th>Wallet</th><th>Entity</th><th>Status</th><th>Last scan</th><th></th></tr></thead><tbody>${ws.map(w=>`<tr><td><strong>${short(w.address)}</strong><br><small>${esc(w.label||'')}</small></td><td>${esc(w.entityName)}<br><small>${esc(w.xHandle||'')}</small></td><td>${esc(w.sync_status||'pending')}</td><td>${w.last_scanned_at?ago(w.last_scanned_at)+' ago':'not scanned'}</td><td>${['owner','admin'].includes(state.user?.role)?`<button class="si-button" data-sync="${w.id}">Sync</button>`:''}</td></tr>`).join('')}</tbody></table>`;$$('[data-sync]').forEach(b=>b.onclick=async()=>{b.disabled=true;try{const r=await api(`/api/wallets/${b.dataset.sync}/sync`,{method:'POST',body:'{}'});toast(`Synced · ${r.newActivity||0} new`);renderWallets()}catch(e){toast(e.message)}finally{b.disabled=false}})}catch(e){toast(e.message)}}
-function renderTokens(){const a=state.tokens;$('#tokensGrid').innerHTML=a.map(t=>`<article class="si-panel si-token-card" data-token="${esc(t.mint)}">${avatar(t,'md')}<div><span class="si-token-symbol">${esc(t.symbol||'TOKEN')}</span><p>${esc(t.name||'Unknown')}<br><small>${short(t.mint)}</small></p><small>${t.is_pump?'Pump.fun / PumpSwap':esc(t.dex_id||'Solana')} · MC ${money(t.market_cap||0)}</small></div><strong class="${Number(t.price_change)>=0?'pos':'neg'}">${Number(t.price_change)>=0?'+':''}${Number(t.price_change||0).toFixed(1)}%</strong></article>`).join('')||'<div class="guest-note">Tokens appear after observed activity.</div>';$$('[data-token]').forEach(x=>x.onclick=()=>openObject('token',{mint:x.dataset.token}))}
-function renderFeed(){const a=state.overview?.feed||[];$('#fullFeed').innerHTML=a.map(x=>`<div class="si-feed-row">${avatar(x,'md')}<div><h3>${esc(x.title||x.type||'Activity')}</h3><p>${esc(x.detail||x.symbol||x.walletAddress||'')}</p><time>${esc(x.entityName||'Unknown')} · ${ago(x.createdAt)}</time></div><strong class="${Number(x.value)<0?'neg':'pos'}">${x.value!=null?(Number(x.value)>0?'+':'')+esc(x.value)+'%':''}</strong></div>`).join('')||'<div class="guest-note">No live events yet.</div>';loadHealth()}
+function renderTokens(){const a=state.tokens;$('#tokensGrid').innerHTML=a.map(t=>`<article class="si-panel si-token-card" data-token="${esc(t.mint)}">${avatar(t,'md')}<div><span class="si-token-symbol">${pumpTokenLink(t,t.symbol||'TOKEN')}</span><p>${esc(t.name||'Unknown')}<br><small>${short(t.mint)}</small></p><small>${t.is_pump?'Pump.fun / PumpSwap':esc(t.dex_id||'Solana')} · MC ${money(t.market_cap||0)}</small></div><strong class="${Number(t.price_change)>=0?'pos':'neg'}">${Number(t.price_change)>=0?'+':''}${Number(t.price_change||0).toFixed(1)}%</strong></article>`).join('')||'<div class="guest-note">Tokens appear after observed activity.</div>';$$('[data-token]').forEach(x=>x.onclick=event=>{if(event.target.closest('[data-pump-token-link]'))return;openObject('token',{mint:x.dataset.token})})}
+function renderFeed(){
+  const rows=state.overview?.feed||[];
+  $('#fullFeed').innerHTML=rows.map(x=>{
+    const title=x.title||x.type||'Activity';
+    const titleHtml=x.tokenMint
+      ? pumpTokenLink({mint:x.tokenMint},title)
+      : `<strong>${esc(title)}</strong>`;
+    return `<div class="si-feed-row">${avatar(x,'md')}<div><h3>${titleHtml}</h3><p>${esc(x.detail||x.symbol||x.walletAddress||'')}</p><time>${esc(x.entityName||'Unknown')} · ${ago(x.createdAt)}</time></div><strong class="${Number(x.value)<0?'neg':'pos'}">${x.value!=null?(Number(x.value)>0?'+':'')+esc(x.value)+'%':''}</strong></div>`;
+  }).join('')||'<div class="guest-note">No live events yet.</div>';
+  loadHealth();
+}
 async function loadHealth(){try{const h=await api('/api/health');$('#liveHealth').innerHTML=`<div class="si-health-line"><span>Solana</span><strong>${esc(h.live?.solana?.status||'unknown')}</strong></div><div class="si-health-line"><span>Provider</span><strong>${esc(h.live?.solana?.provider||'')}</strong></div><div class="si-health-line"><span>X API</span><strong>${h.intelligence?.x?.configured?'configured':'not configured'}</strong></div>`}catch{}}
 function modal(html){
   const wasHidden=$('#modal')?.classList.contains('hidden');
@@ -845,7 +973,7 @@ function entityTokenRows(tokens=[]){
       return `<button type="button" class="si-detail-token-row" data-entity-token="${index}">
         ${avatar(t,'md')}
         <span class="si-detail-token-main">
-          <strong>${esc(t?.symbol||'Token')}</strong>
+          ${pumpTokenLink(t,t?.symbol||'Token')}
           <small>${esc(t?.name||'Unknown token')}</small>
           <small class="si-detail-token-mint">${esc(qtyText)}</small>
         </span>
@@ -912,7 +1040,11 @@ function entityDetail(d){
         </div>
 
         ${['owner','admin'].includes(state.user?.role)
-          ? '<button id="syncEntity" class="si-button primary" style="margin-top:12px;width:100%">Sync now</button>'
+          ? `<div class="si-entity-admin-actions" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">
+               <button id="syncEntity" class="si-button primary" style="grid-column:1/-1;width:100%">Sync now</button>
+               <button id="editEntity" class="si-button" type="button">Edit</button>
+               <button id="deleteEntity" class="si-button" type="button" style="border-color:rgba(255,75,75,.5);color:#ff5c5c">Delete</button>
+             </div>`
           : ''
         }
       </div>
@@ -942,7 +1074,8 @@ function entityDetail(d){
   state.detailGraph=new ShadowGraph($('#detailGraph'),model,{onSelect:openObject});
 
   $$('[data-entity-token]').forEach(row=>{
-    row.onclick=()=>{
+    row.onclick=(event)=>{
+      if(event.target.closest('[data-pump-token-link]'))return;
       const token=tokens[Number(row.dataset.entityToken)];
       if(token)openObject('token',token);
     };
@@ -963,12 +1096,172 @@ function entityDetail(d){
       b.disabled=false;
     }
   };
+
+  const edit=$('#editEntity');
+  if(edit)edit.onclick=()=>entityEditModal({
+    entity:e,
+    wallets,
+    tokens,
+    incidents,
+    evidence:Array.isArray(d?.evidence)?d.evidence:[]
+  });
+
+  const del=$('#deleteEntity');
+  if(del)del.onclick=()=>entityDeleteModal(e);
 }
 /* SHADOW_ENTITY_TOKENS_V210_END */
 
 function walletDetail(w,items){const model={entities:state.entities.filter(e=>e.id===w.entity_id),wallets:[w],tokens:state.tokens.filter(t=>items.some(a=>a.mint===t.mint)).map(t=>({...t,entity_id:w.entity_id})),activity:items};modal(`<div class="si-detail-layout"><aside class="si-detail-side"><div class="si-panel" style="box-shadow:none">${avatar(w,'xl')}<h2>Wallet</h2><p>${short(w.address)}</p><div class="si-metrics"><div class="si-metric"><strong>${esc(w.sync_status||'pending')}</strong><small>Status</small></div><div class="si-metric"><strong>${items.length}</strong><small>Events</small></div><div class="si-metric"><strong>${esc(w.chain||'solana')}</strong><small>Chain</small></div></div></div><div class="si-panel" style="box-shadow:none;margin-top:12px"><div class="si-panel-head"><span>ACTIVITY</span></div>${items.slice(0,18).map(a=>eventHtml({type:a.type,title:(a.type||'activity').toUpperCase(),detail:a.mint?short(a.mint):'',createdAt:a.block_time})).join('')||'<div class="guest-note">No activity.</div>'}</div></aside><section class="si-detail-map"><div id="detailGraph" class="si-graph"></div></section></div>`);state.detailGraph=new ShadowGraph($('#detailGraph'),model,{onSelect:openObject})}
 function tokenDetail(t){const related=state.overview?.feed?.filter(x=>x.symbol===t.symbol||x.tokenName===t.name)||[];modal(`<div class="si-detail-layout"><aside class="si-detail-side"><div class="si-panel" style="box-shadow:none">${avatar(t,'xl')}<h2>${esc(t.symbol||'Token')}</h2><p>${esc(t.name||'Unknown')}</p><p>${short(t.mint)}</p><div class="si-metrics"><div class="si-metric"><strong>${money(t.market_cap||0)}</strong><small>Market cap</small></div><div class="si-metric"><strong class="${Number(t.price_change)>=0?'pos':'neg'}">${Number(t.price_change)>=0?'+':''}${Number(t.price_change||0).toFixed(1)}%</strong><small>Change</small></div><div class="si-metric"><strong>${money(t.liquidity_usd||0)}</strong><small>Liquidity</small></div></div></div><div class="si-panel" style="box-shadow:none;margin-top:12px"><div class="si-panel-head"><span>RECENT SIGNALS</span></div>${related.slice(0,12).map(eventHtml).join('')||'<div class="guest-note">No recent incident records.</div>'}</div></aside><section class="si-detail-map"><div id="detailGraph" class="si-graph"></div></section></div>`);const entities=state.entities.filter(e=>related.some(x=>x.entityId===e.id));state.detailGraph=new ShadowGraph($('#detailGraph'),{entities:entities.length?entities:[state.overview?.selected].filter(Boolean),wallets:[],tokens:[t]},{onSelect:openObject})}
-function entityModal(){modal(`<h2>Add entity</h2><form id="entityForm" class="si-modal-form"><label>Name<input name="name" required placeholder="Entity name"></label><label>X handle<input name="xHandle" placeholder="@handle"></label><label>Avatar URL<input name="avatar" placeholder="https://…"></label><label>Initial wallet<input name="wallet" placeholder="Solana address"></label><label>Notes<textarea name="notes" rows="4"></textarea></label><button class="si-button primary">Create entity</button></form>`);$('#entityForm').onsubmit=async e=>{e.preventDefault();const b=Object.fromEntries(new FormData(e.target));try{const x=await api('/api/entities',{method:'POST',body:JSON.stringify(b)});if(b.wallet)await api(`/api/entities/${x.id}/wallets`,{method:'POST',body:JSON.stringify({address:b.wallet,label:'Main wallet'})});closeModal();toast('Entity created');await refresh();nav('entities')}catch(x){toast(x.message)}}}
+function entityModal(){modal(`<h2>Add entity</h2><form id="entityForm" class="si-modal-form"><label>Name<input name="name" required placeholder="Entity name"></label><label>X handle<input name="xHandle" placeholder="@handle"></label><label>Avatar URL<input name="avatar" placeholder="Optional — auto from Pump.fun wallet"></label><label>Initial wallet<input name="wallet" placeholder="Solana address"></label><label>Notes<textarea name="notes" rows="4"></textarea></label><button class="si-button primary">Create entity</button></form>`);$('#entityForm').onsubmit=async e=>{e.preventDefault();const b=Object.fromEntries(new FormData(e.target));try{const x=await api('/api/entities',{method:'POST',body:JSON.stringify(b)});if(b.wallet)await api(`/api/entities/${x.id}/wallets`,{method:'POST',body:JSON.stringify({address:b.wallet,label:'Main wallet'})});closeModal();toast('Entity created');await refresh();nav('entities')}catch(x){toast(x.message)}}}
+/* SHADOW_ADMIN_ENTITY_UI_V212_START */
+async function reloadEntityDetail(id){
+  const nd=await api(`/api/entities/${id}`);
+  state.details.set(id,nd);
+  const idx=state.entities.findIndex(x=>x.id===id);
+  if(idx>=0)state.entities[idx]={...state.entities[idx],...(nd.entity||{})};
+  entityDetail(nd);
+  return nd;
+}
+
+function entityEditModal(d){
+  if(!['owner','admin'].includes(state.user?.role)){
+    toast('Owner access required');
+    return;
+  }
+
+  const e=d?.entity||d||{};
+  const status=String(e.status||'watch');
+
+  modal(`<div class="si-admin-editor">
+    <h2>Edit entity</h2>
+    <p class="guest-note" style="margin-top:-4px">Admin only · ${esc(e.xHandle||e.x_handle||e.name||e.id||'entity')}</p>
+
+    <form id="entityEditForm" class="si-modal-form">
+      <label>Name
+        <input name="name" required maxlength="80" value="${esc(e.name||'')}">
+      </label>
+
+      <label>X handle
+        <input name="xHandle" maxlength="50" placeholder="@handle" value="${esc(e.xHandle||e.x_handle||'')}">
+      </label>
+
+      <label>Avatar URL
+        <input name="avatar" maxlength="1400000" placeholder="https://…" value="${esc(e.avatar||'')}">
+      </label>
+
+      <label>Confidence
+        <input name="confidence" type="number" min="0" max="100" step="1" value="${esc(e.confidence??50)}">
+      </label>
+
+      <label>Signal
+        <input name="riskScore" type="number" min="0" max="100" step="1" value="${esc(e.riskScore??e.risk_score??0)}">
+      </label>
+
+      <label>Status
+        <select name="status">
+          ${['watch','monitoring','high','blocked','inactive'].map(v=>`<option value="${v}" ${status===v?'selected':''}>${v}</option>`).join('')}
+        </select>
+      </label>
+
+      <label>Notes
+        <textarea name="notes" rows="5" maxlength="500">${esc(e.notes||'')}</textarea>
+      </label>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <button id="entityEditCancel" class="si-button" type="button">Cancel</button>
+        <button class="si-button primary" type="submit">Save changes</button>
+      </div>
+    </form>
+  </div>`);
+
+  const cancel=$('#entityEditCancel');
+  if(cancel)cancel.onclick=()=>reloadEntityDetail(e.id).catch(x=>toast(x.message));
+
+  const form=$('#entityEditForm');
+  if(form)form.onsubmit=async ev=>{
+    ev.preventDefault();
+    const submit=form.querySelector('button[type="submit"]');
+    if(submit)submit.disabled=true;
+
+    try{
+      const body=Object.fromEntries(new FormData(form));
+      body.confidence=Number(body.confidence);
+      body.riskScore=Number(body.riskScore);
+
+      await api(`/api/entities/${e.id}`,{
+        method:'PATCH',
+        body:JSON.stringify(body)
+      });
+
+      state.details.delete(e.id);
+      await refresh();
+      await reloadEntityDetail(e.id);
+      toast('Entity updated');
+    }catch(x){
+      toast(x.message);
+    }finally{
+      if(submit)submit.disabled=false;
+    }
+  };
+}
+
+function entityDeleteModal(e){
+  if(!['owner','admin'].includes(state.user?.role)){
+    toast('Owner access required');
+    return;
+  }
+
+  const label=String(e.xHandle||e.x_handle||e.name||e.id||'').trim();
+  const display=label||String(e.id||'entity');
+
+  modal(`<div class="si-admin-editor">
+    <h2>Delete entity</h2>
+    <p>This permanently removes <strong>${esc(display)}</strong> from Shadow Intelligence.</p>
+    <p class="guest-note">Linked wallets, wallet activity, incidents, social records and entity evidence will also be deleted. Orphan token records are cleaned up automatically.</p>
+
+    <form id="entityDeleteForm" class="si-modal-form">
+      <label>Type <strong>${esc(display)}</strong> to confirm
+        <input name="confirm" autocomplete="off" required placeholder="${esc(display)}">
+      </label>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <button id="entityDeleteCancel" class="si-button" type="button">Cancel</button>
+        <button class="si-button" type="submit" style="border-color:rgba(255,75,75,.55);color:#ff5c5c">Delete permanently</button>
+      </div>
+    </form>
+  </div>`);
+
+  const cancel=$('#entityDeleteCancel');
+  if(cancel)cancel.onclick=()=>reloadEntityDetail(e.id).catch(x=>toast(x.message));
+
+  const form=$('#entityDeleteForm');
+  if(form)form.onsubmit=async ev=>{
+    ev.preventDefault();
+    const typed=String(new FormData(form).get('confirm')||'').trim();
+    if(typed!==display){
+      toast('Confirmation text does not match');
+      return;
+    }
+
+    const submit=form.querySelector('button[type="submit"]');
+    if(submit)submit.disabled=true;
+
+    try{
+      await api(`/api/entities/${e.id}`,{method:'DELETE'});
+      state.details.delete(e.id);
+      closeModal();
+      await refresh();
+      nav('entities');
+      toast('Entity deleted permanently');
+    }catch(x){
+      toast(x.message);
+      if(submit)submit.disabled=false;
+    }
+  };
+}
+/* SHADOW_ADMIN_ENTITY_UI_V212_END */
+
 function evidenceModal(){modal(`<h2>Add evidence</h2><form id="evidenceForm" class="si-modal-form"><label>Title<input name="title" required></label><label>Entity<select name="entityId"><option value="">General</option>${state.entities.map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join('')}</select></label><label>Type<select name="kind"><option value="x_post">X post</option><option value="profile">Profile</option><option value="transaction">Transaction</option><option value="screenshot">Screenshot</option><option value="note">Research note</option></select></label><label>Source URL<input name="sourceUrl" type="url"></label><label>Note<textarea name="note" rows="5"></textarea></label><button class="si-button primary">Submit evidence</button></form>`);$('#evidenceForm').onsubmit=async e=>{e.preventDefault();try{await api('/api/evidence',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});closeModal();toast('Evidence saved');loadEvidence()}catch(x){toast(x.message)}}}
 async function loadEvidence(){try{const d=await api('/api/evidence');$('#evidenceGrid').innerHTML=d.items.map(e=>`<article class="si-panel"><div class="si-eyebrow">${esc(e.kind)}</div><h3>${esc(e.title)}</h3><p>${esc(e.entityName||'General')} · ${ago(e.created_at)}</p><p>${esc(e.note||e.source_url||'')}</p></article>`).join('')||'<div class="guest-note">No evidence yet.</div>'}catch(e){toast(e.message)}}
 let chatLoadSeq=0;

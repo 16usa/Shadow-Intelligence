@@ -9,7 +9,7 @@ import { resolveWalletAvatar } from './src/adapters/pump-profile.mjs';
 import { syncCopyGroup } from './src/adapters/copy-trading.mjs';
 import { providerHealth } from './src/adapters/intelligence.mjs';
 import { createLiveIntelligence } from './src/live-intelligence.mjs';
-import { getTokenMarket } from './src/adapters/token-market.mjs';
+import { getTokenMarket, getTokenMetadataBatch } from './src/adapters/token-market.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -80,6 +80,37 @@ function entityTokenPnlRows(db,entityId,limit=12,solUsd=0){
 }
 // === TOKEN PNL V13 END ===
 
+/* SHADOW_TOKEN_IMAGE_BACKFILL_V212_START */
+async function backfillMissingTokenImages(db,{limit=5000}={}){
+  if(!process.env.HELIUS_API_KEY){
+    return {ok:false,skipped:true,reason:'HELIUS_API_KEY not configured'};
+  }
+  const rows=db.prepare(`
+    SELECT id,mint,image
+    FROM tokens
+    WHERE COALESCE(TRIM(image),'')=''
+    ORDER BY COALESCE(last_market_at,created_at) DESC
+    LIMIT ?
+  `).all(Math.max(1,Math.min(Number(limit)||5000,10000)));
+  if(!rows.length)return {ok:true,checked:0,updated:0};
+  const metadata=await getTokenMetadataBatch(rows.map(r=>r.mint));
+  const update=db.prepare(`UPDATE tokens SET image=? WHERE id=? AND COALESCE(TRIM(image),'')=''`);
+  let updated=0;
+  db.exec('BEGIN IMMEDIATE');
+  try{
+    for(const row of rows){
+      const image=String(metadata.get(row.mint)?.image||'').trim();
+      if(!image)continue;
+      updated+=Number(update.run(image,row.id).changes||0);
+    }
+    db.exec('COMMIT');
+  }catch(error){
+    db.exec('ROLLBACK');
+    throw error;
+  }
+  return {ok:true,checked:rows.length,updated};
+}
+/* SHADOW_TOKEN_IMAGE_BACKFILL_V212_END */
 function userFor(req, db) {
   return getUserFromSession(db, parseCookies(req).si_session);
 }
@@ -108,7 +139,7 @@ function feedRows(db, limit = 30) {
   return db.prepare(`
     SELECT i.id,i.type,i.title,i.detail,i.severity,i.value,i.created_at AS createdAt,
       e.id AS entityId,e.name AS entityName,e.x_handle AS xHandle,e.avatar,e.risk_score AS riskScore,
-      w.address AS walletAddress,t.symbol,t.name AS tokenName,t.price_change AS priceChange
+      w.address AS walletAddress,t.symbol,t.name AS tokenName,t.mint AS tokenMint,t.price_change AS priceChange
     FROM incidents i
     LEFT JOIN entities e ON e.id=i.entity_id
     LEFT JOIN wallets w ON w.id=i.wallet_id
@@ -196,6 +227,130 @@ async function api(req, res, db, url, live) {
     db.prepare(`INSERT INTO entities (id,name,x_handle,avatar,avatar_source,risk_score,confidence,incidents,follower_losses,status,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(entityId,name,clean(b.xHandle,50),avatar,avatar?'manual':'pending',Math.max(0,Math.min(100,Number.isFinite(Number(b.riskScore))?Number(b.riskScore):0)),Math.max(0,Math.min(100,Number.isFinite(Number(b.confidence))?Number(b.confidence):50)),0,0,clean(b.status,20)||'watch',clean(b.notes,500),nowIso());
     return json(res,201,{id:entityId});
   }
+  /* SHADOW_ADMIN_ENTITY_V212_START */
+  if (parts[0]==='api' && parts[1]==='entities' && parts[2] && parts.length===3 && method==='PATCH') {
+    if (!requireOwner(req,res,db)) return;
+
+    const current=db.prepare('SELECT * FROM entities WHERE id=?').get(parts[2]);
+    if(!current)return json(res,404,{error:'Entity not found'});
+
+    const b=await readJson(req);
+    const has=(key)=>Object.hasOwn(b,key);
+
+    const name=has('name')?clean(b.name,80):current.name;
+    if(!name)return json(res,400,{error:'Name required'});
+
+    const xHandle=has('xHandle')?clean(b.xHandle,50):current.x_handle;
+
+    let avatar=has('avatar')?String(b.avatar||'').trim():String(current.avatar||'');
+    if(avatar && !(avatar.startsWith('data:image/') || isSafeHttpUrl(avatar))){
+      return json(res,400,{error:'Avatar must be an image upload or safe URL'});
+    }
+    if(avatar.length>1_400_000)return json(res,413,{error:'Avatar is too large'});
+
+    const clamp100=(value,fallback)=>{
+      const n=Number(value);
+      return Number.isFinite(n)?Math.max(0,Math.min(100,n)):fallback;
+    };
+
+    const riskScore=has('riskScore')?clamp100(b.riskScore,current.risk_score):current.risk_score;
+    const confidence=has('confidence')?clamp100(b.confidence,current.confidence):current.confidence;
+    const status=has('status')?(clean(b.status,20)||current.status):current.status;
+    const notes=has('notes')?clean(b.notes,500):current.notes;
+    const avatarSource=has('avatar')?(avatar?'manual':'pending'):current.avatar_source;
+
+    db.prepare(`UPDATE entities
+      SET name=?,x_handle=?,avatar=?,avatar_source=?,risk_score=?,confidence=?,status=?,notes=?
+      WHERE id=?`)
+      .run(name,xHandle,avatar,avatarSource,riskScore,confidence,status,notes,current.id);
+
+    const updated=db.prepare('SELECT * FROM entities WHERE id=?').get(current.id);
+    const walletCount=db.prepare('SELECT COUNT(*) AS n FROM wallets WHERE entity_id=?').get(current.id).n;
+
+    return json(res,200,{
+      entity:{
+        ...updated,
+        riskScore:updated.risk_score,
+        followerLosses:updated.follower_losses,
+        xHandle:updated.x_handle,
+        walletCount
+      }
+    });
+  }
+
+  if (parts[0]==='api' && parts[1]==='entities' && parts[2] && parts.length===3 && method==='DELETE') {
+    if (!requireOwner(req,res,db)) return;
+
+    const entity=db.prepare('SELECT * FROM entities WHERE id=?').get(parts[2]);
+    if(!entity)return json(res,404,{error:'Entity not found'});
+
+    const affectedTokens=db.prepare(`
+      SELECT DISTINCT t.id,t.mint
+      FROM tokens t
+      WHERE t.id IN (
+        SELECT token_id FROM incidents
+        WHERE entity_id=? AND token_id IS NOT NULL
+      )
+      OR t.mint IN (
+        SELECT mint FROM wallet_activity
+        WHERE (entity_id=? OR wallet_id IN (SELECT id FROM wallets WHERE entity_id=?))
+          AND mint<>''
+      )
+      OR t.mint IN (
+        SELECT token_mint FROM evidence
+        WHERE entity_id=? AND token_mint<>''
+      )
+    `).all(entity.id,entity.id,entity.id,entity.id);
+
+    db.exec('BEGIN IMMEDIATE');
+    try{
+      const evidence=db.prepare('DELETE FROM evidence WHERE entity_id=?').run(entity.id).changes;
+      const social=db.prepare('DELETE FROM social_posts WHERE entity_id=?').run(entity.id).changes;
+      const incidents=db.prepare('DELETE FROM incidents WHERE entity_id=?').run(entity.id).changes;
+
+      const activity=db.prepare(`
+        DELETE FROM wallet_activity
+        WHERE entity_id=?
+           OR wallet_id IN (SELECT id FROM wallets WHERE entity_id=?)
+      `).run(entity.id,entity.id).changes;
+
+      db.prepare(`
+        DELETE FROM copy_group_wallets
+        WHERE wallet_id IN (SELECT id FROM wallets WHERE entity_id=?)
+      `).run(entity.id);
+
+      const wallets=db.prepare('DELETE FROM wallets WHERE entity_id=?').run(entity.id).changes;
+      db.prepare('DELETE FROM entities WHERE id=?').run(entity.id);
+
+      let orphanTokens=0;
+      for(const token of affectedTokens){
+        const stillUsed=db.prepare(`
+          SELECT
+            EXISTS(SELECT 1 FROM wallet_activity a WHERE a.mint=?) AS inActivity,
+            EXISTS(SELECT 1 FROM incidents i WHERE i.token_id=?) AS inIncidents,
+            EXISTS(SELECT 1 FROM evidence ev WHERE ev.token_mint=?) AS inEvidence
+        `).get(token.mint,token.id,token.mint);
+
+        if(!stillUsed.inActivity && !stillUsed.inIncidents && !stillUsed.inEvidence){
+          orphanTokens+=db.prepare('DELETE FROM tokens WHERE id=?').run(token.id).changes;
+        }
+      }
+
+      db.exec('COMMIT');
+
+      return json(res,200,{
+        ok:true,
+        deletedId:entity.id,
+        deletedName:entity.name,
+        removed:{wallets,activity,evidence,incidents,social,orphanTokens}
+      });
+    }catch(error){
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+  /* SHADOW_ADMIN_ENTITY_V212_END */
+
   if (parts[0]==='api' && parts[1]==='entities' && parts[2] && parts.length===3 && method==='GET') {
     const e=db.prepare('SELECT * FROM entities WHERE id=?').get(parts[2]); if(!e)return json(res,404,{error:'Entity not found'});
     const wallets=db.prepare('SELECT * FROM wallets WHERE entity_id=? ORDER BY created_at').all(e.id);
@@ -364,6 +519,22 @@ function serveStatic(req,res,url){
 export function createServer({dbPath,fetchImpl=fetch,autoMonitor=false}={}) {
   const db=openDb(dbPath);
   const live=createLiveIntelligence(db,{fetchImpl});
+  let tokenImageBackfillTimer=null;
+  // Startup repair belongs only to the real long-lived app server.
+  // Unit/smoke tests create short-lived servers with autoMonitor=false;
+  // scheduling delayed DB work there races server.close() and produces
+  // misleading "database is not open" warnings after the tests pass.
+  if(autoMonitor){
+    tokenImageBackfillTimer=setTimeout(()=>{
+      backfillMissingTokenImages(db)
+        .then(result=>{
+          if(result?.updated)console.log(`Token image backfill: ${result.updated}/${result.checked} updated`);
+          else if(result?.skipped)console.log(`Token image backfill skipped: ${result.reason}`);
+        })
+        .catch(error=>console.warn('Token image backfill failed:',error.message));
+    },1200);
+    tokenImageBackfillTimer.unref?.();
+  }
   const server=http.createServer(async(req,res)=>{
     try{
       const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);
@@ -371,7 +542,7 @@ export function createServer({dbPath,fetchImpl=fetch,autoMonitor=false}={}) {
     }catch(err){ console.error(err); if(!res.headersSent)json(res,err.statusCode||500,{error:err.statusCode?err.message:'Internal server error'}); else res.end(); }
   });
   if(autoMonitor) live.start();
-  server.on('close',()=>{ try{live.stop();}catch{} try{db.close();}catch{} });
+  server.on('close',()=>{ if(tokenImageBackfillTimer)clearTimeout(tokenImageBackfillTimer); try{live.stop();}catch{} try{db.close();}catch{} });
   return server;
 }
 

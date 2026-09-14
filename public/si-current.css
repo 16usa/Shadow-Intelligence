@@ -827,3 +827,164 @@ html[data-theme=dark] #page-overview #globalMap{
   }
 }
 /* SHADOW_ENTITY_TOKENS_V210_CSS_END */
+
+
+/* SHADOW_LIVE_TRADE_BEACON_V214_CSS_START */
+#page-overview .si-dom-node{
+  overflow:visible!important;
+}
+
+#page-overview .si-dom-node>img,
+#page-overview .si-dom-node>.si-dom-node-fallback{
+  overflow:hidden!important;
+}
+
+#page-overview .si-entity-beacon{
+  --si-beacon-color:var(--si-green);
+  position:absolute!important;
+  inset:0!important;
+  z-index:6!important;
+  display:block!important;
+  border-radius:50%!important;
+  pointer-events:none!important;
+}
+
+#page-overview .si-entity-beacon.sell{
+  --si-beacon-color:var(--si-pink);
+}
+
+#page-overview .si-entity-beacon::before,
+#page-overview .si-entity-beacon::after{
+  content:"";
+  position:absolute;
+  inset:-2px;
+  border:2px solid var(--si-beacon-color);
+  border-radius:50%;
+  opacity:0;
+  pointer-events:none;
+  animation:siEntityBeaconRing 1.35s cubic-bezier(.16,1,.3,1) infinite;
+}
+
+#page-overview .si-entity-beacon::after{
+  animation-delay:.22s;
+}
+
+@keyframes siEntityBeaconRing{
+  0%{
+    inset:-2px;
+    opacity:.95;
+    border-width:2px;
+  }
+  35%{
+    opacity:.58;
+  }
+  100%{
+    inset:-30px;
+    opacity:0;
+    border-width:1px;
+  }
+}
+
+@media (prefers-reduced-motion:reduce){
+  #page-overview .si-entity-beacon::before,
+  #page-overview .si-entity-beacon::after{
+    animation-duration:.45s;
+    animation-delay:0s;
+  }
+}
+/* SHADOW_LIVE_TRADE_BEACON_V214_CSS_END */
+
+
+/* SHADOW_PUMP_LINKS_V217_CSS_START */
+.si-token-trade-link{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  width:max-content;
+  max-width:100%;
+  color:inherit!important;
+  font:inherit;
+  font-weight:inherit;
+  line-height:inherit;
+  text-decoration-line:underline!important;
+  text-decoration-thickness:1px!important;
+  text-underline-offset:3px!important;
+  text-decoration-color:currentColor!important;
+  cursor:pointer!important;
+  -webkit-tap-highlight-color:transparent;
+}
+.si-token-trade-link:active{opacity:.58}
+.si-token-trade-arrow{display:inline-block;flex:0 0 auto;font-size:.68em;line-height:1;opacity:.58;transform:translateY(-1px)}
+.si-event .si-token-trade-link,.si-detail-token-main>.si-token-trade-link,.si-token-symbol>.si-token-trade-link{font-weight:800}
+/* SHADOW_PUMP_LINKS_V217_CSS_END */
+
+
+/* SHADOW_LIVE_ACTIVITY_LINKS_V218_CSS_START */
+.si-feed-row h3 .si-token-trade-link{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  color:inherit!important;
+  font:inherit;
+  font-weight:inherit;
+  line-height:inherit;
+  text-decoration-line:underline!important;
+  text-decoration-thickness:1px!important;
+  text-underline-offset:3px!important;
+  text-decoration-color:currentColor!important;
+  cursor:pointer!important;
+  -webkit-tap-highlight-color:transparent;
+}
+.si-feed-row h3 .si-token-trade-link:active{opacity:.58;}
+.si-feed-row h3 .si-token-trade-arrow{font-size:.68em;line-height:1;opacity:.58;}
+/* SHADOW_LIVE_ACTIVITY_LINKS_V218_CSS_END */
+
+
+/* SHADOW_DOM_PILL_WATERMARK_CSS_V214_START
+   Watermark for the ACTIVE global renderer (ShadowDomSwarm).
+   Avatar swarm is z-index:10; watermark stays behind it at z-index:4. */
+#page-overview #globalMap > .si-dom-pill-watermark{
+  position:absolute!important;
+  left:50%!important;
+  top:49%!important;
+  width:min(74vw,560px)!important;
+  max-width:74%!important;
+  aspect-ratio:400 / 184!important;
+  transform:translate(-50%,-50%) rotate(-47deg)!important;
+  transform-origin:center!important;
+  z-index:4!important;
+  pointer-events:none!important;
+  user-select:none!important;
+  opacity:.085!important;
+  color:var(--si-text)!important;
+}
+
+#page-overview #globalMap > .si-dom-pill-watermark svg{
+  display:block!important;
+  width:100%!important;
+  height:100%!important;
+  overflow:visible!important;
+  fill:none!important;
+  stroke:currentColor!important;
+  stroke-width:4.2!important;
+  stroke-linecap:round!important;
+  stroke-linejoin:round!important;
+  vector-effect:non-scaling-stroke!important;
+}
+
+#page-overview #globalMap > .si-dom-swarm{
+  z-index:10!important;
+}
+
+@media(max-width:720px){
+  #page-overview #globalMap > .si-dom-pill-watermark{
+    width:min(78vw,430px)!important;
+    max-width:78%!important;
+    top:48.5%!important;
+    opacity:.09!important;
+  }
+  #page-overview #globalMap > .si-dom-pill-watermark svg{
+    stroke-width:4.4!important;
+  }
+}
+/* SHADOW_DOM_PILL_WATERMARK_CSS_V214_END */
