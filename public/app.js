@@ -85,7 +85,417 @@ function bindTokenAddressCopy(root=document){
   });
 }
 /* SHADOW_TOKEN_ADDRESS_COPY_V220_END */
-const state={user:null,settings:{},entities:[],tokens:[],overview:null,details:new Map(),graph:null,detailGraph:null,lastEventIds:new Set(),activeDm:null};
+/* SHADOW_ENTITY_WALLET_COPY_V221_START */
+function walletAddressCopyHtml(address){
+  const value=String(address||'').trim();
+  if(!value)return '';
+
+  return `<span class="si-token-address-copy si-wallet-address-copy" style="display:inline-flex;align-items:center;gap:8px;max-width:100%">
+    <span style="min-width:0">${esc(short(value))}</span>
+    <button
+      type="button"
+      data-copy-wallet-address="${esc(value)}"
+      aria-label="Copy wallet address"
+      title="Copy wallet address"
+      style="
+        width:30px;height:30px;min-width:30px;padding:0;
+        display:inline-grid;place-items:center;
+        border:0;background:transparent;color:currentColor;
+        opacity:.72;cursor:pointer;border-radius:8px;
+        -webkit-tap-highlight-color:transparent
+      "
+    >
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="9" y="9" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/>
+        <path d="M15 9V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      </svg>
+    </button>
+  </span>`;
+}
+
+function bindWalletAddressCopy(root=document){
+  root.querySelectorAll?.('[data-copy-wallet-address]').forEach(button=>{
+    button.onclick=async event=>{
+      event.preventDefault();
+      event.stopPropagation();
+
+      const address=button.dataset.copyWalletAddress||'';
+      const ok=await copyTokenAddress(address);
+
+      if(ok){
+        const oldTitle=button.getAttribute('title')||'Copy wallet address';
+        button.setAttribute('title','Copied');
+        button.style.opacity='1';
+        toast('Wallet address copied');
+        setTimeout(()=>{
+          button.setAttribute('title',oldTitle);
+          button.style.opacity='.72';
+        },1200);
+      }else{
+        toast('Could not copy wallet address');
+      }
+    };
+  });
+}
+/* SHADOW_ENTITY_WALLET_COPY_V221_END */
+
+const state={user:null,settings:{},entities:[],tokens:[],overview:null,details:new Map(),graph:null,detailGraph:null,lastEventIds:new Set(),activeDm:null,userWallet:null,copySubscriptions:new Map()};
+/* SHADOW_USER_COPY_TRADING_V230_CLIENT */
+let activeWalletProvider=null;
+
+function bytesToBase64(bytes){
+  let binary='';
+  const arr=bytes instanceof Uint8Array?bytes:new Uint8Array(bytes||[]);
+  for(let i=0;i<arr.length;i++)binary+=String.fromCharCode(arr[i]);
+  return btoa(binary);
+}
+
+function walletProviderCandidates(){
+  const rows=[];
+  const phantom=window.phantom?.solana;
+  if(phantom?.isPhantom)rows.push({name:'Phantom',key:'phantom',provider:phantom});
+
+  const sf=window.solflare?.solana||window.solflare;
+  if(sf && (sf.isSolflare||sf.connect))rows.push({name:'Solflare',key:'solflare',provider:sf});
+
+  if(window.solana?.connect && !rows.some(x=>x.provider===window.solana)){
+    rows.push({name:window.solana.isPhantom?'Phantom':'Solana wallet',key:window.solana.isPhantom?'phantom':'solana',provider:window.solana});
+  }
+  return rows;
+}
+
+function mobileWalletBrowseUrl(kind){
+  const target=encodeURIComponent(location.href);
+  const ref=encodeURIComponent(location.origin);
+  if(kind==='phantom')return `https://phantom.app/ul/browse/${target}?ref=${ref}`;
+  if(kind==='solflare')return `https://solflare.com/ul/v1/browse/${target}?ref=${ref}`;
+  return '';
+}
+
+function renderWalletButton(){
+  const b=$('#walletButton');
+  if(!b)return;
+  const connected=!!state.userWallet;
+  b.classList.toggle('is-connected',connected);
+  b.title=connected?`Wallet ${short(state.userWallet.address)}`:'Connect Solana wallet';
+  b.setAttribute('aria-label',b.title);
+}
+
+async function loadUserWalletState(){
+  state.userWallet=null;
+  if(!state.user){renderWalletButton();return}
+  try{
+    const data=await api('/api/user-wallets');
+    state.userWallet=Array.isArray(data.items)?data.items[0]||null:null;
+  }catch(error){
+    console.debug('User wallet state unavailable',error);
+  }
+  renderWalletButton();
+}
+
+function bindWalletButton(){
+  const b=$('#walletButton');
+  if(!b)return;
+  b.onclick=()=>walletConnectionModal();
+  renderWalletButton();
+}
+
+async function connectInjectedWallet(candidate){
+  if(!state.user){
+    authModal('login');
+    return;
+  }
+
+  const provider=candidate?.provider;
+  if(!provider?.connect)throw new Error('Wallet provider is unavailable');
+
+  const result=await provider.connect();
+  const publicKey=provider.publicKey||result?.publicKey;
+  const address=String(publicKey?.toString?.()||publicKey||'');
+  if(!address)throw new Error('Wallet did not return a Solana address');
+  if(!provider.signMessage)throw new Error('This wallet does not support message signing');
+
+  const challenge=await api('/api/user-wallets/challenge',{
+    method:'POST',
+    body:JSON.stringify({address})
+  });
+
+  const messageBytes=new TextEncoder().encode(challenge.message);
+  const signed=await provider.signMessage(messageBytes,'utf8');
+  const signature=signed?.signature||signed;
+  if(!signature)throw new Error('Wallet signature was not returned');
+
+  const verified=await api('/api/user-wallets/verify',{
+    method:'POST',
+    body:JSON.stringify({
+      challengeId:challenge.challengeId,
+      address,
+      provider:candidate.key,
+      signature:bytesToBase64(signature)
+    })
+  });
+
+  activeWalletProvider=provider;
+  state.userWallet=verified.wallet;
+  renderWalletButton();
+  toast(`Wallet connected · ${short(address)}`);
+  walletConnectionModal();
+}
+
+function walletConnectionModal(){
+  if(!state.user){
+    authModal('login');
+    return;
+  }
+
+  if(state.userWallet){
+    modal(`<div class="si-wallet-modal">
+      <h2>Solana wallet</h2>
+      <p class="guest-note">Verified wallet used for your copy-trading subscriptions.</p>
+      <div class="si-wallet-summary">
+        <strong>${esc(short(state.userWallet.address))}</strong>
+        <small>${esc(state.userWallet.address)}</small>
+      </div>
+      <div class="si-copy-actions">
+        <button id="walletModalClose" type="button" class="si-button">Close</button>
+        <button id="walletDisconnect" type="button" class="si-button" style="color:#ff5c5c;border-color:rgba(255,75,75,.5)">Disconnect</button>
+      </div>
+      <p class="si-copy-note">Shadow Intelligence stores the public address and verification proof only. Seed phrases and private keys are never requested.</p>
+    </div>`);
+
+    $('#walletModalClose').onclick=closeModal;
+    $('#walletDisconnect').onclick=async()=>{
+      const button=$('#walletDisconnect');
+      button.disabled=true;
+      try{
+        await api(`/api/user-wallets/${state.userWallet.id}`,{method:'DELETE'});
+        try{await activeWalletProvider?.disconnect?.()}catch{}
+        activeWalletProvider=null;
+        state.userWallet=null;
+        state.copySubscriptions.clear();
+        closeModal();
+        renderWalletButton();
+        toast('Wallet disconnected');
+      }catch(error){
+        toast(error.message);
+        button.disabled=false;
+      }
+    };
+    return;
+  }
+
+  const candidates=walletProviderCandidates();
+  const injected=candidates.map((c,i)=>`
+    <button class="si-button primary" type="button" data-connect-wallet="${i}">
+      Connect ${esc(c.name)}
+    </button>`).join('');
+
+  modal(`<div class="si-wallet-modal">
+    <h2>Connect Solana wallet</h2>
+    <p class="guest-note">Connect a wallet to configure copy trading for any Entity.</p>
+    <div class="si-wallet-choice">
+      ${injected||'<div class="guest-note">No injected Solana wallet detected in this browser.</div>'}
+      <button id="openPhantomWallet" class="si-button" type="button">Open in Phantom</button>
+      <button id="openSolflareWallet" class="si-button" type="button">Open in Solflare</button>
+    </div>
+    <p class="si-copy-note">On iPhone Safari, open this site inside Phantom or Solflare, then tap the wallet button again. We never ask for a seed phrase or private key.</p>
+  </div>`);
+
+  $$('[data-connect-wallet]').forEach(button=>{
+    button.onclick=async()=>{
+      const candidate=candidates[Number(button.dataset.connectWallet)];
+      button.disabled=true;
+      try{await connectInjectedWallet(candidate)}
+      catch(error){toast(error.message);button.disabled=false}
+    };
+  });
+  $('#openPhantomWallet').onclick=()=>{location.href=mobileWalletBrowseUrl('phantom')};
+  $('#openSolflareWallet').onclick=()=>{location.href=mobileWalletBrowseUrl('solflare')};
+}
+
+function copyControlHtml(entityId){
+  return `<div id="entityCopyControl" class="si-copy-control" data-copy-entity="${esc(entityId)}">
+    <button type="button" class="si-button si-copy-button" data-copy-open="${esc(entityId)}">Copy trade</button>
+  </div>`;
+}
+
+async function hydrateEntityCopyControl(entityId){
+  const root=$(`[data-copy-entity="${entityId}"]`);
+  if(!root)return;
+
+  if(!state.user){
+    root.innerHTML=`<button type="button" class="si-button si-copy-button" data-copy-login="1">Sign in to copy trade</button>`;
+    root.querySelector('[data-copy-login]').onclick=()=>authModal('login');
+    return;
+  }
+
+  try{
+    const data=await api(`/api/entities/${entityId}/copy`);
+    const sub=data.subscription;
+    if(sub)state.copySubscriptions.set(entityId,sub);
+
+    const active=!!sub?.enabled;
+    const label=active?'Copy trading active':'Copy trade';
+    const stateText=sub?.engineState==='authorization_required'
+      ? 'Authorization required'
+      : sub?.engineState==='engine_required'
+        ? 'Execution engine required'
+        : active
+          ? `Active · ${Number(sub.amountSol||0).toFixed(3)} SOL/trade`
+          : state.userWallet
+            ? 'Wallet connected'
+            : 'Connect wallet first';
+
+    root.innerHTML=`
+      <button type="button" class="si-button si-copy-button ${active?'is-active':''}" data-copy-open="${esc(entityId)}">${label}</button>
+      <div class="si-copy-status"><span><i class="si-copy-dot ${active?'live':''}"></i>${esc(stateText)}</span></div>`;
+
+    root.querySelector('[data-copy-open]').onclick=()=>copyTradingModal(entityId,data);
+  }catch(error){
+    root.innerHTML=`<button type="button" class="si-button si-copy-button" data-copy-open="${esc(entityId)}">Copy trade</button>`;
+    root.querySelector('[data-copy-open]').onclick=()=>copyTradingModal(entityId);
+  }
+}
+
+async function copyTradingModal(entityId,preloaded=null){
+  if(!state.user){authModal('login');return}
+
+  let data=preloaded;
+  if(!data){
+    try{data=await api(`/api/entities/${entityId}/copy`)}
+    catch(error){toast(error.message);return}
+  }
+
+  if(!state.userWallet){
+    walletConnectionModal();
+    return;
+  }
+
+  const entity=state.entities.find(x=>x.id===entityId)||{};
+  const sub=data.subscription||{};
+  const enabled=!!sub.enabled;
+
+  modal(`<div class="si-copy-modal">
+    <h2>${enabled?'Copy trading':'Copy trade'} ${esc(entity.xHandle||entity.x_handle||entity.name||'Entity')}</h2>
+    <p class="guest-note">Configure how this Entity is copied to your verified Solana wallet.</p>
+
+    <div class="si-wallet-summary">
+      <strong>Wallet ${esc(short(state.userWallet.address))}</strong>
+      <small>${esc(state.userWallet.address)}</small>
+    </div>
+
+    <form id="copyTradingForm" class="si-copy-form" novalidate>
+      <label>Trade size (SOL)
+        <input name="amountSol" type="number" min="0.001" max="100" step="0.001" value="${esc(sub.amountSol??0.05)}">
+      </label>
+      <label>Max position (SOL)
+        <input name="maxPositionSol" type="number" min="0.001" max="1000" step="0.001" value="${esc(sub.maxPositionSol??0.5)}">
+      </label>
+      <label>Daily cap (SOL)
+        <input name="maxDailySol" type="number" min="0.001" max="10000" step="0.001" value="${esc(sub.maxDailySol??1)}">
+      </label>
+      <label>Max slippage (bps)
+        <input name="slippageBps" type="number" min="10" max="3000" step="10" value="${esc(sub.slippageBps??500)}">
+      </label>
+      <label class="si-copy-check"><span>Copy buys</span><input name="copyBuys" type="checkbox" ${sub.copyBuys===false?'':'checked'}></label>
+      <label class="si-copy-check"><span>Copy sells</span><input name="copySells" type="checkbox" ${sub.copySells===false?'':'checked'}></label>
+      <label>Sell amount (%)
+        <input name="sellPercent" type="number" min="1" max="100" step="1" value="${esc(sub.sellPercent??100)}">
+      </label>
+
+      <div class="si-copy-actions">
+        <button id="copyCancel" class="si-button" type="button">Cancel</button>
+        <button id="copySave" class="si-button primary" type="button">${enabled?'Update':'Start copying'}</button>
+      </div>
+      ${enabled?'<button id="copyStop" class="si-button" type="button" style="width:100%;color:#ff5c5c;border-color:rgba(255,75,75,.5)">Stop copying</button>':''}
+    </form>
+
+    <p class="si-copy-note">Wallet connection only proves ownership. Automatic unattended execution requires the configured copy engine to have an explicit execution authorization from the user. Shadow Intelligence never stores seed phrases or private keys.</p>
+    ${!data.engineConfigured?'<p class="si-copy-note" style="color:#ff9f0a">Automatic execution engine is not configured on this deployment yet.</p>':''}
+  </div>`);
+
+  $('#copyCancel').onclick=()=>{
+    const detail=state.details.get(entityId);
+    if(detail)entityDetail(detail);
+    else closeModal();
+  };
+
+  const form=$('#copyTradingForm');
+  const save=$('#copySave');
+  save.onclick=async()=>{
+    const fd=new FormData(form);
+    const body={
+      walletId:state.userWallet.id,
+      enabled:true,
+      amountSol:Number(fd.get('amountSol')),
+      maxPositionSol:Number(fd.get('maxPositionSol')),
+      maxDailySol:Number(fd.get('maxDailySol')),
+      slippageBps:Number(fd.get('slippageBps')),
+      copyBuys:form.elements.copyBuys.checked,
+      copySells:form.elements.copySells.checked,
+      sellPercent:Number(fd.get('sellPercent'))
+    };
+
+    save.disabled=true;
+    save.textContent='Connecting…';
+    try{
+      const result=await api(`/api/entities/${entityId}/copy`,{
+        method:'PUT',
+        body:JSON.stringify(body)
+      });
+      if(result.subscription)state.copySubscriptions.set(entityId,result.subscription);
+
+      if(result.requiresAuthorization&&result.authorizationUrl){
+        toast('Execution authorization required');
+        window.open(result.authorizationUrl,'_blank','noopener,noreferrer');
+      }else if(result.subscription?.enabled){
+        toast('Copy trading active');
+      }else{
+        toast('Copy settings saved');
+      }
+
+      const detail=state.details.get(entityId);
+      if(detail)entityDetail(detail);
+      else closeModal();
+    }catch(error){
+      toast(error.message);
+      save.disabled=false;
+      save.textContent=enabled?'Update':'Start copying';
+    }
+  };
+
+  const stop=$('#copyStop');
+  if(stop)stop.onclick=async()=>{
+    stop.disabled=true;
+    stop.textContent='Stopping…';
+    try{
+      const result=await api(`/api/entities/${entityId}/copy`,{
+        method:'PUT',
+        body:JSON.stringify({
+          walletId:state.userWallet.id,
+          enabled:false,
+          amountSol:Number(form.elements.amountSol.value),
+          maxPositionSol:Number(form.elements.maxPositionSol.value),
+          maxDailySol:Number(form.elements.maxDailySol.value),
+          slippageBps:Number(form.elements.slippageBps.value),
+          copyBuys:form.elements.copyBuys.checked,
+          copySells:form.elements.copySells.checked,
+          sellPercent:Number(form.elements.sellPercent.value)
+        })
+      });
+      if(result.subscription)state.copySubscriptions.set(entityId,result.subscription);
+      toast('Copy trading stopped');
+      const detail=state.details.get(entityId);
+      if(detail)entityDetail(detail);
+      else closeModal();
+    }catch(error){
+      toast(error.message);
+      stop.disabled=false;
+      stop.textContent='Stop copying';
+    }
+  };
+}
+/* SHADOW_USER_COPY_TRADING_V230_CLIENT_END */
 async function api(url,opt={}){const r=await fetch(url,{...opt,headers:{'content-type':'application/json',...(opt.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||`HTTP ${r.status}`);return d}
 function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove('show'),2400)}
 /* SHADOW_TOKEN_IMAGE_FIX_V211_START */
@@ -126,7 +536,12 @@ function nav(name,{push=true,replace=false}={}){
   const page=$(`#page-${name}`);
   if(!page)return;
   if(['messages'].includes(name)&&!state.user)return authModal('login');
-  if(name==='settings'&&!['owner','admin'].includes(state.user?.role))return toast('Owner access required');
+  /* SHADOW_ADMIN_WALLETS_V222_START */
+  if(['settings','wallets'].includes(name)&&!['owner','admin'].includes(state.user?.role)){
+    toast('Owner access required');
+    return;
+  }
+  /* SHADOW_ADMIN_WALLETS_V222_END */
 
   if(!$('#modal')?.classList.contains('hidden'))closeModal();
 
@@ -151,7 +566,6 @@ function nav(name,{push=true,replace=false}={}){
   try{page.scrollTo({top:0,behavior:'instant'})}catch{page.scrollTop=0}
 
   if(name==='entities')renderEntities();
-  if(name==='wallets')renderWallets();
   if(name==='tokens')renderTokens();
   if(name==='feed')renderFeed();
   if(name==='evidence')loadEvidence();
@@ -177,7 +591,9 @@ async function boot(){
    document.title=state.settings.platformName||'Shadow Intelligence';
  }catch{}
  setAuth();
+ await loadUserWalletState();
  bind();
+ bindWalletButton();
  nav('overview',{push:false,replace:true});
  refresh();
  startMapSignalPoll();
@@ -327,19 +743,9 @@ class ShadowDomSwarm{
 
     root.dataset.renderer='dom-v207';
     root.dataset.rendererState='booting';
-    /* SHADOW_DOM_PILL_WATERMARK_V214_START
-       Main Map watermark belongs to the active ShadowDomSwarm renderer.
-       SVG is DOM-based and sits behind entity nodes. */
     root.innerHTML=
-      '<div class="si-dom-pill-watermark" aria-hidden="true">'+
-        '<svg viewBox="0 0 400 184" focusable="false" aria-hidden="true">'+
-          '<rect x="8" y="8" width="384" height="168" rx="84" ry="84"></rect>'+
-          '<path d="M200 8V176"></path>'+
-        '</svg>'+
-      '</div>'+
       '<div class="si-dom-swarm" aria-label="Entity intelligence map"></div>'+
       '<div class="si-graph-empty">No network data yet.</div>';
-    /* SHADOW_DOM_PILL_WATERMARK_V214_END */
 
     this.layer=root.querySelector('.si-dom-swarm');
     this.empty=root.querySelector('.si-graph-empty');
@@ -880,7 +1286,73 @@ function renderLive(items){$('#overviewLive').innerHTML=(items||[]).slice(0,8).m
 function renderEntitiesStrip(){const arr=state.entities.slice(0,4);$('#entityStrip').innerHTML=arr.map(e=>`<div class="si-entity-chip" data-open="${e.id}">${avatar(e,'sm')}<div><strong>${esc(e.name)}</strong><small>${esc(e.x_handle||'')} · ${e.walletCount||0} wallets</small></div></div>`).join('')||'<div class="guest-note">No tracked entities.</div>';$$('[data-open]',$('#entityStrip')).forEach(x=>x.onclick=()=>openObject('entity',{id:x.dataset.open}))}
 function renderConnections(model){const pairs=[];model.tokens.slice(0,12).forEach(t=>pairs.push(`${t.symbol||t.name||'Token'} ↔ ${short(t.mint)}`));$('#connectionStrip').innerHTML=pairs.map(x=>`<span class="si-connection">${esc(x)}</span>`).join('')||'<span class="guest-note">Connections appear after wallet activity.</span>'}
 function renderEntities(q=''){const query=(q||'').toLowerCase();const a=state.entities.filter(e=>!query||[e.name,e.x_handle,e.notes].join(' ').toLowerCase().includes(query));$('#entitiesGrid').innerHTML=a.map(e=>`<article class="si-panel si-entity-card" data-entity="${e.id}"><div class="si-card-top">${avatar(e,'lg')}<div><h3>${esc(e.name)}</h3><p>${esc(e.x_handle||'')} · ${e.confidence||0}% confidence</p></div></div><div class="si-card-stats"><div class="si-card-stat"><strong>${e.walletCount||0}</strong><small>Wallets</small></div><div class="si-card-stat"><strong>${e.incidents||0}</strong><small>Events</small></div><div class="si-card-stat"><strong>${e.riskScore||0}</strong><small>Signal</small></div></div></article>`).join('')||'<div class="guest-note">No entities found.</div>';$$('[data-entity]').forEach(x=>x.onclick=()=>openObject('entity',{id:x.dataset.entity}))}
-async function renderWallets(){try{const ds=await Promise.all(state.entities.map(e=>api(`/api/entities/${e.id}`)));const ws=ds.flatMap(d=>(d.wallets||[]).map(w=>({...w,entityName:d.entity.name,xHandle:d.entity.x_handle})));$('#walletsTable').innerHTML=`<table class="si-table"><thead><tr><th>Wallet</th><th>Entity</th><th>Status</th><th>Last scan</th><th></th></tr></thead><tbody>${ws.map(w=>`<tr><td><strong>${short(w.address)}</strong><br><small>${esc(w.label||'')}</small></td><td>${esc(w.entityName)}<br><small>${esc(w.xHandle||'')}</small></td><td>${esc(w.sync_status||'pending')}</td><td>${w.last_scanned_at?ago(w.last_scanned_at)+' ago':'not scanned'}</td><td>${['owner','admin'].includes(state.user?.role)?`<button class="si-button" data-sync="${w.id}">Sync</button>`:''}</td></tr>`).join('')}</tbody></table>`;$$('[data-sync]').forEach(b=>b.onclick=async()=>{b.disabled=true;try{const r=await api(`/api/wallets/${b.dataset.sync}/sync`,{method:'POST',body:'{}'});toast(`Synced · ${r.newActivity||0} new`);renderWallets()}catch(e){toast(e.message)}finally{b.disabled=false}})}catch(e){toast(e.message)}}
+/* SHADOW_WALLETS_IN_ADMIN_V233_APP */
+async function renderWalletInventory(targetSelector='#walletsAdminTable'){
+  if(!['owner','admin'].includes(state.user?.role))return;
+
+  const target=$(targetSelector);
+  if(!target)return;
+
+  try{
+    const ds=await Promise.all(state.entities.map(e=>api(`/api/entities/${e.id}`)));
+    const ws=ds.flatMap(d=>(d.wallets||[]).map(w=>({
+      ...w,
+      entityName:d.entity.name,
+      xHandle:d.entity.x_handle
+    })));
+
+    const count=$('#adminWalletCount');
+    if(count)count.textContent=`${ws.length} wallet${ws.length===1?'':'s'}`;
+
+    target.innerHTML=`<table class="si-table">
+      <thead>
+        <tr>
+          <th>Wallet</th>
+          <th>Entity</th>
+          <th>Status</th>
+          <th>Last scan</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${ws.map(w=>`<tr>
+          <td><strong>${short(w.address)}</strong><br><small>${esc(w.label||'Main wallet')}</small></td>
+          <td>${esc(w.xHandle||w.entityName||'')}</td>
+          <td>${esc(w.sync_status||'pending')}</td>
+          <td>${w.last_scanned_at?ago(w.last_scanned_at)+' ago':'not scanned'}</td>
+          <td><button class="si-button" data-admin-wallet-sync="${w.id}">Sync</button></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+
+    target.querySelectorAll('[data-admin-wallet-sync]').forEach(button=>{
+      button.onclick=async()=>{
+        button.disabled=true;
+        const original=button.textContent;
+        button.textContent='Syncing...';
+        try{
+          const r=await api(`/api/wallets/${button.dataset.adminWalletSync}/sync`,{
+            method:'POST',
+            body:'{}'
+          });
+          toast(`Synced - ${r.newActivity||0} new`);
+          await renderWalletInventory(targetSelector);
+        }catch(error){
+          toast(error.message);
+          button.disabled=false;
+          button.textContent=original;
+        }
+      };
+    });
+  }catch(error){
+    target.innerHTML=`<div class="guest-note">${esc(error.message)}</div>`;
+    toast(error.message);
+  }
+}
+
+async function renderWallets(){
+  return renderWalletInventory('#walletsAdminTable');
+}
 function renderTokens(){const a=state.tokens;$('#tokensGrid').innerHTML=a.map(t=>`<article class="si-panel si-token-card" data-token="${esc(t.mint)}">${avatar(t,'md')}<div><span class="si-token-symbol">${pumpTokenLink(t,t.symbol||'TOKEN')}</span><p>${esc(t.name||'Unknown')}<br><small>${short(t.mint)}</small></p><small>${t.is_pump?'Pump.fun / PumpSwap':esc(t.dex_id||'Solana')} · MC ${money(t.market_cap||0)}</small></div><strong class="${Number(t.price_change)>=0?'pos':'neg'}">${Number(t.price_change)>=0?'+':''}${Number(t.price_change||0).toFixed(1)}%</strong></article>`).join('')||'<div class="guest-note">Tokens appear after observed activity.</div>';$$('[data-token]').forEach(x=>x.onclick=event=>{if(event.target.closest('[data-pump-token-link]'))return;openObject('token',{mint:x.dataset.token})})}
 function renderFeed(){
   const rows=state.overview?.feed||[];
@@ -1114,12 +1586,15 @@ function entityDetail(d){
         <div class="si-entity-profile-avatar">${avatar(e,'xl')}</div>
         <h2>${esc(e.name)}</h2>
         <p>${esc(e.xHandle||e.x_handle||'')} · ${e.confidence||0}% confidence</p>
+        ${wallets[0]?.address?`<p>${walletAddressCopyHtml(wallets[0].address)}</p>`:''}
 
         <div class="si-metrics">
           <div class="si-metric"><strong>${wallets.length}</strong><small>Wallets</small></div>
           <div class="si-metric"><strong>${tokens.length}</strong><small>Tokens</small></div>
           <div class="si-metric"><strong>${e.riskScore||e.risk_score||0}</strong><small>Signal</small></div>
         </div>
+
+        ${copyControlHtml(e.id)}
 
         ${['owner','admin'].includes(state.user?.role)
           ? `<div class="si-entity-admin-actions" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">
@@ -1154,6 +1629,8 @@ function entityDetail(d){
   </div>`);
 
   state.detailGraph=new ShadowGraph($('#detailGraph'),model,{onSelect:openObject});
+  bindWalletAddressCopy($('#modalBody')||document);
+  hydrateEntityCopyControl(e.id);
 
   $$('[data-entity-token]').forEach(row=>{
     row.onclick=(event)=>{
@@ -1491,7 +1968,28 @@ function renderConversations(a){$('#conversationList').innerHTML=a.map(u=>`<div 
 async function searchUsers(q){if(!q.trim())return loadConversations();try{const d=await api('/api/users?q='+encodeURIComponent(q));renderConversations(d.items)}catch(e){toast(e.message)}}
 async function openDm(id){try{const d=await api('/api/dm/'+id);state.activeDm=id;$('#dmHeader').innerHTML=`${avatar(d.user,'sm')} ${esc(d.user.displayName)} <small>${esc(d.user.xHandle||'')}</small>`;$('#dmMessages').innerHTML=d.items.map(m=>`<div class="si-dm-line ${m.senderId===state.user.id?'mine':''}"><div class="si-dm-text">${esc(m.body)}</div></div>`).join('');$('#dmInput').disabled=false;$('#dmForm button').disabled=false}catch(e){toast(e.message)}}
 async function sendDm(e){e.preventDefault();if(!state.activeDm)return;const i=$('#dmInput');if(!i.value.trim())return;try{await api('/api/dm/'+state.activeDm,{method:'POST',body:JSON.stringify({body:i.value})});i.value='';openDm(state.activeDm)}catch(x){toast(x.message)}}
-async function loadSettings(){try{const s=await api('/api/settings');$('#setPlatformName').value=s.platform_name||'';$('#setRegistration').checked=s.registration_enabled==='true';$('#setChat').checked=s.community_chat_enabled==='true';$('#setCopy').checked=s.copy_trading_enabled==='true';$('#setRiskThreshold').value=s.risk_high_threshold||80;$('#setDemo').checked=s.demo_mode==='true';$('#setLiveMonitor').checked=s.live_monitor_enabled==='true';$('#setPollSeconds').value=s.live_poll_seconds||60;$('#setHistoryLimit').value=s.wallet_history_limit||30;$('#setXMonitor').checked=s.x_monitor_enabled==='true';const h=await api('/api/live/status');$('#providerStatus').textContent=`Solana: ${h.solana?.status||'unknown'} · ${h.solana?.provider||''} · X: ${h.x?.configured?'configured':'not configured'}`}catch(e){toast(e.message)}}
+async function loadSettings(){
+  try{
+    const s=await api('/api/settings');
+    $('#setPlatformName').value=s.platform_name||'';
+    $('#setRegistration').checked=s.registration_enabled==='true';
+    $('#setChat').checked=s.community_chat_enabled==='true';
+    $('#setCopy').checked=s.copy_trading_enabled==='true';
+    $('#setRiskThreshold').value=s.risk_high_threshold||80;
+    $('#setDemo').checked=s.demo_mode==='true';
+    $('#setLiveMonitor').checked=s.live_monitor_enabled==='true';
+    $('#setPollSeconds').value=s.live_poll_seconds||60;
+    $('#setHistoryLimit').value=s.wallet_history_limit||30;
+    $('#setXMonitor').checked=s.x_monitor_enabled==='true';
+
+    const h=await api('/api/live/status');
+    $('#providerStatus').textContent=`Solana: ${h.solana?.status||'unknown'} - ${h.solana?.provider||''} - X: ${h.x?.configured?'configured':'not configured'}`;
+
+    await renderWalletInventory('#walletsAdminTable');
+  }catch(e){
+    toast(e.message);
+  }
+}
 async function saveSettings(e){e.preventDefault();try{const b={platform_name:$('#setPlatformName').value,registration_enabled:$('#setRegistration').checked,community_chat_enabled:$('#setChat').checked,copy_trading_enabled:$('#setCopy').checked,risk_high_threshold:$('#setRiskThreshold').value,demo_mode:$('#setDemo').checked,live_monitor_enabled:$('#setLiveMonitor').checked,live_poll_seconds:$('#setPollSeconds').value,wallet_history_limit:$('#setHistoryLimit').value,x_monitor_enabled:$('#setXMonitor').checked};const s=await api('/api/settings',{method:'PATCH',body:JSON.stringify(b)});document.querySelectorAll('[data-platform-name]').forEach(x=>x.textContent=s.platform_name);toast('Settings saved')}catch(e){toast(e.message)}}
 function searchGlobal(q){q=q.trim().toLowerCase();if(!q)return;const e=state.entities.find(x=>[x.name,x.x_handle].join(' ').toLowerCase().includes(q));if(e)return openObject('entity',e);const t=state.tokens.find(x=>[x.symbol,x.name,x.mint].join(' ').toLowerCase().includes(q));if(t)return openObject('token',t);const w=[...state.details.values()].flatMap(d=>d.wallets||[]).find(x=>String(x.address).toLowerCase().includes(q));if(w)return openObject('wallet',w);toast('Nothing found')}
 boot();

@@ -42,6 +42,51 @@ export function openDb(path = process.env.DB_PATH || './shadow-intelligence.db')
     );
     CREATE TABLE IF NOT EXISTS copy_groups (id TEXT PRIMARY KEY,name TEXT NOT NULL,mode TEXT NOT NULL DEFAULT 'watch',enabled INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS copy_group_wallets (group_id TEXT NOT NULL REFERENCES copy_groups(id) ON DELETE CASCADE,wallet_id TEXT NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,PRIMARY KEY (group_id,wallet_id));
+    /* SHADOW_USER_COPY_TRADING_V230_DB */
+    CREATE TABLE IF NOT EXISTS user_wallets (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      address TEXT NOT NULL,
+      provider TEXT NOT NULL DEFAULT 'solana',
+      verified_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(user_id,address)
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_wallets_user ON user_wallets(user_id,created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS wallet_connect_challenges (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      address TEXT NOT NULL,
+      message TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_wallet_challenges_user ON wallet_connect_challenges(user_id,created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS copy_subscriptions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_wallet_id TEXT NOT NULL REFERENCES user_wallets(id) ON DELETE CASCADE,
+      entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+      enabled INTEGER NOT NULL DEFAULT 0,
+      amount_sol REAL NOT NULL DEFAULT 0.05,
+      max_position_sol REAL NOT NULL DEFAULT 0.5,
+      max_daily_sol REAL NOT NULL DEFAULT 1.0,
+      slippage_bps INTEGER NOT NULL DEFAULT 500,
+      copy_buys INTEGER NOT NULL DEFAULT 1,
+      copy_sells INTEGER NOT NULL DEFAULT 1,
+      sell_percent INTEGER NOT NULL DEFAULT 100,
+      engine_state TEXT NOT NULL DEFAULT 'draft',
+      last_error TEXT DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(user_id,entity_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_copy_subscriptions_user ON copy_subscriptions(user_id,enabled,updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_copy_subscriptions_entity ON copy_subscriptions(entity_id,enabled);
+    /* SHADOW_USER_COPY_TRADING_V230_DB_END */
     CREATE TABLE IF NOT EXISTS chat_messages (id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,body TEXT NOT NULL,created_at TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at ON chat_messages(created_at DESC);
     CREATE TABLE IF NOT EXISTS direct_messages (id TEXT PRIMARY KEY,sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,recipient_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,body TEXT NOT NULL,created_at TEXT NOT NULL);
