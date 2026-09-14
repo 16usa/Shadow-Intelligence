@@ -6,7 +6,35 @@ const short=a=>{a=String(a||'');return a.length>13?a.slice(0,7)+'…'+a.slice(-5
 const state={user:null,settings:{},entities:[],tokens:[],overview:null,details:new Map(),graph:null,detailGraph:null,lastEventIds:new Set(),activeDm:null};
 async function api(url,opt={}){const r=await fetch(url,{...opt,headers:{'content-type':'application/json',...(opt.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||`HTTP ${r.status}`);return d}
 function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove('show'),2400)}
-function avatar(item,size='md'){const src=item?.avatar||item?.image||'';const key=item?.name||item?.displayName||item?.x_handle||item?.xHandle||item?.symbol||item?.address||'SI';const bg=src?`background-image:url("${esc(src)}")`:`background:linear-gradient(135deg,hsl(${Math.abs([...key].reduce((a,c)=>a+c.charCodeAt(0),0))%360} 70% 52%),#111)`;return`<span class="avatar avatar-${size}" style="${bg}"></span>`}
+/* SHADOW_TOKEN_IMAGE_FIX_V211_START */
+function imageSource(item){
+  if(!item) return '';
+  const candidates=[
+    item.avatar,item.image,item.imageUrl,item.image_url,item.imageURI,item.image_uri,
+    item.icon,item.iconUrl,item.iconURL,item.icon_url,
+    item.logo,item.logoUrl,item.logoURL,item.logo_url,
+    item.logoURI,item.logo_uri,
+    item.thumbnail,item.thumb,item.picture,item.photo,
+    item.profile_image,item.profileImage,
+    item.metadata?.image,item.metadata?.image_url,item.metadata?.logoURI,
+    item.token?.image,item.token?.image_url,item.token?.logoURI
+  ];
+  for(const v of candidates){
+    const src=String(v||'').trim();
+    if(src) return src;
+  }
+  return '';
+}
+function avatar(item,size='md'){
+  const src=imageSource(item);
+  const key=item?.name||item?.displayName||item?.x_handle||item?.xHandle||item?.symbol||item?.address||item?.mint||'SI';
+  const hue=Math.abs([...String(key)].reduce((a,c)=>a+c.charCodeAt(0),0))%360;
+  const bg=src
+    ? `background-image:url(&quot;${esc(src)}&quot;)`
+    : `background:linear-gradient(135deg,hsl(${hue} 70% 52%),#111)`;
+  return `<span class="avatar avatar-${size}" style="${bg}"></span>`;
+}
+/* SHADOW_TOKEN_IMAGE_FIX_V211_END */
 function setAuth(){document.body.classList.toggle('is-auth',!!state.user);document.body.classList.toggle('is-owner',['owner','admin'].includes(state.user?.role));$('#userLabel').textContent=state.user?.displayName||'Sign in';$('#userAvatar').outerHTML=avatar(state.user,'sm').replace('class="avatar','id="userAvatar" class="avatar');$$('.auth-only').forEach(x=>x.style.display=state.user?'':'none');$$('.guest-only').forEach(x=>x.style.display=state.user?'none':'');$$('.owner-only').forEach(x=>x.style.display=['owner','admin'].includes(state.user?.role)?'':'none')}
 function theme(){return document.documentElement.dataset.theme==='dark'?'dark':'light'}
 function toggleTheme(){const n=theme()==='dark'?'light':'dark';document.documentElement.dataset.theme=n;localStorage.setItem('si-theme',n);state.graph?.schedule();state.detailGraph?.schedule()}
@@ -125,7 +153,7 @@ function renderOverviewChrome(live=state.liveStatus){
   updateMapCounts();
 }
 
-/* SHADOW_DOM_SWARM_V206_START */
+/* SHADOW_DOM_SWARM_V207_START */
 class ShadowDomSwarm{
   constructor(root,model={},opts={}){
     this.root=root;
@@ -136,6 +164,7 @@ class ShadowDomSwarm{
     this.dead=false;
     this.raf=0;
     this.last=performance.now();
+    this.lastPaint=0;
     this.drag=null;
     this.w=1;
     this.h=1;
@@ -143,31 +172,31 @@ class ShadowDomSwarm{
     this.centerY=0;
     this.safe={left:28,right:28,top:118,bottom:158};
 
+    root.dataset.renderer='dom-v207';
+    root.dataset.rendererState='booting';
     root.innerHTML=
-      '<div class="si-dom-swarm" aria-label="Entity 3D map"></div>'+ 
-      '<div class="si-graph-hud">'+
-        '<span class="si-graph-live"><i></i> LIVE</span>'+ 
-        '<span class="si-graph-mode">ENTITIES</span>'+ 
-        '<button class="si-graph-fit" type="button">Fit</button>'+ 
-      '</div>'+ 
+      '<div class="si-dom-swarm" aria-label="Entity intelligence map"></div>'+
       '<div class="si-graph-empty">No network data yet.</div>';
 
     this.layer=root.querySelector('.si-dom-swarm');
     this.empty=root.querySelector('.si-graph-empty');
-    this.fitButton=root.querySelector('.si-graph-fit');
 
-    this.fitButton.onclick=()=>this.fit();
-    this.layer.addEventListener('wheel',e=>{
-      e.preventDefault();
-      const factor=e.deltaY>0?.92:1.08;
-      this.zoomAroundCenter(factor);
-    },{passive:false});
+    if(!this.layer||!this.empty){
+      throw new Error('Global map DOM scaffold could not be created');
+    }
 
-    this.ro=new ResizeObserver(()=>this.resize());
-    this.ro.observe(root);
+    this.ro=typeof ResizeObserver==='function'
+      ? new ResizeObserver(()=>this.resize())
+      : null;
+    this.ro?.observe(root);
+
+    window.addEventListener('resize',this._onWindowResize=()=>this.resize(),{passive:true});
+    window.visualViewport?.addEventListener('resize',this._onViewportResize=()=>this.resize(),{passive:true});
 
     this.build();
     this.resize(true);
+    root.dataset.rendererState='ready';
+    root.dataset.nodeCount=String(this.nodes.length);
     this.schedule();
   }
 
@@ -192,32 +221,32 @@ class ShadowDomSwarm{
       const raw=this.entities[i];
       const seed=this.hash(this.key(raw));
       const el=document.createElement('button');
+
       el.type='button';
       el.className='si-dom-node';
       el.setAttribute('aria-label',raw?.name||raw?.x_handle||'Entity');
+      el.style.position='absolute';
+      el.style.display='block';
+      el.style.opacity='1';
+      el.style.visibility='visible';
+      el.style.transform='none';
+      el.style.webkitTransform='none';
 
-      const avatar=raw?.avatar||'';
-      if(avatar){
+      const avatarUrl=String(raw?.avatar||'').trim();
+      if(avatarUrl){
         const img=document.createElement('img');
         img.alt='';
         img.draggable=false;
         img.decoding='async';
-        img.src=avatar;
+        img.loading='eager';
+        img.src=avatarUrl;
         img.addEventListener('error',()=>{
           img.remove();
-          if(!el.querySelector('.si-dom-node-fallback')){
-            const f=document.createElement('span');
-            f.className='si-dom-node-fallback';
-            f.textContent='@';
-            el.appendChild(f);
-          }
+          this.ensureFallback(el,raw);
         },{once:true});
         el.appendChild(img);
       }else{
-        const f=document.createElement('span');
-        f.className='si-dom-node-fallback';
-        f.textContent='@';
-        el.appendChild(f);
+        this.ensureFallback(el,raw);
       }
 
       const node={
@@ -238,36 +267,58 @@ class ShadowDomSwarm{
     }
 
     this.empty.style.display=this.nodes.length?'none':'grid';
+    this.root.dataset.nodeCount=String(this.nodes.length);
+  }
+
+  ensureFallback(el,raw){
+    if(el.querySelector('.si-dom-node-fallback'))return;
+    const f=document.createElement('span');
+    f.className='si-dom-node-fallback';
+    const text=String(raw?.name||raw?.x_handle||'?').trim();
+    f.textContent=(text[0]||'?').toUpperCase();
+    el.appendChild(f);
   }
 
   resize(forceFit=false){
+    if(this.dead)return;
+
     const r=this.root.getBoundingClientRect();
-    const nw=Math.max(1,r.width);
-    const nh=Math.max(1,r.height);
-    const first=this.w<=1||this.h<=1;
+    const viewportW=window.visualViewport?.width||window.innerWidth||r.width;
+    const viewportH=window.visualViewport?.height||window.innerHeight||r.height;
+
+    const nw=Math.max(1,r.width||viewportW);
+    const nh=Math.max(1,r.height||viewportH);
     const oldW=this.w,oldH=this.h;
+    const first=oldW<=1||oldH<=1;
+
     this.w=nw;
     this.h=nh;
 
-    this.safe.top=Math.min(132,Math.max(96,this.h*.14));
-    this.safe.bottom=Math.min(174,Math.max(132,this.h*.17));
+    this.safe.top=Math.min(136,Math.max(104,this.h*.14));
+    this.safe.bottom=Math.min(190,Math.max(150,this.h*.18));
     this.centerX=this.w*.5;
+
     const usable=Math.max(180,this.h-this.safe.top-this.safe.bottom);
     this.centerY=this.safe.top+usable*.46;
+
+    this.root.dataset.mapSize=`${Math.round(this.w)}x${Math.round(this.h)}`;
 
     if(forceFit||first){
       this.fit();
       return;
     }
 
-    if(oldW>1&&oldH>1){
-      const sx=this.w/oldW, sy=this.h/oldH;
-      for(const n of this.nodes){
-        n.x*=sx;
-        n.y*=sy;
-        this.keepNodeInside(n);
-      }
+    const sx=this.w/Math.max(1,oldW);
+    const sy=this.h/Math.max(1,oldH);
+
+    for(const n of this.nodes){
+      n.x*=sx;
+      n.y*=sy;
+      this.keepNodeInside(n);
     }
+
+    for(let i=0;i<4;i++)this.resolveCollisions(null);
+    this.renderNodes();
     this.schedule();
   }
 
@@ -275,70 +326,67 @@ class ShadowDomSwarm{
     if(!this.nodes.length)return;
 
     const usableH=Math.max(180,this.h-this.safe.top-this.safe.bottom);
-    const spread=Math.max(72,Math.min(this.w*.29,usableH*.27,132));
+    const spread=Math.max(82,Math.min(this.w*.31,usableH*.29,142));
     const golden=2.399963229728653;
     const total=this.nodes.length;
 
     this.nodes.forEach((n,i)=>{
-      const f=Math.sqrt((i+.70)/Math.max(1,total));
+      const f=Math.sqrt((i+.72)/Math.max(1,total));
       const jitter=((n.seed&1023)/1023)-.5;
-      const angle=i*golden+jitter*.72;
-      const dist=36+f*Math.max(36,spread-36);
+      const angle=i*golden+jitter*.64;
+      const dist=42+f*Math.max(40,spread-42);
+
       n.x=this.centerX+Math.cos(angle)*dist;
-      n.y=this.centerY+Math.sin(angle)*dist*.82;
+      n.y=this.centerY+Math.sin(angle)*dist*.84;
       n.vx=0;
       n.vy=0;
       this.keepNodeInside(n);
     });
 
-    for(let i=0;i<8;i++)this.resolveCollisions(null);
-    this.renderNodes();
-    this.schedule();
-  }
-
-  zoomAroundCenter(factor){
-    factor=Math.max(.82,Math.min(1.18,factor));
-    for(const n of this.nodes){
-      n.x=this.centerX+(n.x-this.centerX)*factor;
-      n.y=this.centerY+(n.y-this.centerY)*factor;
-      this.keepNodeInside(n);
-    }
-    for(let i=0;i<5;i++)this.resolveCollisions(null);
+    for(let i=0;i<10;i++)this.resolveCollisions(null);
     this.renderNodes();
     this.schedule();
   }
 
   keepNodeInside(n){
-    const r=n.radius+5;
+    const r=n.radius+7;
     const minX=this.safe.left+r;
     const maxX=Math.max(minX,this.w-this.safe.right-r);
     const minY=this.safe.top+r;
     const maxY=Math.max(minY,this.h-this.safe.bottom-r);
+
     n.x=Math.max(minX,Math.min(maxX,n.x));
     n.y=Math.max(minY,Math.min(maxY,n.y));
   }
 
   resolveCollisions(dragged=null){
     if(this.nodes.length<2)return;
+
     for(let pass=0;pass<4;pass++){
       let changed=false;
+
       for(let i=0;i<this.nodes.length;i++){
         const a=this.nodes[i];
+
         for(let j=i+1;j<this.nodes.length;j++){
           const b=this.nodes[j];
+
           let dx=b.x-a.x;
           let dy=b.y-a.y;
           let d=Math.hypot(dx,dy);
+
           if(d<.01){
             const angle=((a.seed^b.seed)%6283)/1000;
             dx=Math.cos(angle);
             dy=Math.sin(angle);
             d=1;
           }
-          const min=a.radius+b.radius+8;
+
+          const min=a.radius+b.radius+10;
           if(d>=min)continue;
 
-          const nx=dx/d,ny=dy/d;
+          const nx=dx/d;
+          const ny=dy/d;
           const overlap=min-d;
 
           if(a===dragged&&b!==dragged){
@@ -356,37 +404,45 @@ class ShadowDomSwarm{
             a.y-=ny*overlap*.5;
             b.x+=nx*overlap*.5;
             b.y+=ny*overlap*.5;
-            a.vx*=.35;a.vy*=.35;
-            b.vx*=.35;b.vy*=.35;
+
+            a.vx*=.22;a.vy*=.22;
+            b.vx*=.22;b.vy*=.22;
+
             this.keepNodeInside(a);
             this.keepNodeInside(b);
           }
+
           changed=true;
         }
       }
+
       if(!changed)break;
     }
   }
 
   physics(now){
-    const dt=Math.max(.35,Math.min(2,(now-this.last)/16.667));
+    const dt=Math.max(.45,Math.min(2.2,(now-this.last)/16.667));
     this.last=now;
 
     for(const n of this.nodes){
       if(this.drag?.node===n)continue;
 
-      const wanderX=Math.sin(now*.00031+n.phase)*.012+Math.cos(now*.00019+n.phase2)*.008;
-      const wanderY=Math.cos(now*.00027+n.phase2)*.012+Math.sin(now*.00017+n.phase)*.008;
+      const wanderX=
+        Math.sin(now*.00021+n.phase)*.007+
+        Math.cos(now*.00013+n.phase2)*.004;
+      const wanderY=
+        Math.cos(now*.00019+n.phase2)*.007+
+        Math.sin(now*.00011+n.phase)*.004;
 
-      n.vx+=((this.centerX-n.x)*.00017+wanderX)*dt;
-      n.vy+=((this.centerY-n.y)*.00017+wanderY)*dt;
-      n.vx*=.968;
-      n.vy*=.968;
+      n.vx+=((this.centerX-n.x)*.00013+wanderX)*dt;
+      n.vy+=((this.centerY-n.y)*.00013+wanderY)*dt;
+      n.vx*=.972;
+      n.vy*=.972;
 
       const speed=Math.hypot(n.vx,n.vy);
-      if(speed>1.05){
-        n.vx=n.vx/speed*1.05;
-        n.vy=n.vy/speed*1.05;
+      if(speed>.72){
+        n.vx=n.vx/speed*.72;
+        n.vy=n.vy/speed*.72;
       }
 
       n.x+=n.vx*dt;
@@ -398,41 +454,62 @@ class ShadowDomSwarm{
   }
 
   renderNodes(){
-    const minY=this.safe.top;
-    const maxY=Math.max(minY+1,this.h-this.safe.bottom);
-
     for(const n of this.nodes){
-      const depth=(n.y-minY)/(maxY-minY);
-      const scale=.94+Math.max(0,Math.min(1,depth))*.10;
-      n.el.style.transform=`translate3d(${n.x}px,${n.y}px,0) translate(-50%,-50%) scale(${scale})`;
-      n.el.style.zIndex=String(10+Math.round(depth*20));
+      const left=Math.round(n.x-n.radius);
+      const top=Math.round(n.y-n.radius);
+
+      n.el.style.left=`${left}px`;
+      n.el.style.top=`${top}px`;
+      n.el.style.transform='none';
+      n.el.style.webkitTransform='none';
+      n.el.style.zIndex=String(12+n.index);
     }
   }
 
   render(){
     if(this.dead)return;
     this.raf=0;
+
+    if(currentPage!=='overview'||document.body.classList.contains('si-detail-page-open')){
+      return;
+    }
+
     const now=performance.now();
+
+    if(now-this.lastPaint<30){
+      this.schedule();
+      return;
+    }
+
+    this.lastPaint=now;
     this.physics(now);
     this.renderNodes();
     this.schedule();
   }
 
   schedule(){
-    if(!this.dead&&!this.raf)this.raf=requestAnimationFrame(()=>this.render());
+    if(!this.dead&&!this.raf){
+      this.raf=requestAnimationFrame(()=>this.render());
+    }
   }
 
   pointerDown(e,node){
     if(this.dead)return;
     e.preventDefault();
     e.stopPropagation();
+
     try{node.el.setPointerCapture(e.pointerId)}catch{}
+
     this.drag={
-      node,id:e.pointerId,
-      startX:e.clientX,startY:e.clientY,
-      originX:node.x,originY:node.y,
+      node,
+      id:e.pointerId,
+      startX:e.clientX,
+      startY:e.clientY,
+      originX:node.x,
+      originY:node.y,
       moved:false
     };
+
     node.vx=node.vy=0;
     node.el.classList.add('dragging');
   }
@@ -440,15 +517,18 @@ class ShadowDomSwarm{
   pointerMove(e,node){
     const d=this.drag;
     if(!d||d.id!==e.pointerId||d.node!==node)return;
+
     e.preventDefault();
     e.stopPropagation();
 
     const dx=e.clientX-d.startX;
     const dy=e.clientY-d.startY;
+
     if(Math.hypot(dx,dy)>4)d.moved=true;
 
     node.x=d.originX+dx;
     node.y=d.originY+dy;
+
     this.keepNodeInside(node);
     this.resolveCollisions(node);
     this.renderNodes();
@@ -457,10 +537,12 @@ class ShadowDomSwarm{
   pointerUp(e,node){
     const d=this.drag;
     if(!d||d.id!==e.pointerId||d.node!==node)return;
+
     e.preventDefault();
     e.stopPropagation();
 
     try{node.el.releasePointerCapture(e.pointerId)}catch{}
+
     node.el.classList.remove('dragging');
     this.drag=null;
     node.vx=node.vy=0;
@@ -478,9 +560,14 @@ class ShadowDomSwarm{
 
   destroy(){
     this.dead=true;
+
     if(this.raf)cancelAnimationFrame(this.raf);
     this.raf=0;
+
     this.ro?.disconnect();
+    window.removeEventListener('resize',this._onWindowResize);
+    window.visualViewport?.removeEventListener('resize',this._onViewportResize);
+
     this.drag=null;
   }
 }
@@ -498,7 +585,8 @@ function mountGlobalGraph(){
 
   const healthy=
     state.graph instanceof ShadowDomSwarm &&
-    root.querySelector('.si-dom-swarm') &&
+    root.dataset.renderer==='dom-v207' &&
+    root.dataset.rendererState==='ready' &&
     root.querySelectorAll('.si-dom-node').length===model.entities.length;
 
   if(healthy&&graphEntityKey===key){
@@ -512,11 +600,22 @@ function mountGlobalGraph(){
 
   state.graph=null;
   root.replaceChildren();
-  state.graph=new ShadowDomSwarm(root,model,{onSelect:openObject});
-  graphEntityKey=key;
-  return model;
+
+  try{
+    state.graph=new ShadowDomSwarm(root,model,{onSelect:openObject});
+    graphEntityKey=key;
+    return model;
+  }catch(error){
+    root.dataset.rendererState='error';
+    root.innerHTML=
+      '<div class="si-map-render-error">'+
+      '<strong>Map renderer error</strong>'+
+      '<span>'+esc(error?.message||'Unknown renderer failure')+'</span>'+
+      '</div>';
+    throw error;
+  }
 }
-/* SHADOW_DOM_SWARM_V206_END */
+/* SHADOW_DOM_SWARM_V207_END */
 
 async function renderOverview(live=state.liveStatus){
   let model=null;
@@ -609,8 +708,264 @@ function closeModal(){
   $('#modalBody').innerHTML='';
   document.body.classList.remove('si-detail-page-open');
   delete document.body.dataset.detailReturnPage;
+  state.graph?.schedule?.();
 }
-function entityDetail(d){const e=d.entity, model={entities:[e],wallets:d.wallets||[],tokens:(d.tokens||[]).map(t=>({...t,entity_id:e.id})),activity:d.incidents||[]};modal(`<div class="si-detail-layout"><aside class="si-detail-side"><div class="si-panel" style="box-shadow:none">${avatar(e,'xl')}<h2>${esc(e.name)}</h2><p>${esc(e.xHandle||e.x_handle||'')} · ${e.confidence||0}% confidence</p><div class="si-metrics"><div class="si-metric"><strong>${d.wallets?.length||0}</strong><small>Wallets</small></div><div class="si-metric"><strong>${d.tokens?.length||0}</strong><small>Tokens</small></div><div class="si-metric"><strong>${e.riskScore||0}</strong><small>Signal</small></div></div>${['owner','admin'].includes(state.user?.role)?'<button id="syncEntity" class="si-button primary" style="margin-top:12px;width:100%">Sync now</button>':''}</div><div class="si-panel" style="box-shadow:none;margin-top:12px"><div class="si-panel-head"><span>LIVE ACTIVITY</span></div><div class="si-detail-activity">${(d.incidents||[]).slice(0,14).map(eventHtml).join('')||'<div class="guest-note">No activity yet.</div>'}</div></div></aside><section class="si-detail-map"><div id="detailGraph" class="si-graph"></div></section></div>`);state.detailGraph=new ShadowGraph($('#detailGraph'),model,{onSelect:openObject});const b=$('#syncEntity');if(b)b.onclick=async()=>{b.disabled=true;try{const r=await api(`/api/entities/${e.id}/sync`,{method:'POST',body:'{}'});toast(`Sync complete · ${r.wallets?.reduce((n,x)=>n+(x.newActivity||0),0)||0} new activity`);const nd=await api(`/api/entities/${e.id}`);entityDetail(nd)}catch(x){toast(x.message)}finally{b.disabled=false}}}
+/* SHADOW_INSTANT_ENTITY_OPEN_V208_START */
+let entityOpenSeq=0;
+
+function entityDetailLoading(e){
+  const wallets=Number(e?.walletCount||0);
+  const signal=Number(e?.riskScore??e?.risk_score??0);
+  const handle=e?.xHandle||e?.x_handle||'';
+
+  modal(`<div class="si-detail-layout">
+    <aside class="si-detail-side">
+      <div class="si-panel" style="box-shadow:none">
+        ${avatar(e,'xl')}
+        <h2>${esc(e?.name||'Entity')}</h2>
+        <p>${esc(handle)} · ${e?.confidence||0}% confidence</p>
+        <div class="si-metrics">
+          <div class="si-metric"><strong>${wallets}</strong><small>Wallets</small></div>
+          <div class="si-metric"><strong>…</strong><small>Tokens</small></div>
+          <div class="si-metric"><strong>${signal}</strong><small>Signal</small></div>
+        </div>
+      </div>
+      <div class="si-panel" style="box-shadow:none;margin-top:12px">
+        <div class="si-panel-head"><span>LIVE ACTIVITY</span></div>
+        <div class="guest-note">Loading live activity…</div>
+      </div>
+    </aside>
+    <section class="si-detail-map">
+      <div class="guest-note">Loading network…</div>
+    </section>
+  </div>`);
+
+  const body=$('#modalBody');
+  if(body)body.dataset.detailLoadingId=String(e?.id||'');
+}
+
+async function openObject(kind,raw){
+  if(kind==='entity'){
+    const id=raw?.id;
+    if(!id){
+      toast('Entity id missing');
+      return;
+    }
+
+    const cached=state.details.get(id);
+    if(cached){
+      entityDetail(cached);
+      return;
+    }
+
+    const e=state.entities.find(x=>x.id===id)||raw;
+    const seq=++entityOpenSeq;
+
+    // Open immediately from data already present in the global map.
+    // Do not wait for the detail endpoint or market-price enrichment.
+    entityDetailLoading(e);
+
+    try{
+      const d=await api(`/api/entities/${id}`);
+      state.details.set(id,d);
+
+      const body=$('#modalBody');
+      const stillCurrent=
+        seq===entityOpenSeq &&
+        body?.dataset.detailLoadingId===String(id) &&
+        !$('#modal')?.classList.contains('hidden');
+
+      if(!stillCurrent)return;
+
+      delete body.dataset.detailLoadingId;
+      entityDetail(d);
+    }catch(e){
+      console.error('Open entity hydration failed:',e);
+      const body=$('#modalBody');
+      if(
+        seq===entityOpenSeq &&
+        body?.dataset.detailLoadingId===String(id) &&
+        !$('#modal')?.classList.contains('hidden')
+      ){
+        const note=body.querySelector('.si-detail-activity')||body.querySelector('.guest-note');
+        if(note)note.textContent='Could not load live details. Tap back and try again.';
+      }
+      toast(e.message);
+    }
+    return;
+  }
+
+  if(kind==='wallet'){
+    try{
+      const id=raw?.id;
+      if(!id)throw new Error('Wallet id missing');
+      const a=await api(`/api/wallets/${id}/activity?limit=120`);
+      walletDetail(raw,a.items||[]);
+    }catch(e){
+      console.error('Open wallet failed:',e);
+      toast(e.message);
+    }
+    return;
+  }
+
+  if(kind==='token'){
+    try{
+      const mint=raw?.mint;
+      if(!mint)throw new Error('Token mint missing');
+      const t=state.tokens.find(x=>x.mint===mint)||raw;
+      tokenDetail(t);
+    }catch(e){
+      console.error('Open token failed:',e);
+      toast(e.message);
+    }
+  }
+}
+/* SHADOW_INSTANT_ENTITY_OPEN_V208_END */
+
+/* SHADOW_ENTITY_TOKENS_V210_START */
+function entityTokenRows(tokens=[]){
+  if(!tokens.length){
+    return '<div class="guest-note si-detail-token-empty">No tracked tokens yet.</div>';
+  }
+
+  return `<div class="si-detail-token-list">${
+    tokens.map((t,index)=>{
+      const pct=t?.pnlKnown && Number.isFinite(Number(t.pnlPercent))
+        ? Number(t.pnlPercent)
+        : null;
+      const pnl=t?.pnlKnown && Number.isFinite(Number(t.pnlUsd))
+        ? Number(t.pnlUsd)
+        : null;
+      const qty=Number(t?.positionTokens||0);
+
+      const qtyText=qty>0
+        ? `${qty>=1000000?(qty/1000000).toFixed(2)+'M':qty>=1000?(qty/1000).toFixed(1)+'K':qty.toLocaleString(undefined,{maximumFractionDigits:4})} tokens`
+        : short(t?.mint||'');
+
+      return `<button type="button" class="si-detail-token-row" data-entity-token="${index}">
+        ${avatar(t,'md')}
+        <span class="si-detail-token-main">
+          <strong>${esc(t?.symbol||'Token')}</strong>
+          <small>${esc(t?.name||'Unknown token')}</small>
+          <small class="si-detail-token-mint">${esc(qtyText)}</small>
+        </span>
+        <span class="si-detail-token-pnl">
+          <strong class="${pct===null?'':pct>=0?'pos':'neg'}">${
+            pct===null?'—':`${pct>=0?'+':''}${pct.toFixed(2)}%`
+          }</strong>
+          <small class="${pnl===null?'':pnl>=0?'pos':'neg'}">${
+            pnl===null?'P&L —':money(pnl)
+          }</small>
+        </span>
+      </button>`;
+    }).join('')
+  }</div>`;
+}
+
+function entityDetail(d){
+  const liveEntity=state.entities.find(x=>x.id===d?.entity?.id)||{};
+  const e={
+    ...liveEntity,
+    ...(d?.entity||{}),
+    avatar:d?.entity?.avatar||liveEntity.avatar||''
+  };
+
+  const tokens=(Array.isArray(d?.tokens)?d.tokens:[]).map(t=>{
+    const live=(state.tokens||[]).find(x=>
+      (t?.mint && x?.mint===t.mint) ||
+      (t?.address && x?.address===t.address) ||
+      (t?.id && x?.id===t.id) ||
+      ((t?.symbol||'') && (x?.symbol||'') && t.symbol===x.symbol && (t?.name||'')===(x?.name||''))
+    )||{};
+    const src=imageSource(t)||imageSource(live);
+    return {
+      ...live,
+      ...t,
+      avatar: src || t?.avatar || live?.avatar || '',
+      image: src || t?.image || live?.image || '',
+      imageUrl: src || t?.imageUrl || live?.imageUrl || '',
+      image_url: src || t?.image_url || live?.image_url || '',
+      logoURI: src || t?.logoURI || live?.logoURI || ''
+    };
+  });
+  const wallets=Array.isArray(d?.wallets)?d.wallets:[];
+  const incidents=Array.isArray(d?.incidents)?d.incidents:[];
+
+  const model={
+    entities:[e],
+    wallets,
+    tokens:tokens.map(t=>({...t,entity_id:e.id})),
+    activity:incidents
+  };
+
+  modal(`<div class="si-detail-layout">
+    <aside class="si-detail-side">
+      <div class="si-panel si-entity-profile-panel" style="box-shadow:none">
+        <div class="si-entity-profile-avatar">${avatar(e,'xl')}</div>
+        <h2>${esc(e.name)}</h2>
+        <p>${esc(e.xHandle||e.x_handle||'')} · ${e.confidence||0}% confidence</p>
+
+        <div class="si-metrics">
+          <div class="si-metric"><strong>${wallets.length}</strong><small>Wallets</small></div>
+          <div class="si-metric"><strong>${tokens.length}</strong><small>Tokens</small></div>
+          <div class="si-metric"><strong>${e.riskScore||e.risk_score||0}</strong><small>Signal</small></div>
+        </div>
+
+        ${['owner','admin'].includes(state.user?.role)
+          ? '<button id="syncEntity" class="si-button primary" style="margin-top:12px;width:100%">Sync now</button>'
+          : ''
+        }
+      </div>
+
+      <div class="si-panel" style="box-shadow:none;margin-top:12px">
+        <div class="si-panel-head"><span>LIVE ACTIVITY</span></div>
+        <div class="si-detail-activity">${
+          incidents.slice(0,14).map(eventHtml).join('')||
+          '<div class="guest-note">No activity yet.</div>'
+        }</div>
+      </div>
+
+      <div class="si-panel si-detail-tokens-panel" style="box-shadow:none;margin-top:12px">
+        <div class="si-panel-head">
+          <span>TOKENS</span>
+          <span>${tokens.length}</span>
+        </div>
+        ${entityTokenRows(tokens)}
+      </div>
+    </aside>
+
+    <section class="si-detail-map">
+      <div id="detailGraph" class="si-graph"></div>
+    </section>
+  </div>`);
+
+  state.detailGraph=new ShadowGraph($('#detailGraph'),model,{onSelect:openObject});
+
+  $$('[data-entity-token]').forEach(row=>{
+    row.onclick=()=>{
+      const token=tokens[Number(row.dataset.entityToken)];
+      if(token)openObject('token',token);
+    };
+  });
+
+  const b=$('#syncEntity');
+  if(b)b.onclick=async()=>{
+    b.disabled=true;
+    try{
+      const r=await api(`/api/entities/${e.id}/sync`,{method:'POST',body:'{}'});
+      toast(`Sync complete · ${r.wallets?.reduce((n,x)=>n+(x.newActivity||0),0)||0} new activity`);
+      const nd=await api(`/api/entities/${e.id}`);
+      state.details.set(e.id,nd);
+      entityDetail(nd);
+    }catch(x){
+      toast(x.message);
+    }finally{
+      b.disabled=false;
+    }
+  };
+}
+/* SHADOW_ENTITY_TOKENS_V210_END */
+
 function walletDetail(w,items){const model={entities:state.entities.filter(e=>e.id===w.entity_id),wallets:[w],tokens:state.tokens.filter(t=>items.some(a=>a.mint===t.mint)).map(t=>({...t,entity_id:w.entity_id})),activity:items};modal(`<div class="si-detail-layout"><aside class="si-detail-side"><div class="si-panel" style="box-shadow:none">${avatar(w,'xl')}<h2>Wallet</h2><p>${short(w.address)}</p><div class="si-metrics"><div class="si-metric"><strong>${esc(w.sync_status||'pending')}</strong><small>Status</small></div><div class="si-metric"><strong>${items.length}</strong><small>Events</small></div><div class="si-metric"><strong>${esc(w.chain||'solana')}</strong><small>Chain</small></div></div></div><div class="si-panel" style="box-shadow:none;margin-top:12px"><div class="si-panel-head"><span>ACTIVITY</span></div>${items.slice(0,18).map(a=>eventHtml({type:a.type,title:(a.type||'activity').toUpperCase(),detail:a.mint?short(a.mint):'',createdAt:a.block_time})).join('')||'<div class="guest-note">No activity.</div>'}</div></aside><section class="si-detail-map"><div id="detailGraph" class="si-graph"></div></section></div>`);state.detailGraph=new ShadowGraph($('#detailGraph'),model,{onSelect:openObject})}
 function tokenDetail(t){const related=state.overview?.feed?.filter(x=>x.symbol===t.symbol||x.tokenName===t.name)||[];modal(`<div class="si-detail-layout"><aside class="si-detail-side"><div class="si-panel" style="box-shadow:none">${avatar(t,'xl')}<h2>${esc(t.symbol||'Token')}</h2><p>${esc(t.name||'Unknown')}</p><p>${short(t.mint)}</p><div class="si-metrics"><div class="si-metric"><strong>${money(t.market_cap||0)}</strong><small>Market cap</small></div><div class="si-metric"><strong class="${Number(t.price_change)>=0?'pos':'neg'}">${Number(t.price_change)>=0?'+':''}${Number(t.price_change||0).toFixed(1)}%</strong><small>Change</small></div><div class="si-metric"><strong>${money(t.liquidity_usd||0)}</strong><small>Liquidity</small></div></div></div><div class="si-panel" style="box-shadow:none;margin-top:12px"><div class="si-panel-head"><span>RECENT SIGNALS</span></div>${related.slice(0,12).map(eventHtml).join('')||'<div class="guest-note">No recent incident records.</div>'}</div></aside><section class="si-detail-map"><div id="detailGraph" class="si-graph"></div></section></div>`);const entities=state.entities.filter(e=>related.some(x=>x.entityId===e.id));state.detailGraph=new ShadowGraph($('#detailGraph'),{entities:entities.length?entities:[state.overview?.selected].filter(Boolean),wallets:[],tokens:[t]},{onSelect:openObject})}
 function entityModal(){modal(`<h2>Add entity</h2><form id="entityForm" class="si-modal-form"><label>Name<input name="name" required placeholder="Entity name"></label><label>X handle<input name="xHandle" placeholder="@handle"></label><label>Avatar URL<input name="avatar" placeholder="https://…"></label><label>Initial wallet<input name="wallet" placeholder="Solana address"></label><label>Notes<textarea name="notes" rows="4"></textarea></label><button class="si-button primary">Create entity</button></form>`);$('#entityForm').onsubmit=async e=>{e.preventDefault();const b=Object.fromEntries(new FormData(e.target));try{const x=await api('/api/entities',{method:'POST',body:JSON.stringify(b)});if(b.wallet)await api(`/api/entities/${x.id}/wallets`,{method:'POST',body:JSON.stringify({address:b.wallet,label:'Main wallet'})});closeModal();toast('Entity created');await refresh();nav('entities')}catch(x){toast(x.message)}}}

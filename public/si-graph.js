@@ -45,7 +45,7 @@
       this.dragNode=null;
       this.dragStart=null;
       this.dragMoved=false;
-      this.root.innerHTML='<canvas class="si-graph-canvas"></canvas><div class="si-graph-hud"><span class="si-graph-live"><i></i> LIVE</span><span class="si-graph-mode"></span><button class="si-graph-fit">Fit</button></div><div class="si-graph-empty">No network data yet.</div>';
+      this.root.innerHTML='<canvas class="si-graph-canvas"></canvas><div class="si-graph-empty">No network data yet.</div>';
       this.canvas=root.querySelector('canvas');
       this.ctx=this.canvas.getContext('2d');
       this.empty=root.querySelector('.si-graph-empty');
@@ -68,7 +68,6 @@
         this.zoom=clamp(this.zoom*(e.deltaY>0?.91:1.1),.28,3.2);
         this.schedule();
       },{passive:false});
-      this.root.querySelector('.si-graph-fit').onclick=()=>this.fit();
     }
 
     resize(){
@@ -89,7 +88,6 @@
       this.mode=this.root.id==='globalMap'?'global':'detail';
       const anchor=this.model.entities?.[0]?.id||this.model.tokens?.[0]?.mint||this.model.wallets?.[0]?.id||'network';
       this.scope=this.mode==='global'?'global':`detail:${anchor}`;
-      this.root.querySelector('.si-graph-mode').textContent=this.mode==='global'?'ENTITIES':'3D NETWORK';
       this.build();
       this.fit();
       this.schedule();
