@@ -17,6 +17,7 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const MIME = { '.html':'text/html; charset=utf-8', '.css':'text/css; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.svg':'image/svg+xml', '.png':'image/png', '.ico':'image/x-icon' };
 
 // === TOKEN PNL V13 START ===
+/* SHADOW_TRADE_ONLY_V239_SERVER */
 const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 let solUsdCache = { value:0, at:0 };
 async function currentSolUsd(){
@@ -35,14 +36,22 @@ async function currentSolUsd(){
 function entityTokenPnlRows(db,entityId,limit=12,solUsd=0){
   const rows=db.prepare(`
     SELECT t.*,MAX(a.block_time) AS lastActivity,
-      SUM(CASE WHEN a.type IN ('buy','swap') AND ABS(COALESCE(a.sol_amount,0))>0 THEN ABS(COALESCE(a.token_amount,0)) ELSE 0 END) AS buyTokens,
-      SUM(CASE WHEN a.type='sell' AND ABS(COALESCE(a.sol_amount,0))>0 THEN ABS(COALESCE(a.token_amount,0)) ELSE 0 END) AS sellTokens,
+      SUM(CASE WHEN a.type IN ('buy','swap') THEN ABS(COALESCE(a.token_amount,0)) ELSE 0 END) AS buyTokens,
+      SUM(CASE WHEN a.type='sell' THEN ABS(COALESCE(a.token_amount,0)) ELSE 0 END) AS sellTokens,
       SUM(CASE WHEN a.type IN ('buy','swap') AND ABS(COALESCE(a.sol_amount,0))>0 THEN ABS(COALESCE(a.sol_amount,0)) ELSE 0 END) AS buySol,
       SUM(CASE WHEN a.type='sell' AND ABS(COALESCE(a.sol_amount,0))>0 THEN ABS(COALESCE(a.sol_amount,0)) ELSE 0 END) AS sellSol
     FROM tokens t
     JOIN wallet_activity a ON a.mint=t.mint
     WHERE a.entity_id=?
+      AND a.type IN ('buy','sell','swap')
     GROUP BY t.id
+    HAVING
+      SUM(CASE WHEN a.type IN ('buy','swap') THEN ABS(COALESCE(a.token_amount,0)) ELSE 0 END)>1e-12
+      AND (
+        SUM(CASE WHEN a.type IN ('buy','swap') THEN ABS(COALESCE(a.token_amount,0)) ELSE 0 END)
+        -
+        SUM(CASE WHEN a.type='sell' THEN ABS(COALESCE(a.token_amount,0)) ELSE 0 END)
+      )>1e-12
     ORDER BY lastActivity DESC
     LIMIT ?
   `).all(entityId,limit);
@@ -653,6 +662,155 @@ async function api(req, res, db, url, live) {
     db.prepare('INSERT INTO direct_messages (id,sender_id,recipient_id,body,created_at) VALUES (?,?,?,?,?)').run(id('dm_'),user.id,parts[2],body,nowIso()); return json(res,201,{ok:true});
   }
   /* SHADOW_USER_COPY_TRADING_V230_ROUTES */
+  /* SHADOW_WALLET_AUTH_V235_SERVER */
+  if (route === '/api/wallet-auth/challenge' && method === 'POST') {
+    const b=await readJson(req);
+    const address=clean(b.address,120);
+    if(!isSolanaAddress(address))return json(res,400,{error:'Invalid Solana wallet address'});
+
+    const challengeId=id('wlogin_');
+    const expiresAt=new Date(Date.now()+5*60*1000).toISOString();
+    const nonce=crypto.randomBytes(24).toString('hex');
+    const host=String(req.headers.host||'Shadow Intelligence');
+
+    const message=[
+      'Shadow Intelligence wallet verification',
+      `Domain: ${host}`,
+      `Wallet: ${address}`,
+      `Nonce: ${nonce}`,
+      `Expires: ${expiresAt}`,
+      '',
+      'This signature proves wallet ownership. It does not authorize a transaction.'
+    ].join('\n');
+
+    // Keep the challenge table bounded.
+    db.prepare("DELETE FROM wallet_login_challenges WHERE used_at<>'' OR expires_at<?")
+      .run(nowIso());
+
+    db.prepare(`
+      INSERT INTO wallet_login_challenges
+        (id,address,message,expires_at,used_at,created_at)
+      VALUES (?,?,?,?,'',?)
+    `).run(challengeId,address,message,expiresAt,nowIso());
+
+    return json(res,200,{challengeId,message,expiresAt});
+  }
+
+  if (route === '/api/wallet-auth/verify' && method === 'POST') {
+    const b=await readJson(req);
+    const challengeId=clean(b.challengeId,120);
+    const address=clean(b.address,120);
+    const provider=clean(b.provider,40)||'solana';
+    const signature=String(b.signature||'');
+
+    if(!isSolanaAddress(address))return json(res,400,{error:'Invalid Solana wallet address'});
+
+    const ch=db.prepare(`
+      SELECT * FROM wallet_login_challenges
+      WHERE id=? AND address=?
+    `).get(challengeId,address);
+
+    if(!ch)return json(res,404,{error:'Wallet verification challenge not found'});
+    if(ch.used_at)return json(res,409,{error:'Wallet verification challenge already used'});
+    if(new Date(ch.expires_at).getTime()<Date.now())return json(res,410,{error:'Wallet verification challenge expired'});
+    if(!verifySolanaMessage(address,ch.message,signature)){
+      return json(res,401,{error:'Wallet signature verification failed'});
+    }
+
+    const at=nowIso();
+    const current=userFor(req,db);
+    const linked=db.prepare(`
+      SELECT uw.*,u.role,u.email
+      FROM user_wallets uw
+      JOIN users u ON u.id=uw.user_id
+      WHERE uw.address=?
+      ORDER BY uw.verified_at DESC
+      LIMIT 1
+    `).get(address);
+
+    let userId='';
+
+    if(current){
+      // A signed-in account can attach the wallet unless another account owns it.
+      if(linked && linked.user_id!==current.id){
+        return json(res,409,{error:'This wallet is already linked to another account'});
+      }
+      userId=current.id;
+    }else if(linked){
+      // Never let a public wallet-only login silently elevate into owner/admin.
+      if(linked.role==='owner'||linked.role==='admin'){
+        return json(res,403,{error:'Admin wallet requires normal account sign-in first'});
+      }
+      userId=linked.user_id;
+    }else{
+      // Wallet is the login identity. Create a normal user account with an
+      // unreachable random password; no email/password flow is required.
+      const digest=crypto.createHash('sha256').update(address).digest('hex').slice(0,24);
+      const syntheticEmail=`wallet.${digest}@wallet.shadow.local`;
+      const existingSynthetic=db.prepare('SELECT id FROM users WHERE email=?').get(syntheticEmail);
+
+      userId=existingSynthetic?.id||id('usr_');
+
+      if(!existingSynthetic){
+        const displayName=`Wallet ${address.slice(0,4)}…${address.slice(-4)}`;
+        const unusablePassword=crypto.randomBytes(48).toString('hex');
+        db.prepare(`
+          INSERT INTO users
+            (id,email,password_hash,display_name,role,created_at)
+          VALUES (?,?,?,?, 'user', ?)
+        `).run(
+          userId,
+          syntheticEmail,
+          hashPassword(unusablePassword),
+          displayName,
+          at
+        );
+      }
+    }
+
+    const existingWallet=db.prepare(`
+      SELECT * FROM user_wallets
+      WHERE user_id=? AND address=?
+    `).get(userId,address);
+
+    const walletId=existingWallet?.id||id('uw_');
+
+    if(existingWallet){
+      db.prepare('UPDATE user_wallets SET provider=?,verified_at=? WHERE id=?')
+        .run(provider,at,walletId);
+    }else{
+      db.prepare(`
+        INSERT INTO user_wallets
+          (id,user_id,address,provider,verified_at,created_at)
+        VALUES (?,?,?,?,?,?)
+      `).run(walletId,userId,address,provider,at,at);
+    }
+
+    db.prepare('UPDATE wallet_login_challenges SET used_at=? WHERE id=?')
+      .run(at,ch.id);
+
+    // Wallet verification itself logs normal users in.
+    let sessionToken=parseCookies(req).si_session||'';
+    let sessionUser=sessionToken?getUserFromSession(db,sessionToken):null;
+
+    if(!sessionUser || sessionUser.id!==userId){
+      const session=createSession(db,userId);
+      sessionToken=session.token;
+      setSessionCookie(res,session.token);
+    }
+
+    const user=getUserFromSession(db,sessionToken);
+    const wallet=userWalletRows(db,userId).find(w=>w.id===walletId);
+
+    return json(res,200,{
+      ok:true,
+      user,
+      wallet,
+      walletLogin:!current
+    });
+  }
+  /* SHADOW_WALLET_AUTH_V235_SERVER_END */
+
   if (route === '/api/user-wallets' && method === 'GET') {
     const user=requireUser(req,res,db); if(!user)return;
     return json(res,200,{items:userWalletRows(db,user.id)});

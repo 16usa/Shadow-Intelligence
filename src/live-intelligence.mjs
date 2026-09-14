@@ -1,5 +1,5 @@
 import { id, nowIso, isSolanaAddress } from './utils.mjs';
-import { getRecentWalletActivity, getWalletTokenHoldings, solanaHealth } from './adapters/solana-rpc.mjs';
+import { getRecentWalletActivity, solanaHealth } from './adapters/solana-rpc.mjs';
 import { getTokenMarket } from './adapters/token-market.mjs';
 import { getXProfile, getXPosts, xConfigured } from './adapters/x-api.mjs';
 import { getSetting } from './db.mjs';
@@ -20,6 +20,16 @@ function tokenCacheFresh(row, ms=120000) {
   if(!row?.last_market_at)return false;
   return Date.now()-new Date(row.last_market_at).getTime()<ms;
 }
+
+/* SHADOW_TRADE_ONLY_V239_LIVE */
+const TRACKED_TRADE_TYPES=new Set(['buy','sell','swap']);
+function isTrackedTradeActivity(activity){
+  if(!activity?.mint)return false;
+  const type=String(activity.type||'').toLowerCase();
+  if(!TRACKED_TRADE_TYPES.has(type))return false;
+  return Math.abs(Number(activity.tokenAmount||0))>1e-12;
+}
+/* SHADOW_TRADE_ONLY_V239_LIVE_END */
 
 export function createLiveIntelligence(db,{fetchImpl=fetch}={}) {
   let timer=null, running=false, lastCycleAt='', lastError='', cycleCount=0;
@@ -55,6 +65,7 @@ export function createLiveIntelligence(db,{fetchImpl=fetch}={}) {
   }
 
   function insertActivity(wallet,activity,token) {
+    if(!isTrackedTradeActivity(activity))return false;
     const eventKey=`chain:${wallet.id}:${activity.signature}:${activity.mint}:${activity.type}`;
     const exists=db.prepare('SELECT id FROM wallet_activity WHERE event_key=?').get(eventKey);
     if(exists)return false;
@@ -68,7 +79,11 @@ export function createLiveIntelligence(db,{fetchImpl=fetch}={}) {
     const symbol=token?.symbol||`$${activity.mint.slice(0,4)}`;
     const amount=Math.abs(Number(activity.tokenAmount||0));
     const sol=Math.abs(Number(activity.solAmount||0));
-    const title=activity.type==='buy'?`Bought ${symbol}`:activity.type==='sell'?`Sold ${symbol}`:activity.type==='swap'?`Swapped into ${symbol}`:activity.type==='receive'?`Received ${symbol}`:`Sent ${symbol}`;
+    const title=activity.type==='buy'
+      ?`Bought ${symbol}`
+      :activity.type==='sell'
+        ?`Sold ${symbol}`
+        :`Swapped into ${symbol}`;
     const sourceLabel=isPump?(String(activity.source).toLowerCase().includes('swap')?'PumpSwap':'Pump.fun'):(activity.source||'Solana');
     const detail=[amount?`${amount.toLocaleString(undefined,{maximumFractionDigits:4})} ${symbol}`:'',sol?`${sol.toFixed(4)} SOL`:'',sourceLabel,activity.signature?`${activity.signature.slice(0,6)}…${activity.signature.slice(-6)}`:''].filter(Boolean).join(' · ');
     db.prepare(`INSERT OR IGNORE INTO incidents (id,entity_id,wallet_id,token_id,type,title,detail,severity,value,created_at,source_key) VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
@@ -123,6 +138,28 @@ export function createLiveIntelligence(db,{fetchImpl=fetch}={}) {
     return {count:cleanRows.length,updatedAt:at};
   }
 
+  function rebuildTradeHoldingsSnapshot(wallet) {
+    const rows=db.prepare(`
+      SELECT mint,
+        SUM(CASE WHEN type IN ('buy','swap') THEN ABS(COALESCE(token_amount,0)) ELSE 0 END) AS bought,
+        SUM(CASE WHEN type='sell' THEN ABS(COALESCE(token_amount,0)) ELSE 0 END) AS sold
+      FROM wallet_activity
+      WHERE wallet_id=? AND mint<>'' AND type IN ('buy','sell','swap')
+      GROUP BY mint
+      HAVING SUM(CASE WHEN type IN ('buy','swap') THEN ABS(COALESCE(token_amount,0)) ELSE 0 END)>1e-12
+    `).all(wallet.id);
+
+    const positions=rows
+      .map(row=>({
+        mint:String(row.mint||''),
+        amount:Math.max(0,Number(row.bought||0)-Number(row.sold||0)),
+        decimals:0
+      }))
+      .filter(row=>row.mint&&row.amount>1e-12);
+
+    return saveWalletHoldingsSnapshot(wallet,positions);
+  }
+
   function markWalletHoldingsError(wallet,error) {
     const at=nowIso();
     db.prepare(`
@@ -146,35 +183,32 @@ export function createLiveIntelligence(db,{fetchImpl=fetch}={}) {
     }
     db.prepare("UPDATE wallets SET sync_status='syncing',sync_error='' WHERE id=?").run(wallet.id);
     try{
-      let holdingsSnapshot={ok:false,count:0};
-      try{
-        const onchain=await getWalletTokenHoldings(wallet.address,{fetchImpl});
-        const saved=saveWalletHoldingsSnapshot(wallet,onchain.holdings);
-        holdingsSnapshot={
-          ok:true,
-          provider:onchain.provider,
-          count:saved.count,
-          updatedAt:saved.updatedAt
-        };
-      }catch(holdingsError){
-        // Keep the previous successful snapshot on RPC failure.
-        // Activity sync continues independently.
-        markWalletHoldingsError(wallet,holdingsError);
-        holdingsSnapshot={
-          ok:false,
-          error:String(holdingsError?.message||holdingsError)
-        };
-      }
+      // Raw SPL balances are not trusted as positions: anyone can send tokens
+      // to a public wallet. Current holdings are derived from actual trades only.
+      let holdingsSnapshot={ok:true,provider:'trade-ledger',count:0};
 
       const limit=Math.max(5,Math.min(Number(getSetting(db,'wallet_history_limit','30'))||30,100));
       const result=await getRecentWalletActivity(wallet.address,{limit,untilSignature:wallet.last_signature||'',fetchImpl});
       let inserted=0;
       const tokenByMint=new Map();
       for(const activity of result.activity){
+        if(!isTrackedTradeActivity(activity))continue;
         let token=tokenByMint.get(activity.mint);
-        if(!token){ token=await ensureToken(activity.mint,{force:forceMarket}); tokenByMint.set(activity.mint,token); }
+        if(!token){
+          token=await ensureToken(activity.mint,{force:forceMarket});
+          tokenByMint.set(activity.mint,token);
+        }
         if(insertActivity(wallet,activity,token))inserted++;
       }
+
+      const savedHoldings=rebuildTradeHoldingsSnapshot(wallet);
+      holdingsSnapshot={
+        ok:true,
+        provider:'trade-ledger',
+        count:savedHoldings.count,
+        updatedAt:savedHoldings.updatedAt
+      };
+
       const newest=result.signatures?.[0]||wallet.last_signature||'';
       db.prepare("UPDATE wallets SET last_signature=?,last_scanned_at=?,sync_status='live',sync_error='' WHERE id=?").run(newest,nowIso(),wallet.id);
       recomputeEntity(wallet.entity_id);

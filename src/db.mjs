@@ -65,6 +65,19 @@ export function openDb(path = process.env.DB_PATH || './shadow-intelligence.db')
     );
     CREATE INDEX IF NOT EXISTS idx_wallet_challenges_user ON wallet_connect_challenges(user_id,created_at DESC);
 
+    /* SHADOW_WALLET_AUTH_V235_DB */
+    CREATE TABLE IF NOT EXISTS wallet_login_challenges (
+      id TEXT PRIMARY KEY,
+      address TEXT NOT NULL,
+      message TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_wallet_login_challenges_address
+      ON wallet_login_challenges(address,created_at DESC);
+    /* SHADOW_WALLET_AUTH_V235_DB_END */
+
     CREATE TABLE IF NOT EXISTS copy_subscriptions (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -135,6 +148,7 @@ export function openDb(path = process.env.DB_PATH || './shadow-intelligence.db')
   seedSettings(db);
   migrateFromDemoToLive(db);
   migrateActivityNormalizerV05(db);
+  migrateTradeOnlyActivityV10(db);
   seedOwner(db);
   if (getSetting(db,'demo_mode','false') === 'true') seedDemo(db);
   return db;
@@ -204,6 +218,104 @@ function migrateActivityNormalizerV05(db) {
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
+
+/* SHADOW_TRADE_ONLY_V239_DB */
+function migrateTradeOnlyActivityV10(db) {
+  if (getSetting(db,'trade_only_activity_v10','false') === 'true') return;
+  const at=nowIso();
+
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS wallet_activity_transfer_archive_v239
+      AS SELECT * FROM wallet_activity WHERE 0
+    `);
+
+    db.exec(`
+      INSERT INTO wallet_activity_transfer_archive_v239
+      SELECT * FROM wallet_activity
+      WHERE LOWER(type) IN ('receive','received','send','sent','transfer','transfer_in','transfer_out')
+    `);
+
+    db.exec(`
+      DELETE FROM incidents
+      WHERE LOWER(type) IN ('receive','received','send','sent','transfer','transfer_in','transfer_out')
+    `);
+
+    db.exec(`
+      DELETE FROM wallet_activity
+      WHERE LOWER(type) IN ('receive','received','send','sent','transfer','transfer_in','transfer_out')
+    `);
+
+    db.prepare('DELETE FROM wallet_holdings').run();
+
+    db.prepare(`
+      INSERT INTO wallet_holdings
+        (wallet_id,entity_id,mint,amount,decimals,updated_at)
+      SELECT wallet_id,entity_id,mint,
+        (
+          SUM(CASE WHEN type IN ('buy','swap') THEN ABS(COALESCE(token_amount,0)) ELSE 0 END)
+          -
+          SUM(CASE WHEN type='sell' THEN ABS(COALESCE(token_amount,0)) ELSE 0 END)
+        ) AS amount,
+        0,?
+      FROM wallet_activity
+      WHERE mint<>'' AND type IN ('buy','sell','swap')
+      GROUP BY wallet_id,entity_id,mint
+      HAVING
+        SUM(CASE WHEN type IN ('buy','swap') THEN ABS(COALESCE(token_amount,0)) ELSE 0 END)>1e-12
+        AND (
+          SUM(CASE WHEN type IN ('buy','swap') THEN ABS(COALESCE(token_amount,0)) ELSE 0 END)
+          -
+          SUM(CASE WHEN type='sell' THEN ABS(COALESCE(token_amount,0)) ELSE 0 END)
+        )>1e-12
+    `).run(at);
+
+    db.exec(`
+      DELETE FROM tokens
+      WHERE NOT EXISTS (
+        SELECT 1 FROM wallet_activity a
+        WHERE a.mint=tokens.mint AND a.type IN ('buy','sell','swap')
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM social_posts s WHERE s.token_mint=tokens.mint
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM evidence e WHERE e.token_mint=tokens.mint
+      )
+    `);
+
+    db.prepare(`
+      UPDATE entities
+      SET incidents=(SELECT COUNT(*) FROM incidents i WHERE i.entity_id=entities.id)
+    `).run();
+
+    for (const wallet of db.prepare('SELECT id FROM wallets').all()) {
+      db.prepare(`
+        INSERT INTO wallet_holdings_state
+          (wallet_id,last_success_at,last_attempt_at,sync_status,sync_error)
+        VALUES (?,?,?,'live','')
+        ON CONFLICT(wallet_id) DO UPDATE SET
+          last_success_at=excluded.last_success_at,
+          last_attempt_at=excluded.last_attempt_at,
+          sync_status='live',
+          sync_error=''
+      `).run(wallet.id,at,at);
+    }
+
+    db.prepare(`
+      INSERT INTO settings(key,value)
+      VALUES('trade_only_activity_v10','true')
+      ON CONFLICT(key) DO UPDATE SET value='true'
+    `).run();
+
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+/* SHADOW_TRADE_ONLY_V239_DB_END */
 
 function seedOwner(db) {
   const email=String(process.env.OWNER_EMAIL||'').trim().toLowerCase(); const password=String(process.env.OWNER_PASSWORD||'');

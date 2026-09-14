@@ -1,4 +1,5 @@
 import { isSafeHttpUrl, isSolanaAddress } from '../utils.mjs';
+/* SHADOW_TRADE_ONLY_V239_RPC */
 
 export const PUMP_PROGRAM = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
 export const PUMP_AMM_PROGRAM = 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA';
@@ -90,14 +91,16 @@ function normalizeRpcTransaction(tx, wallet, signature) {
     if (mint === WSOL_MINT || STABLE_MINTS.has(mint)) continue;
     const tokenDelta = (post.get(mint) || 0) - (pre.get(mint) || 0);
     if (Math.abs(tokenDelta) < 1e-12) continue;
-    let type = tokenDelta > 0 ? 'receive' : 'send';
-    // RPC fallback has no decoded swap event. Only use buy/sell heuristics for known Pump programs.
+    let type = '';
+    // Trade-only tracking: plain token transfers are intentionally ignored.
     if (isPump && tokenDelta > 0 && solDelta < -0.00001) type = 'buy';
     else if (isPump && tokenDelta < 0 && solDelta > 0.00001) type = 'sell';
+    else continue;
+
     changes.push({
       signature, slot: tx.slot || 0, blockTime: tx.blockTime || null, type, source,
       description: `${type} ${Math.abs(tokenDelta)} token`, mint, tokenAmount: tokenDelta,
-      solAmount: type === 'buy' || type === 'sell' ? solDelta : 0, isPump, rawType: 'RPC'
+      solAmount: solDelta, isPump, rawType: 'RPC'
     });
   }
   return collapseFallbackChanges(changes);
@@ -184,7 +187,8 @@ function collapseFallbackChanges(changes) {
   // several same-direction legs, keep one canonical leg and preserve the full description.
   if (buys.length && !sells.length) return [buys.sort((a,b)=>Math.abs(b.tokenAmount)-Math.abs(a.tokenAmount))[0]];
   if (sells.length && !buys.length) return [sells.sort((a,b)=>Math.abs(b.tokenAmount)-Math.abs(a.tokenAmount))[0]];
-  return changes.filter(x=>x.type==='receive'||x.type==='send').slice(0,1);
+  // If fallback parsing cannot prove a trade, emit nothing.
+  return [];
 }
 
 function normalizeHeliusTransaction(tx, wallet) {
@@ -200,12 +204,17 @@ function normalizeHeliusTransaction(tx, wallet) {
   const isPump = /pump/i.test(src) || /pump/i.test(String(tx.description || ''));
   const out=[];
   for (const [mint, tokenDelta] of deltas) {
-    let type = tokenDelta > 0 ? 'receive' : 'send';
-    // Never turn a generic transfer into a trade merely because the wallet paid a network fee.
-    // Only known Pump interactions may use SOL/token direction as a fallback trade signal.
+    let type = '';
+    // Plain token transfers are not trading signals and are discarded.
     if (isPump && tokenDelta > 0 && solDelta < -0.00001) type='buy';
     else if (isPump && tokenDelta < 0 && solDelta > 0.00001) type='sell';
-    out.push({signature:tx.signature,slot:tx.slot||0,blockTime:tx.timestamp||null,type,source:src,description:tx.description||'',mint,tokenAmount:tokenDelta,solAmount:type==='buy'||type==='sell'?solDelta:0,isPump,rawType:tx.type||''});
+    else continue;
+
+    out.push({
+      signature:tx.signature,slot:tx.slot||0,blockTime:tx.timestamp||null,
+      type,source:src,description:tx.description||'',mint,tokenAmount:tokenDelta,
+      solAmount:solDelta,isPump,rawType:tx.type||''
+    });
   }
   return collapseFallbackChanges(out);
 }

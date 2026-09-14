@@ -201,11 +201,6 @@ function bindWalletButton(){
 }
 
 async function connectInjectedWallet(candidate){
-  if(!state.user){
-    authModal('login');
-    return;
-  }
-
   const provider=candidate?.provider;
   if(!provider?.connect)throw new Error('Wallet provider is unavailable');
 
@@ -215,7 +210,7 @@ async function connectInjectedWallet(candidate){
   if(!address)throw new Error('Wallet did not return a Solana address');
   if(!provider.signMessage)throw new Error('This wallet does not support message signing');
 
-  const challenge=await api('/api/user-wallets/challenge',{
+  const challenge=await api('/api/wallet-auth/challenge',{
     method:'POST',
     body:JSON.stringify({address})
   });
@@ -225,7 +220,7 @@ async function connectInjectedWallet(candidate){
   const signature=signed?.signature||signed;
   if(!signature)throw new Error('Wallet signature was not returned');
 
-  const verified=await api('/api/user-wallets/verify',{
+  const verified=await api('/api/wallet-auth/verify',{
     method:'POST',
     body:JSON.stringify({
       challengeId:challenge.challengeId,
@@ -236,18 +231,15 @@ async function connectInjectedWallet(candidate){
   });
 
   activeWalletProvider=provider;
+  state.user=verified.user||state.user;
   state.userWallet=verified.wallet;
+  setAuth();
   renderWalletButton();
   toast(`Wallet connected · ${short(address)}`);
   walletConnectionModal();
 }
 
 function walletConnectionModal(){
-  if(!state.user){
-    authModal('login');
-    return;
-  }
-
   if(state.userWallet){
     modal(`<div class="si-wallet-modal">
       <h2>Solana wallet</h2>
@@ -273,6 +265,13 @@ function walletConnectionModal(){
         activeWalletProvider=null;
         state.userWallet=null;
         state.copySubscriptions.clear();
+
+        if(String(state.user?.email||'').endsWith('@wallet.shadow.local')){
+          try{await api('/api/auth/logout',{method:'POST',body:'{}'})}catch{}
+          state.user=null;
+          setAuth();
+        }
+
         closeModal();
         renderWalletButton();
         toast('Wallet disconnected');
@@ -298,7 +297,7 @@ function walletConnectionModal(){
       <button id="openPhantomWallet" class="si-button" type="button">Open in Phantom</button>
       <button id="openSolflareWallet" class="si-button" type="button">Open in Solflare</button>
     </div>
-    <p class="si-copy-note">On iPhone Safari, open this site inside Phantom or Solflare, then tap the wallet button again. We never ask for a seed phrase or private key.</p>
+    <p class="si-copy-note">On iPhone, open this site inside Phantom or Solflare, then tap Connect. Your wallet signature signs you in automatically. We never ask for a seed phrase or private key.</p>
   </div>`);
 
   $$('[data-connect-wallet]').forEach(button=>{
@@ -324,8 +323,8 @@ async function hydrateEntityCopyControl(entityId){
   if(!root)return;
 
   if(!state.user){
-    root.innerHTML=`<button type="button" class="si-button si-copy-button" data-copy-login="1">Sign in to copy trade</button>`;
-    root.querySelector('[data-copy-login]').onclick=()=>authModal('login');
+    root.innerHTML=`<button type="button" class="si-button si-copy-button" data-copy-wallet="1">Connect wallet to copy trade</button>`;
+    root.querySelector('[data-copy-wallet]').onclick=()=>walletConnectionModal();
     return;
   }
 
@@ -358,7 +357,10 @@ async function hydrateEntityCopyControl(entityId){
 }
 
 async function copyTradingModal(entityId,preloaded=null){
-  if(!state.user){authModal('login');return}
+  if(!state.user){
+    walletConnectionModal();
+    return;
+  }
 
   let data=preloaded;
   if(!data){
@@ -495,6 +497,9 @@ async function copyTradingModal(entityId,preloaded=null){
     }
   };
 }
+/* SHADOW_WALLET_AUTH_V235_CLIENT */
+/* Wallet-first login enabled for guest/mobile wallet browsers. */
+/* SHADOW_WALLET_AUTH_V235_CLIENT_END */
 /* SHADOW_USER_COPY_TRADING_V230_CLIENT_END */
 async function api(url,opt={}){const r=await fetch(url,{...opt,headers:{'content-type':'application/json',...(opt.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||`HTTP ${r.status}`);return d}
 function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove('show'),2400)}
@@ -572,6 +577,7 @@ function nav(name,{push=true,replace=false}={}){
   if(name==='chat')loadChat();
   if(name==='messages')loadConversations();
   if(name==='settings')loadSettings();
+  if(name==='search')renderSearchPageResults($('#searchPageInput')?.value||'');
 }
 
 function backPage(){
@@ -594,6 +600,7 @@ async function boot(){
  await loadUserWalletState();
  bind();
  bindWalletButton();
+ bindSearchPage();
  nav('overview',{push:false,replace:true});
  refresh();
  startMapSignalPoll();
@@ -606,7 +613,7 @@ function bind(){
    const target=b.dataset.nav;
    nav(target);
    if(target==='overview')renderOverview().catch(e=>console.error('Map render failed',e));
- });$('#themeToggle').onclick=toggleTheme;$('#adminTheme').onclick=toggleTheme;$('#userButton').onclick=()=>state.user?nav('messages'):authModal('login');$('#modalClose').onclick=closeModal;$('#modal').onclick=e=>{if(e.target.id==='modal')closeModal()};$('#addEntityBtn').onclick=entityModal;$('#entitiesAddBtn').onclick=entityModal;$('#evidenceAddBtn').onclick=evidenceModal;$('#chatForm').onsubmit=sendChat;$('#dmForm').onsubmit=sendDm;$('#userSearch').oninput=()=>searchUsers($('#userSearch').value);$('#settingsForm').onsubmit=saveSettings;$('#globalSearch').onkeydown=e=>{if(e.key==='Enter')searchGlobal(e.target.value)};$('#fitMap').onclick=()=>state.graph?.fit();
+ });$('#themeToggle').onclick=toggleTheme;$('#adminTheme').onclick=toggleTheme;$('#userButton').onclick=()=>state.user?nav('messages'):authModal('login');$('#modalClose').onclick=closeModal;$('#modal').onclick=e=>{if(e.target.id==='modal')closeModal()};$('#addEntityBtn').onclick=entityModal;$('#entitiesAddBtn').onclick=entityModal;$('#evidenceAddBtn').onclick=evidenceModal;$('#chatForm').onsubmit=sendChat;$('#dmForm').onsubmit=sendDm;$('#userSearch').oninput=()=>searchUsers($('#userSearch').value);$('#settingsForm').onsubmit=saveSettings;$('#fitMap').onclick=()=>state.graph?.fit();
   $('#pageBack').onclick=backPage;
   window.addEventListener('popstate',e=>{
     const name=e.state?.shadowPage||'overview';
@@ -734,6 +741,14 @@ class ShadowDomSwarm{
     this.raf=0;
     this.last=performance.now();
     this.lastPaint=0;
+    /* SHADOW_SWARM_CONTINUITY_V238 */
+    this.lastPersist=0;
+    this.persistEveryMs=1000;
+    this.persistKey='si-global-swarm-v238';
+    this.persisted=this.loadPersistedState();
+    this.didInitialRestore=false;
+    this.activeBeacons=new Map();
+    /* SHADOW_SWARM_CONTINUITY_V238_END */
     this.drag=null;
     this.w=1;
     this.h=1;
@@ -762,6 +777,18 @@ class ShadowDomSwarm{
     window.addEventListener('resize',this._onWindowResize=()=>this.resize(),{passive:true});
     window.visualViewport?.addEventListener('resize',this._onViewportResize=()=>this.resize(),{passive:true});
 
+    this._onPageHide=()=>this.persistState(true);
+    this._onVisibilityChange=()=>{
+      if(document.hidden){
+        this.persistState(true);
+      }else{
+        this.last=performance.now();
+        this.schedule();
+      }
+    };
+    window.addEventListener('pagehide',this._onPageHide,{passive:true});
+    document.addEventListener('visibilitychange',this._onVisibilityChange,{passive:true});
+
     this.build();
     this.resize(true);
     root.dataset.rendererState='ready';
@@ -780,6 +807,166 @@ class ShadowDomSwarm{
 
   key(e){
     return String(e?.id||e?.name||e?.x_handle||e?.xHandle||'entity');
+  }
+
+  loadPersistedState(){
+    try{
+      const raw=sessionStorage.getItem(this.persistKey);
+      if(!raw)return null;
+      const data=JSON.parse(raw);
+      if(!data||data.version!==1)return null;
+      if(Date.now()-Number(data.savedAt||0)>30*60*1000)return null;
+      return data;
+    }catch{
+      return null;
+    }
+  }
+
+  persistState(force=false){
+    if(this.dead&&!force)return;
+    if(!this.nodes?.length||this.w<=1||this.h<=1)return;
+    try{
+      const nodes={};
+      for(const n of this.nodes){
+        nodes[this.key(n.raw)]={nx:n.x/this.w,ny:n.y/this.h,vx:Number(n.vx||0),vy:Number(n.vy||0)};
+      }
+      const beacons=[];
+      const now=Date.now();
+      for(const [entityId,items] of this.activeBeacons){
+        for(const item of items||[]){
+          if(Number(item.expiresAt)>now){
+            beacons.push({entityId:String(entityId),kind:item.kind==='sell'?'sell':'buy',expiresAt:Number(item.expiresAt)});
+          }
+        }
+      }
+      sessionStorage.setItem(this.persistKey,JSON.stringify({version:1,savedAt:now,nodes,beacons}));
+    }catch{}
+  }
+
+  restorePersistedLayout(){
+    if(this.didInitialRestore)return false;
+    this.didInitialRestore=true;
+    const saved=this.persisted?.nodes;
+    if(!saved||typeof saved!=='object')return false;
+
+    let restored=0;
+    const missing=[];
+    for(const n of this.nodes){
+      const item=saved[this.key(n.raw)];
+      if(item&&Number.isFinite(Number(item.nx))&&Number.isFinite(Number(item.ny))){
+        n.x=Number(item.nx)*this.w;
+        n.y=Number(item.ny)*this.h;
+        n.vx=Number.isFinite(Number(item.vx))?Number(item.vx):0;
+        n.vy=Number.isFinite(Number(item.vy))?Number(item.vy):0;
+        this.keepNodeInside(n);
+        restored++;
+      }else missing.push(n);
+    }
+    if(!restored)return false;
+
+    const usableH=Math.max(180,this.h-this.safe.top-this.safe.bottom);
+    const spread=Math.max(82,Math.min(this.w*.31,usableH*.29,142));
+    const golden=2.399963229728653;
+    missing.forEach((n,i)=>{
+      const jitter=((n.seed&1023)/1023)-.5;
+      const angle=(restored+i)*golden+jitter*.64;
+      const dist=Math.max(54,spread*.82);
+      n.x=this.centerX+Math.cos(angle)*dist;
+      n.y=this.centerY+Math.sin(angle)*dist*.84;
+      n.vx=0;n.vy=0;
+      this.keepNodeInside(n);
+    });
+
+    for(let i=0;i<8;i++)this.resolveCollisions(null);
+    this.renderNodes();
+    this.restorePersistedBeacons();
+    this.schedule();
+    return true;
+  }
+
+  restorePersistedBeacons(){
+    const now=Date.now();
+    const rows=Array.isArray(this.persisted?.beacons)?this.persisted.beacons:[];
+    for(const row of rows){
+      if(Number(row?.expiresAt)<=now)continue;
+      this.mountBeacon(String(row.entityId||''),row.kind,Number(row.expiresAt),false);
+    }
+  }
+
+  syncNodeVisual(node,raw,index){
+    node.raw=raw;
+    node.index=index;
+    const el=node.el;
+    if(!el)return;
+    el.setAttribute('aria-label',raw?.name||raw?.x_handle||'Entity');
+    const avatarUrl=String(raw?.avatar||'').trim();
+    let img=el.querySelector('img');
+    if(avatarUrl){
+      if(!img){
+        el.querySelector('.si-dom-node-fallback')?.remove();
+        img=document.createElement('img');
+        img.alt='';img.draggable=false;img.decoding='async';img.loading='eager';
+        img.addEventListener('error',()=>{img.remove();this.ensureFallback(el,node.raw);});
+        el.prepend(img);
+      }
+      if(img.getAttribute('src')!==avatarUrl)img.src=avatarUrl;
+    }else{
+      img?.remove();
+      this.ensureFallback(el,raw);
+    }
+  }
+
+  updateEntities(next=[]){
+    const incoming=Array.isArray(next)?next:[];
+    if(incoming.length!==this.nodes.length)return false;
+    const byKey=new Map(this.nodes.map(n=>[this.key(n.raw),n]));
+    const nextNodes=[];
+    for(let i=0;i<incoming.length;i++){
+      const raw=incoming[i];
+      const node=byKey.get(this.key(raw));
+      if(!node)return false;
+      this.syncNodeVisual(node,raw,i);
+      nextNodes.push(node);
+    }
+    this.entities=incoming;
+    this.model={...(this.model||{}),entities:incoming};
+    this.nodes=nextNodes;
+    this.root.dataset.nodeCount=String(this.nodes.length);
+    this.schedule();
+    return true;
+  }
+
+  mountBeacon(entityId,kind='buy',expiresAt=Date.now()+60000,track=true){
+    if(this.dead||!entityId)return false;
+    const node=this.nodes.find(n=>String(n.raw?.id||'')===String(entityId));
+    if(!node?.el)return false;
+    const now=Date.now();
+    if(expiresAt<=now)return false;
+
+    const existing=[...node.el.querySelectorAll('.si-entity-beacon')];
+    while(existing.length>=2)existing.shift()?.remove();
+
+    const beacon=document.createElement('span');
+    beacon.className=`si-entity-beacon ${kind==='sell'?'sell':'buy'}`;
+    beacon.setAttribute('aria-hidden','true');
+    node.el.appendChild(beacon);
+
+    const remove=()=>{
+      beacon.remove();
+      const list=(this.activeBeacons.get(String(entityId))||[]).filter(x=>x.expiresAt!==expiresAt);
+      if(list.length)this.activeBeacons.set(String(entityId),list);
+      else this.activeBeacons.delete(String(entityId));
+      this.persistState();
+    };
+    setTimeout(remove,Math.max(1,expiresAt-now));
+
+    const key=String(entityId);
+    const list=(this.activeBeacons.get(key)||[]).filter(x=>x.expiresAt>Date.now());
+    if(track||!list.some(x=>x.expiresAt===expiresAt))list.push({kind:kind==='sell'?'sell':'buy',expiresAt});
+    while(list.length>2)list.shift();
+    this.activeBeacons.set(key,list);
+    if(track)this.persistState();
+    return true;
   }
 
   build(){
@@ -873,6 +1060,7 @@ class ShadowDomSwarm{
     this.root.dataset.mapSize=`${Math.round(this.w)}x${Math.round(this.h)}`;
 
     if(forceFit||first){
+      if(this.restorePersistedLayout())return;
       this.fit();
       return;
     }
@@ -992,16 +1180,17 @@ class ShadowDomSwarm{
   physics(now){
     const dt=Math.max(.45,Math.min(2.2,(now-this.last)/16.667));
     this.last=now;
+    const motionNow=Date.now();
 
     for(const n of this.nodes){
       if(this.drag?.node===n)continue;
 
       const wanderX=
-        Math.sin(now*.00021+n.phase)*.007+
-        Math.cos(now*.00013+n.phase2)*.004;
+        Math.sin(motionNow*.00021+n.phase)*.007+
+        Math.cos(motionNow*.00013+n.phase2)*.004;
       const wanderY=
-        Math.cos(now*.00019+n.phase2)*.007+
-        Math.sin(now*.00011+n.phase)*.004;
+        Math.cos(motionNow*.00019+n.phase2)*.007+
+        Math.sin(motionNow*.00011+n.phase)*.004;
 
       n.vx+=((this.centerX-n.x)*.00013+wanderX)*dt;
       n.vy+=((this.centerY-n.y)*.00013+wanderY)*dt;
@@ -1053,6 +1242,10 @@ class ShadowDomSwarm{
     this.lastPaint=now;
     this.physics(now);
     this.renderNodes();
+    if(now-this.lastPersist>=this.persistEveryMs){
+      this.lastPersist=now;
+      this.persistState();
+    }
     this.schedule();
   }
 
@@ -1121,31 +1314,26 @@ class ShadowDomSwarm{
   }
 
   pulseEntity(entityId,kind='buy'){
-    if(this.dead||!entityId)return false;
-
-    const node=this.nodes.find(n=>String(n.raw?.id||'')===String(entityId));
-    if(!node?.el)return false;
-
-    const existing=[...node.el.querySelectorAll('.si-entity-beacon')];
-    while(existing.length>=2)existing.shift()?.remove();
-
-    const beacon=document.createElement('span');
-    beacon.className=`si-entity-beacon ${kind==='sell'?'sell':'buy'}`;
-    beacon.setAttribute('aria-hidden','true');
-    node.el.appendChild(beacon);
-
-    setTimeout(()=>beacon.remove(),60000);
-    return true;
+    return this.mountBeacon(String(entityId||''),kind,Date.now()+60000,true);
   }
 
   setModel(model={}){
+    const next=Array.isArray(model?.entities)?model.entities:[];
+    if(this.updateEntities(next)){
+      this.model=model||{};
+      return;
+    }
+    this.persistState(true);
     this.model=model||{};
-    this.entities=Array.isArray(this.model.entities)?this.model.entities:[];
+    this.entities=next;
+    this.persisted=this.loadPersistedState();
+    this.didInitialRestore=false;
     this.build();
-    this.fit();
+    if(!this.restorePersistedLayout())this.fit();
   }
 
   destroy(){
+    this.persistState(true);
     this.dead=true;
 
     if(this.raf)cancelAnimationFrame(this.raf);
@@ -1154,6 +1342,8 @@ class ShadowDomSwarm{
     this.ro?.disconnect();
     window.removeEventListener('resize',this._onWindowResize);
     window.visualViewport?.removeEventListener('resize',this._onViewportResize);
+    window.removeEventListener('pagehide',this._onPageHide);
+    document.removeEventListener('visibilitychange',this._onVisibilityChange);
 
     this.drag=null;
   }
@@ -1166,9 +1356,11 @@ function mountGlobalGraph(){
   const model=globalEntityModel();
   updateMapCounts();
 
-  const key=JSON.stringify(model.entities.map(e=>[
-    e.id||'',e.name||'',e.avatar||'',e.x_handle||e.xHandle||''
-  ]));
+  const key=JSON.stringify(
+    model.entities
+      .map(e=>String(e.id||e.name||e.x_handle||e.xHandle||''))
+      .sort()
+  );
 
   const healthy=
     state.graph instanceof ShadowDomSwarm &&
@@ -1177,6 +1369,7 @@ function mountGlobalGraph(){
     root.querySelectorAll('.si-dom-node').length===model.entities.length;
 
   if(healthy&&graphEntityKey===key){
+    state.graph.updateEntities(model.entities);
     state.graph.schedule();
     return model;
   }
@@ -1991,7 +2184,152 @@ async function loadSettings(){
   }
 }
 async function saveSettings(e){e.preventDefault();try{const b={platform_name:$('#setPlatformName').value,registration_enabled:$('#setRegistration').checked,community_chat_enabled:$('#setChat').checked,copy_trading_enabled:$('#setCopy').checked,risk_high_threshold:$('#setRiskThreshold').value,demo_mode:$('#setDemo').checked,live_monitor_enabled:$('#setLiveMonitor').checked,live_poll_seconds:$('#setPollSeconds').value,wallet_history_limit:$('#setHistoryLimit').value,x_monitor_enabled:$('#setXMonitor').checked};const s=await api('/api/settings',{method:'PATCH',body:JSON.stringify(b)});document.querySelectorAll('[data-platform-name]').forEach(x=>x.textContent=s.platform_name);toast('Settings saved')}catch(e){toast(e.message)}}
-function searchGlobal(q){q=q.trim().toLowerCase();if(!q)return;const e=state.entities.find(x=>[x.name,x.x_handle].join(' ').toLowerCase().includes(q));if(e)return openObject('entity',e);const t=state.tokens.find(x=>[x.symbol,x.name,x.mint].join(' ').toLowerCase().includes(q));if(t)return openObject('token',t);const w=[...state.details.values()].flatMap(d=>d.wallets||[]).find(x=>String(x.address).toLowerCase().includes(q));if(w)return openObject('wallet',w);toast('Nothing found')}
+/* SHADOW_SEARCH_PAGE_V237_APP */
+function searchMatches(q){
+  const query=String(q||'').trim().toLowerCase();
+  if(!query)return [];
+
+  const rows=[];
+
+  for(const e of state.entities||[]){
+    const hay=[e.name,e.x_handle,e.xHandle,e.notes].filter(Boolean).join(' ').toLowerCase();
+    if(hay.includes(query)){
+      rows.push({
+        kind:'entity',
+        id:e.id,
+        item:e,
+        title:e.x_handle||e.xHandle||e.name||'Entity',
+        subtitle:e.name||'Tracked entity',
+        avatar:e
+      });
+    }
+  }
+
+  for(const t of state.tokens||[]){
+    const hay=[t.symbol,t.name,t.mint,t.address].filter(Boolean).join(' ').toLowerCase();
+    if(hay.includes(query)){
+      rows.push({
+        kind:'token',
+        mint:t.mint,
+        item:t,
+        title:t.symbol||t.name||'Token',
+        subtitle:t.name||short(t.mint||''),
+        meta:short(t.mint||''),
+        avatar:t
+      });
+    }
+  }
+
+  const seenWallets=new Set();
+  for(const d of state.details.values()){
+    for(const w of d?.wallets||[]){
+      const address=String(w.address||'');
+      if(!address || seenWallets.has(address))continue;
+      seenWallets.add(address);
+      const entity=d?.entity||{};
+      const hay=[address,w.label,entity.name,entity.x_handle].filter(Boolean).join(' ').toLowerCase();
+      if(hay.includes(query)){
+        rows.push({
+          kind:'wallet',
+          item:w,
+          title:short(address),
+          subtitle:entity.x_handle||entity.name||w.label||'Tracked wallet',
+          meta:'Wallet'
+        });
+      }
+    }
+  }
+
+  return rows.slice(0,40);
+}
+
+function renderSearchPageResults(q=''){
+  const root=$('#searchPageResults');
+  if(!root)return;
+
+  const query=String(q||'').trim();
+  if(!query){
+    root.innerHTML='<div class="si-search-empty">Start typing to search Shadow Intelligence.</div>';
+    return;
+  }
+
+  const rows=searchMatches(query);
+  if(!rows.length){
+    root.innerHTML=`<div class="si-search-empty">No results for "${esc(query)}".</div>`;
+    return;
+  }
+
+  root.innerHTML=rows.map((r,index)=>`
+    <button type="button" class="si-search-result" data-search-result="${index}">
+      ${r.avatar?avatar(r.avatar,'md'):'<span class="si-search-result-icon">Search</span>'}
+      <span class="si-search-result-copy">
+        <strong>${esc(r.title)}</strong>
+        <small>${esc(r.subtitle||'')}</small>
+      </span>
+      <span class="si-search-result-meta">${esc(r.meta||r.kind)}</span>
+    </button>
+  `).join('');
+
+  root.querySelectorAll('[data-search-result]').forEach(button=>{
+    button.onclick=()=>{
+      const row=rows[Number(button.dataset.searchResult)];
+      if(!row)return;
+      if(row.kind==='entity')return openObject('entity',{id:row.id});
+      if(row.kind==='token')return openObject('token',{mint:row.mint});
+      if(row.kind==='wallet')return openObject('wallet',row.item);
+    };
+  });
+}
+
+function openSearchPage(){
+  nav('search');
+  const input=$('#searchPageInput');
+  if(!input)return;
+  input.value='';
+  renderSearchPageResults('');
+  input.focus({preventScroll:true});
+  try{input.setSelectionRange(0,0)}catch{}
+}
+
+function bindSearchPage(){
+  const open=$('#openSearchPage');
+  const input=$('#searchPageInput');
+  const clear=$('#searchPageClear');
+
+  if(open)open.onclick=openSearchPage;
+
+  if(input){
+    input.oninput=()=>renderSearchPageResults(input.value);
+    input.onkeydown=e=>{
+      if(e.key==='Escape'){
+        e.preventDefault();
+        backPage();
+        return;
+      }
+      if(e.key==='Enter'){
+        e.preventDefault();
+        const first=$('#searchPageResults [data-search-result]');
+        if(first)first.click();
+      }
+    };
+  }
+
+  if(clear)clear.onclick=()=>{
+    if(!input)return;
+    input.value='';
+    renderSearchPageResults('');
+    input.focus({preventScroll:true});
+  };
+}
+/* SHADOW_SEARCH_PAGE_V237_APP_END */
+
+function searchGlobal(q){
+  const first=searchMatches(q)[0];
+  if(!first)return toast('Nothing found');
+  if(first.kind==='entity')return openObject('entity',{id:first.id});
+  if(first.kind==='token')return openObject('token',{mint:first.mint});
+  if(first.kind==='wallet')return openObject('wallet',first.item);
+}
 boot();
 
 /* SHADOW_VIEWPORT_LOCK_V193_START */

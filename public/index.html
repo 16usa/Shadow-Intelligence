@@ -25,7 +25,7 @@
   <nav class="si-mainnav" aria-label="Primary">
     <button data-nav="overview" class="active">Map</button><button data-nav="entities">Entities</button><button data-nav="tokens">Tokens</button><button data-nav="feed">Live</button>
   </nav>
-  <div class="si-top-actions"><label class="si-search"><span>⌕</span><input id="globalSearch" placeholder="Search"/></label><button id="userButton" class="si-user"><span id="userAvatar" class="avatar avatar-sm">?</span><span id="userLabel">Sign in</span></button></div>
+  <div class="si-top-actions"><button id="userButton" class="si-user"><span id="userAvatar" class="avatar avatar-sm">?</span><span id="userLabel">Sign in</span></button></div>
 </header>
 <div class="si-layout">
 <aside class="si-rail">
@@ -52,6 +52,19 @@
 <section id="page-evidence" class="si-page"><div class="si-page-head"><div><div class="si-eyebrow">RESEARCH</div><h1>Evidence</h1><p>Sources, screenshots, links and research notes.</p></div><button id="evidenceAddBtn" class="si-button primary auth-only">＋ Evidence</button></div><div id="evidenceGrid" class="si-card-grid"></div></section>
 <section id="page-chat" class="si-page"><div class="si-page-head"><div><div class="si-eyebrow">COMMUNITY</div><h1>Chat</h1><p>Discuss live signals with the community.</p></div></div><div class="si-chat panel"><div id="chatMessages" class="si-chat-messages"></div><form id="chatForm" class="si-composer auth-only"><input id="chatInput" maxlength="800" placeholder="Write a message…"/><button class="si-button primary">Send</button></form><div class="guest-note guest-only">Sign in to join the conversation.</div></div></section>
 <section id="page-messages" class="si-page"><div class="si-page-head"><div><div class="si-eyebrow">PRIVATE</div><h1>Messages</h1><p>Private conversations between registered users.</p></div></div><div class="si-messages-layout"><aside class="si-panel"><input id="userSearch" class="si-input" placeholder="Find a user…"/><div id="conversationList"></div></aside><section class="si-panel"><div id="dmHeader" class="si-dm-header">Choose a conversation</div><div id="dmMessages" class="si-dm-messages"></div><form id="dmForm" class="si-composer"><input id="dmInput" maxlength="1200" placeholder="Private message…" disabled/><button class="si-button primary" disabled>Send</button></form></section></div></section>
+<!-- SHADOW_SEARCH_PAGE_V237 -->
+<section id="page-search" class="si-page">
+  <div class="si-search-page-shell">
+    <div class="si-search-page-head">
+      <div class="si-eyebrow">SEARCH</div>
+      <h1>Search</h1>
+      <p>Find entities, tokens and tracked wallet addresses.</p>
+    </div>
+    <div id="searchPageResults" class="si-search-results">
+      <div class="si-search-empty">Start typing to search Shadow Intelligence.</div>
+    </div>
+  </div>
+</section>
 <section id="page-settings" class="si-page"><div class="si-page-head"><div><div class="si-eyebrow">OWNER CONTROL</div><h1>Admin Command Center</h1><p>Control the platform without changing the intelligence model.</p></div></div><form id="settingsForm" class="si-settings"><section class="si-panel"><h3>Platform</h3><label>Platform name<input id="setPlatformName" class="si-input"/></label><label class="si-toggle"><span>Allow registration</span><input id="setRegistration" type="checkbox"/></label><label class="si-toggle"><span>Community chat</span><input id="setChat" type="checkbox"/></label></section><section class="si-panel"><h3>Live intelligence</h3><label class="si-toggle"><span>Wallet monitoring</span><input id="setLiveMonitor" type="checkbox"/></label><label>Poll interval<input id="setPollSeconds" class="si-input" type="number" min="30" max="3600"/></label><label>Initial history depth<input id="setHistoryLimit" class="si-input" type="number" min="5" max="100"/></label><label class="si-toggle"><span>X monitoring</span><input id="setXMonitor" type="checkbox"/></label><div id="providerStatus" class="si-status"></div></section><section class="si-panel"><h3>Trading shell</h3><label class="si-toggle"><span>Copy trading enabled</span><input id="setCopy" type="checkbox"/></label><label>High signal threshold<input id="setRiskThreshold" class="si-input" type="number" min="1" max="100"/></label><label class="si-toggle"><span>Demo data mode</span><input id="setDemo" type="checkbox"/></label></section><section class="si-panel"><h3>Appearance</h3><p>Theme follows your saved preference. Use the ◐ button for Light / Dark.</p><button type="button" id="adminTheme" class="si-button secondary">Toggle theme</button></section><!-- SHADOW_WALLETS_IN_ADMIN_V233 -->
 <section class="si-panel si-admin-wallets-panel">
   <div class="si-admin-wallets-head">
@@ -70,6 +83,7 @@
   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 5.5L9 12l6.5 6.5M9 12h10"/></svg>
 </button><div id="modalBody"></div></div></div><div id="toast" class="si-toast"></div>
 <!-- SHADOW_IMMERSIVE_UI_V1_START -->
+<div class="si-bottom-cluster">
 <nav class="si-immersive-dock" aria-label="Quick navigation">
   <button data-nav="overview" class="active" aria-label="Map"><svg viewBox="0 0 24 24"><circle cx="7" cy="7" r="2.4"/><circle cx="17" cy="8" r="2.4"/><circle cx="12" cy="17" r="2.4"/><path d="M9 8.3l5.6-.2M8.4 9l2.7 5.7M15.7 10l-2.6 4.8"/></svg><span>Map</span></button>
   <button data-nav="entities" aria-label="Entities"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.3"/><path d="M3.5 19c.6-3.2 2.6-5 5.5-5s4.9 1.8 5.5 5M14.5 14.5c2.8-.5 5 .9 6 3.7"/></svg><span>Entities</span></button>
@@ -86,6 +100,24 @@
   </button>
   <button data-nav="settings" class="owner-only" aria-label="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.7"/><path d="M12 3.8v2M12 18.2v2M20.2 12h-2M5.8 12h-2M17.8 6.2l-1.4 1.4M7.6 16.4l-1.4 1.4M17.8 17.8l-1.4-1.4M7.6 7.6L6.2 6.2"/></svg><span>Settings</span></button>
 </nav>
+  <button id="openSearchPage" class="si-floating-search-button" type="button" aria-label="Search" title="Search">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="11" cy="11" r="6.5"></circle>
+      <path d="M16 16l4 4"></path>
+    </svg>
+  </button>
+
+  <div class="si-search-dock" role="search">
+    <svg class="si-search-dock-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="11" cy="11" r="6.5"></circle>
+      <path d="M16 16l4 4"></path>
+    </svg>
+    <input id="searchPageInput" type="search" inputmode="search"
+      autocomplete="off" autocapitalize="off" spellcheck="false"
+      placeholder="Search entities, tokens, wallets..." aria-label="Search Shadow Intelligence"/>
+    <button id="searchPageClear" type="button" aria-label="Clear search">&times;</button>
+  </div>
+</div>
 <button id="pageBack" class="si-page-back" aria-label="Back"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 5.5L9 12l6.5 6.5M9 12h10"/></svg></button>
 <!-- SHADOW_IMMERSIVE_UI_V1_END -->
 <script src="/si-graph.js?v=watermark-removed-2.1.9-20260914"></script>

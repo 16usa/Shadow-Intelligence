@@ -1,4 +1,5 @@
 import test from 'node:test';
+// SHADOW_TRADE_ONLY_V239_TEST
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -152,7 +153,7 @@ test('Helius SWAP event collapses intermediate transfer legs into one canonical 
   }finally{ if(old===undefined)delete process.env.HELIUS_API_KEY; else process.env.HELIUS_API_KEY=old; }
 });
 
-test('Helius generic token receive is not mislabeled as a buy because of SOL fees',async()=>{
+test('Helius generic token receive is ignored completely even when the wallet pays SOL fees',async()=>{
   const { getRecentWalletActivity } = await import('../src/adapters/solana-rpc.mjs');
   const old=process.env.HELIUS_API_KEY; process.env.HELIUS_API_KEY='test-key';
   const DROP='7YgWwF9gW1QmUJsYdZgTK3wpdwxnoYpvy2Ypbo7Qpump';
@@ -163,9 +164,7 @@ test('Helius generic token receive is not mislabeled as a buy because of SOL fee
   }]);
   try{
     const result=await getRecentWalletActivity(WALLET,{limit:20,fetchImpl:heliusFetch});
-    assert.equal(result.activity.length,1);
-    assert.equal(result.activity[0].type,'receive');
-    assert.equal(result.activity[0].solAmount,0);
+    assert.equal(result.activity.length,0);
   }finally{ if(old===undefined)delete process.env.HELIUS_API_KEY; else process.env.HELIUS_API_KEY=old; }
 });
 
