@@ -1,0 +1,150 @@
+/* Shadow Intelligence — Live Activity Beacon Card v2.5.6 */
+.si-top-movers24h{
+  position:fixed;
+  z-index:72;
+  top:calc(env(safe-area-inset-top,0px) + 14px);
+  right:78px;
+  width:min(64vw,240px);
+  height:50px;
+  pointer-events:none;
+  color:var(--si-text);
+}
+.si-top-movers24h[hidden]{display:none!important}
+.si-movers-caption{display:none!important}
+.si-movers-track{
+  width:100%;
+  height:50px;
+  overflow:hidden;
+  padding:0;
+  pointer-events:auto;
+}
+
+.si-live-beacon-card{
+  appearance:none;
+  -webkit-appearance:none;
+  width:100%;
+  height:50px;
+  margin:0;
+  padding:6px 12px 6px 10px;
+  display:grid;
+  grid-template-columns:8px minmax(0,1fr);
+  align-items:center;
+  gap:9px;
+  border:.5px solid var(--si-line);
+  border-radius:999px;
+  background:color-mix(in srgb,var(--si-panel) 94%,transparent);
+  color:var(--si-text);
+  text-align:left;
+  box-shadow:none;
+  cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+  backdrop-filter:blur(12px);
+  -webkit-backdrop-filter:blur(12px);
+  transform-origin:right center;
+}
+.si-live-beacon-card:active{transform:scale(.985)}
+
+.si-live-beacon-dot{
+  width:8px;
+  height:8px;
+  border-radius:50%;
+  background:var(--si-green);
+  box-shadow:0 0 0 0 color-mix(in srgb,var(--si-green) 32%,transparent);
+  align-self:center;
+}
+
+.si-live-beacon-copy{
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+}
+.si-live-beacon-top,
+.si-live-beacon-bottom{
+  min-width:0;
+  display:flex;
+  align-items:center;
+  white-space:nowrap;
+}
+.si-live-beacon-top{
+  gap:6px;
+  line-height:1;
+}
+.si-live-beacon-top strong{
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  font-size:11px;
+  font-weight:760;
+  letter-spacing:-.01em;
+}
+.si-live-beacon-top small{
+  flex:0 0 auto;
+  color:var(--si-muted);
+  font-size:9px;
+  font-weight:600;
+}
+
+.si-live-beacon-bottom{
+  gap:6px;
+  margin-top:5px;
+  overflow:hidden;
+  font-size:9px;
+  line-height:1;
+}
+.si-live-beacon-bottom em{
+  flex:0 0 auto;
+  font-style:normal;
+  font-weight:820;
+  letter-spacing:.02em;
+}
+.si-live-beacon-bottom em.is-buy,
+.si-live-beacon-bottom em.is-swap{color:var(--si-green)}
+.si-live-beacon-bottom em.is-sell{color:var(--si-text)}
+.si-live-beacon-bottom > span{
+  min-width:0;
+  max-width:72px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  color:var(--si-text);
+  font-weight:720;
+}
+.si-live-beacon-value{
+  flex:0 0 auto;
+  font-size:9px;
+  font-weight:800;
+}
+
+.si-live-beacon-card.is-new{
+  animation:siLiveBeaconIn .68s cubic-bezier(.22,.8,.24,1);
+}
+.si-live-beacon-card.is-new .si-live-beacon-dot{
+  animation:siLiveBeaconPulse .9s ease-out;
+}
+
+@keyframes siLiveBeaconIn{
+  0%{opacity:0;transform:translateX(18px) scale(.96)}
+  100%{opacity:1;transform:translateX(0) scale(1)}
+}
+@keyframes siLiveBeaconPulse{
+  0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--si-green) 42%,transparent)}
+  100%{box-shadow:0 0 0 9px transparent}
+}
+
+@media(max-width:720px){
+  .si-top-movers24h{
+    top:calc(env(safe-area-inset-top,0px) + 14px);
+    right:78px;
+    width:min(64vw,240px);
+    height:50px;
+  }
+  .si-live-beacon-card{
+    height:50px;
+    padding-right:10px;
+  }
+}
+
+@media(prefers-reduced-motion:reduce){
+  .si-live-beacon-card.is-new,
+  .si-live-beacon-card.is-new .si-live-beacon-dot{animation:none!important}
+}

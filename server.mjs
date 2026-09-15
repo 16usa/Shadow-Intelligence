@@ -10,7 +10,7 @@ import { resolveWalletAvatar } from './src/adapters/pump-profile.mjs';
 import { syncCopyGroup, syncCopySubscription } from './src/adapters/copy-trading.mjs';
 import { providerHealth } from './src/adapters/intelligence.mjs';
 import { createLiveIntelligence } from './src/live-intelligence.mjs';
-import { getTokenMarket, getTokenMetadataBatch } from './src/adapters/token-market.mjs';
+import { getTokenMarket, getTokenMetadataBatch, getTokenMarketsBatch } from './src/adapters/token-market.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -35,11 +35,37 @@ async function currentSolUsd(){
 }
 function entityTokenPnlRows(db,entityId,limit=12,solUsd=0){
   const rows=db.prepare(`
-    SELECT t.*,MAX(a.block_time) AS lastActivity,
+    SELECT t.*,MAX(COALESCE(NULLIF(a.block_time,''),a.created_at)) AS lastActivity,
       SUM(CASE WHEN a.type IN ('buy','swap') THEN ABS(COALESCE(a.token_amount,0)) ELSE 0 END) AS buyTokens,
       SUM(CASE WHEN a.type='sell' THEN ABS(COALESCE(a.token_amount,0)) ELSE 0 END) AS sellTokens,
-      SUM(CASE WHEN a.type IN ('buy','swap') AND ABS(COALESCE(a.sol_amount,0))>0 THEN ABS(COALESCE(a.sol_amount,0)) ELSE 0 END) AS buySol,
-      SUM(CASE WHEN a.type='sell' AND ABS(COALESCE(a.sol_amount,0))>0 THEN ABS(COALESCE(a.sol_amount,0)) ELSE 0 END) AS sellSol
+
+      SUM(CASE WHEN a.type IN ('buy','swap') AND COALESCE(a.trade_usd,0)>0
+        THEN ABS(a.trade_usd) ELSE 0 END) AS buyTradeUsd,
+      SUM(CASE WHEN a.type='sell' AND COALESCE(a.trade_usd,0)>0
+        THEN ABS(a.trade_usd) ELSE 0 END) AS sellTradeUsd,
+
+      SUM(CASE WHEN a.type IN ('buy','swap') AND COALESCE(a.trade_usd,0)<=0
+                    AND ABS(COALESCE(a.sol_amount,0))>0
+        THEN ABS(a.sol_amount) ELSE 0 END) AS buyFallbackSol,
+      SUM(CASE WHEN a.type='sell' AND COALESCE(a.trade_usd,0)<=0
+                    AND ABS(COALESCE(a.sol_amount,0))>0
+        THEN ABS(a.sol_amount) ELSE 0 END) AS sellFallbackSol,
+
+      SUM(CASE WHEN a.type IN ('buy','swap') AND COALESCE(a.trade_usd,0)<=0
+                    AND ABS(COALESCE(a.sol_amount,0))<=1e-12
+                    AND COALESCE(a.price_usd,0)>0
+        THEN ABS(COALESCE(a.token_amount,0))*a.price_usd ELSE 0 END) AS buyObservedUsd,
+      SUM(CASE WHEN a.type='sell' AND COALESCE(a.trade_usd,0)<=0
+                    AND ABS(COALESCE(a.sol_amount,0))<=1e-12
+                    AND COALESCE(a.price_usd,0)>0
+        THEN ABS(COALESCE(a.token_amount,0))*a.price_usd ELSE 0 END) AS sellObservedUsd,
+
+      SUM(CASE WHEN a.type IN ('buy','swap') AND COALESCE(a.trade_usd,0)<=0
+                    AND ABS(COALESCE(a.sol_amount,0))<=1e-12
+                    AND COALESCE(a.price_usd,0)<=0 THEN 1 ELSE 0 END) AS unknownBuyRows,
+      SUM(CASE WHEN a.type='sell' AND COALESCE(a.trade_usd,0)<=0
+                    AND ABS(COALESCE(a.sol_amount,0))<=1e-12
+                    AND COALESCE(a.price_usd,0)<=0 THEN 1 ELSE 0 END) AS unknownSellRows
     FROM tokens t
     JOIN wallet_activity a ON a.mint=t.mint
     WHERE a.entity_id=?
@@ -55,36 +81,54 @@ function entityTokenPnlRows(db,entityId,limit=12,solUsd=0){
     ORDER BY lastActivity DESC
     LIMIT ?
   `).all(entityId,limit);
+
   return rows.map(row=>{
     const buyTokens=Math.abs(Number(row.buyTokens||0));
     const sellTokens=Math.abs(Number(row.sellTokens||0));
-    const buySol=Math.abs(Number(row.buySol||0));
-    const sellSol=Math.abs(Number(row.sellSol||0));
+    const buyFallbackSol=Math.abs(Number(row.buyFallbackSol||0));
+    const sellFallbackSol=Math.abs(Number(row.sellFallbackSol||0));
+    const buyTradeUsd=Math.abs(Number(row.buyTradeUsd||0));
+    const sellTradeUsd=Math.abs(Number(row.sellTradeUsd||0));
+    const buyObservedUsd=Math.abs(Number(row.buyObservedUsd||0));
+    const sellObservedUsd=Math.abs(Number(row.sellObservedUsd||0));
+    const unknownBuyRows=Number(row.unknownBuyRows||0);
+    const unknownSellRows=Number(row.unknownSellRows||0);
     const currentPriceUsd=Math.max(0,Number(row.price_usd||0));
+
+    const buyUsd=buyTradeUsd+buyObservedUsd+(buyFallbackSol*Math.max(0,solUsd));
+    const sellUsd=sellTradeUsd+sellObservedUsd+(sellFallbackSol*Math.max(0,solUsd));
+
     const matchedSold=Math.min(buyTokens,sellTokens);
-    const avgBuySolPerToken=buyTokens>0?buySol/buyTokens:0;
-    const matchedSellSol=sellTokens>0?sellSol*(matchedSold/sellTokens):0;
-    const realizedCostSol=matchedSold*avgBuySolPerToken;
-    const realizedPnlSol=matchedSellSol-realizedCostSol;
+    const avgBuyUsdPerToken=buyTokens>0?buyUsd/buyTokens:0;
+    const matchedSellUsd=sellTokens>0?sellUsd*(matchedSold/sellTokens):0;
+    const realizedCostUsd=matchedSold*avgBuyUsdPerToken;
+    const realizedPnlUsd=matchedSellUsd-realizedCostUsd;
     const remainingKnown=Math.max(0,buyTokens-matchedSold);
-    const basisUsd=buySol*solUsd;
-    const realizedPnlUsd=realizedPnlSol*solUsd;
     const unrealizedValueUsd=remainingKnown*currentPriceUsd;
-    const unrealizedCostUsd=remainingKnown*avgBuySolPerToken*solUsd;
+    const unrealizedCostUsd=remainingKnown*avgBuyUsdPerToken;
     const unrealizedPnlUsd=unrealizedValueUsd-unrealizedCostUsd;
+
+    const canValueSol=(buyFallbackSol+sellFallbackSol)<=1e-12 || solUsd>0;
     const canValueOpen=remainingKnown<=1e-12 || currentPriceUsd>0;
-    const pnlKnown=solUsd>0 && buySol>0 && buyTokens>0 && canValueOpen;
+    const pnlKnown=buyTokens>0 && buyUsd>0 && canValueSol && canValueOpen
+      && unknownBuyRows===0 && unknownSellRows===0;
     const pnlUsd=pnlKnown?realizedPnlUsd+unrealizedPnlUsd:null;
-    const pnlPercent=pnlKnown && basisUsd>0?(pnlUsd/basisUsd)*100:null;
+    const pnlPercent=pnlKnown&&buyUsd>0?(pnlUsd/buyUsd)*100:null;
+    const pnlEstimated=!!(
+      buyFallbackSol>1e-12 || sellFallbackSol>1e-12 ||
+      buyObservedUsd>0 || sellObservedUsd>0
+    );
+
     return {...row,
       pnlKnown,
+      pnlEstimated,
       pnlUsd:pnlKnown?Number(pnlUsd.toFixed(2)):null,
       pnlPercent:pnlKnown?Number(pnlPercent.toFixed(2)):null,
       realizedPnlUsd:pnlKnown?Number(realizedPnlUsd.toFixed(2)):null,
       unrealizedPnlUsd:pnlKnown?Number(unrealizedPnlUsd.toFixed(2)):null,
       positionTokens:remainingKnown,
-      costBasisUsd:pnlKnown?Number(basisUsd.toFixed(2)):null,
-      solUsd:pnlKnown?Number(solUsd.toFixed(4)):null
+      costBasisUsd:pnlKnown?Number(buyUsd.toFixed(2)):null,
+      solUsd:solUsd>0?Number(solUsd.toFixed(4)):null
     };
   });
 }
@@ -307,16 +351,799 @@ function notificationRows(db,userId,limit=60){
 }
 /* SHADOW_NOTIFICATIONS_V240_SERVER_END */
 
-function entityRows(db) {
+
+/* SHADOW_TOP_24H_MOVERS_V250_SERVER */
+const TOP_MOVERS_CACHE_MS=45000;
+let topMovers24hCache={at:0,payload:null,promise:null};
+
+function moverSparkline1h(db,tokenId,currentPrice,change1h){
+  const cutoff=new Date(Date.now()-60*60*1000).toISOString();
+  const rows=db.prepare(`
+    SELECT price_usd AS price,created_at AS at
+    FROM market_snapshots
+    WHERE token_id=? AND created_at>=? AND price_usd>0
+    ORDER BY created_at ASC
+    LIMIT 200
+  `).all(tokenId,cutoff);
+
+  let values=rows.map(row=>Number(row.price)).filter(n=>Number.isFinite(n)&&n>0);
+  const current=Number(currentPrice||0);
+  if(current>0 && (!values.length || Math.abs(values[values.length-1]-current)>Math.max(1e-12,current*1e-9))){
+    values.push(current);
+  }
+
+  if(values.length<2 && current>0){
+    const change=Number(change1h||0);
+    const divisor=1+(change/100);
+    const open=divisor>0?current/divisor:0;
+    if(Number.isFinite(open)&&open>0)values=[open,current];
+  }
+
+  if(values.length<=32)return values;
+  const out=[];
+  const last=values.length-1;
+  for(let i=0;i<32;i++){
+    const index=Math.round((i/31)*last);
+    out.push(values[index]);
+  }
+  return out;
+}
+
+async function buildTopMovers24h(db){
+  const candidates=db.prepare(`
+    SELECT t.*,
+      (
+        SELECT MAX(COALESCE(NULLIF(a.block_time,''),a.created_at))
+        FROM wallet_activity a
+        WHERE a.mint=t.mint AND a.type IN ('buy','sell','swap')
+      ) AS lastActivity
+    FROM tokens t
+    WHERE COALESCE(TRIM(t.mint),'')<>''
+    ORDER BY
+      CASE WHEN COALESCE(t.liquidity_usd,0)>=1000 THEN 0 ELSE 1 END,
+      COALESCE(lastActivity,t.last_market_at,t.created_at) DESC
+    LIMIT 36
+  `).all();
+
+  if(!candidates.length)return {items:[],asOf:nowIso(),windowHours:1};
+
+  const markets=await getTokenMarketsBatch(candidates.map(row=>row.mint));
+  const now=nowIso();
+  const update=db.prepare(`
+    UPDATE tokens SET
+      symbol=?,name=?,
+      image=CASE WHEN ?<>'' THEN ? ELSE image END,
+      price_change=?,price_usd=?,market_cap=?,liquidity_usd=?,
+      dex_id=?,external_url=?,last_market_at=?,is_pump=?
+    WHERE id=?
+  `);
+  const insertSnapshot=db.prepare(`
+    INSERT INTO market_snapshots
+      (id,token_id,price_usd,price_change,market_cap,liquidity_usd,created_at)
+    VALUES (?,?,?,?,?,?,?)
+  `);
+  const latestSnapshot=db.prepare(`
+    SELECT created_at FROM market_snapshots
+    WHERE token_id=? ORDER BY created_at DESC LIMIT 1
+  `);
+
+  const fresh=[];
+  for(const row of candidates){
+    const market=markets.get(String(row.mint));
+    if(!market)continue;
+
+    const price=Number(market.priceUsd||0);
+    const change1h=Number(market.priceChange1h||0);
+    const liquidityUsd=Number(market.liquidityUsd||0);
+
+    if(!Number.isFinite(price)||price<=0)continue;
+    if(!Number.isFinite(change1h)||change1h<=0)continue;
+    if(liquidityUsd<1000)continue;
+
+    update.run(
+      market.symbol||row.symbol,
+      market.name||row.name,
+      market.image||'',
+      market.image||'',
+      Number(market.priceChange||0),
+      price,
+      Number(market.marketCap||0),
+      liquidityUsd,
+      market.dexId||'',
+      market.externalUrl||'',
+      now,
+      market.isPump?1:Number(row.is_pump||0),
+      row.id
+    );
+
+    const last=latestSnapshot.get(row.id);
+    const lastAt=last?.created_at?new Date(last.created_at).getTime():0;
+    if(!lastAt || Date.now()-lastAt>=5*60*1000){
+      insertSnapshot.run(
+        id('mkt_'),
+        row.id,
+        price,
+        Number(market.priceChange||0),
+        Number(market.marketCap||0),
+        liquidityUsd,
+        now
+      );
+    }
+
+    fresh.push({
+      id:row.id,
+      mint:row.mint,
+      symbol:market.symbol||row.symbol,
+      name:market.name||row.name,
+      image:market.image||row.image||'',
+      priceUsd:price,
+      change1h,
+      volume24h:Number(market.volume24h||0),
+      marketCap:Number(market.marketCap||0),
+      liquidityUsd,
+      dexId:market.dexId||row.dex_id||'',
+      externalUrl:market.externalUrl||row.external_url||'',
+      isPump:!!market.isPump
+    });
+  }
+
+  const leader=fresh.sort((a,b)=>b.change1h-a.change1h)[0];
+  if(!leader)return {items:[],asOf:now,windowHours:1};
+
+  const items=[{
+    ...leader,
+    sparkline:moverSparkline1h(db,leader.id,leader.priceUsd,leader.change1h)
+  }];
+
+  return {items,asOf:now,windowHours:1};
+}
+
+async function topMovers24h(db){
+  const age=Date.now()-Number(topMovers24hCache.at||0);
+  if(topMovers24hCache.payload && age<TOP_MOVERS_CACHE_MS)return topMovers24hCache.payload;
+  if(topMovers24hCache.promise)return topMovers24hCache.promise;
+
+  topMovers24hCache.promise=buildTopMovers24h(db)
+    .then(payload=>{
+      topMovers24hCache={at:Date.now(),payload,promise:null};
+      return payload;
+    })
+    .catch(error=>{
+      topMovers24hCache.promise=null;
+      if(topMovers24hCache.payload)return topMovers24hCache.payload;
+      throw error;
+    });
+
+  return topMovers24hCache.promise;
+}
+/* SHADOW_TOP_24H_MOVERS_V250_SERVER_END */
+
+/* SHADOW_ENTITY_PROFIT_V2413_SERVER */
+function entityPerformanceMap(db,{solUsd=0}={}) {
+  const rows=db.prepare(`
+    SELECT
+      a.entity_id AS entityId,
+      a.mint,
+      a.type,
+      ABS(COALESCE(a.token_amount,0)) AS tokenAmount,
+      ABS(COALESCE(a.sol_amount,0)) AS solAmount,
+      ABS(COALESCE(a.trade_usd,0)) AS storedTradeUsd,
+      COALESCE(a.trade_usd_source,'') AS tradeUsdSource,
+      ABS(COALESCE(a.price_usd,0)) AS observedPriceUsd,
+      COALESCE(t.price_usd,0) AS currentPriceUsd,
+      COALESCE(NULLIF(a.block_time,''),a.created_at) AS activityAt
+    FROM wallet_activity a
+    LEFT JOIN tokens t ON t.mint=a.mint
+    WHERE a.entity_id IS NOT NULL
+      AND COALESCE(a.mint,'')<>''
+      AND a.type IN ('buy','sell','swap')
+      AND ABS(COALESCE(a.token_amount,0))>1e-12
+    ORDER BY a.entity_id,a.mint,activityAt,a.created_at,a.id
+  `).all();
+
+  const eps=1e-12;
+  const fallbackSolUsd=Math.max(0,Number(solUsd)||0);
+  const byToken=new Map();
+
+  for(const row of rows){
+    const entityId=String(row.entityId||'');
+    const mint=String(row.mint||'');
+    if(!entityId||!mint)continue;
+
+    const key=`${entityId}\u0000${mint}`;
+    let p=byToken.get(key);
+    if(!p){
+      p={
+        entityId,mint,
+        buyTokens:0,buyUsd:0,
+        sellTokens:0,sellUsd:0,
+        currentPriceUsd:Math.max(0,Number(row.currentPriceUsd)||0),
+        unknown:false,estimated:false
+      };
+      byToken.set(key,p);
+    }else{
+      p.currentPriceUsd=Math.max(p.currentPriceUsd,Math.max(0,Number(row.currentPriceUsd)||0));
+    }
+
+    const type=String(row.type||'').toLowerCase();
+    const tokenAmount=Math.abs(Number(row.tokenAmount)||0);
+    const solAmount=Math.abs(Number(row.solAmount)||0);
+    const storedTradeUsd=Math.abs(Number(row.storedTradeUsd)||0);
+    const observedPriceUsd=Math.max(0,Number(row.observedPriceUsd)||0);
+
+    let tradeUsd=null;
+    if(storedTradeUsd>0){
+      tradeUsd=storedTradeUsd;
+      if(String(row.tradeUsdSource||'')!=='stable')p.estimated=true;
+    }else if(solAmount>0 && fallbackSolUsd>0){
+      tradeUsd=solAmount*fallbackSolUsd;
+      p.estimated=true;
+    }else if(observedPriceUsd>0){
+      tradeUsd=tokenAmount*observedPriceUsd;
+      p.estimated=true;
+    }
+
+    if(type==='buy'||type==='swap'){
+      p.buyTokens+=tokenAmount;
+      if(tradeUsd==null)p.unknown=true;
+      else p.buyUsd+=tradeUsd;
+    }else if(type==='sell'){
+      p.sellTokens+=tokenAmount;
+      if(tradeUsd==null)p.unknown=true;
+      else p.sellUsd+=tradeUsd;
+    }
+  }
+
+  const byEntity=new Map();
+  for(const p of byToken.values()){
+    if(p.buyTokens<=eps)continue;
+
+    let perf=byEntity.get(p.entityId);
+    if(!perf){
+      perf={tokens:0,pricedTokens:0,profitUsd:0,estimated:false,partial:false};
+      byEntity.set(p.entityId,perf);
+    }
+    perf.tokens++;
+
+    if(p.unknown || p.buyUsd<=0){
+      perf.partial=true;
+      continue;
+    }
+
+    const matchedSold=Math.min(p.buyTokens,p.sellTokens);
+    const avgBuyUsdPerToken=p.buyUsd/p.buyTokens;
+    const matchedSellUsd=p.sellTokens>eps
+      ? p.sellUsd*(matchedSold/p.sellTokens)
+      : 0;
+    const realizedPnlUsd=matchedSellUsd-(matchedSold*avgBuyUsdPerToken);
+    const remainingTokens=Math.max(0,p.buyTokens-matchedSold);
+
+    if(remainingTokens>eps && p.currentPriceUsd<=0){
+      perf.partial=true;
+      continue;
+    }
+
+    const openPnlUsd=remainingTokens>eps
+      ? (remainingTokens*p.currentPriceUsd)-(remainingTokens*avgBuyUsdPerToken)
+      : 0;
+
+    perf.profitUsd+=realizedPnlUsd+openPnlUsd;
+    perf.pricedTokens++;
+    perf.estimated=perf.estimated||p.estimated;
+  }
+
+  for(const perf of byEntity.values()){
+    perf.profitKnown=perf.pricedTokens>0;
+    perf.avgProfitUsd=perf.pricedTokens>0?perf.profitUsd/perf.pricedTokens:null;
+    perf.profitUsd=perf.profitKnown?Number(perf.profitUsd.toFixed(2)):null;
+    perf.avgProfitUsd=perf.avgProfitUsd==null?null:Number(perf.avgProfitUsd.toFixed(2));
+    perf.profitEstimated=!!(perf.estimated||perf.partial);
+  }
+
+  return byEntity;
+}
+
+
+/* SHADOW_ENTITY_PERFORMANCE_V2420_SERVER */
+function entityConsistencyMap(db,{solUsd=0}={}) {
+  const rows=db.prepare(`
+    SELECT
+      a.entity_id AS entityId,
+      a.mint,
+      a.type,
+      ABS(COALESCE(a.token_amount,0)) AS tokenAmount,
+      ABS(COALESCE(a.sol_amount,0)) AS solAmount,
+      ABS(COALESCE(a.trade_usd,0)) AS storedTradeUsd,
+      COALESCE(a.trade_usd_source,'') AS tradeUsdSource,
+      ABS(COALESCE(a.price_usd,0)) AS observedPriceUsd,
+      COALESCE(t.price_usd,0) AS currentPriceUsd,
+      COALESCE(NULLIF(a.block_time,''),a.created_at) AS activityAt
+    FROM wallet_activity a
+    LEFT JOIN tokens t ON t.mint=a.mint
+    WHERE a.entity_id IS NOT NULL
+      AND COALESCE(a.mint,'')<>''
+      AND a.type IN ('buy','sell','swap')
+      AND ABS(COALESCE(a.token_amount,0))>1e-12
+    ORDER BY a.entity_id,a.mint,activityAt,a.created_at,a.id
+  `).all();
+
+  const eps=1e-12;
+  const fallbackSolUsd=Math.max(0,Number(solUsd)||0);
+  const byToken=new Map();
+
+  for(const row of rows){
+    const entityId=String(row.entityId||'');
+    const mint=String(row.mint||'');
+    if(!entityId||!mint)continue;
+
+    const key=`${entityId}\u0000${mint}`;
+    let p=byToken.get(key);
+    if(!p){
+      p={
+        entityId,mint,
+        buyTokens:0,buyUsd:0,
+        sellTokens:0,sellUsd:0,
+        currentPriceUsd:Math.max(0,Number(row.currentPriceUsd)||0),
+        unknown:false
+      };
+      byToken.set(key,p);
+    }else{
+      p.currentPriceUsd=Math.max(p.currentPriceUsd,Math.max(0,Number(row.currentPriceUsd)||0));
+    }
+
+    const type=String(row.type||'').toLowerCase();
+    const tokenAmount=Math.abs(Number(row.tokenAmount)||0);
+    const solAmount=Math.abs(Number(row.solAmount)||0);
+    const storedTradeUsd=Math.abs(Number(row.storedTradeUsd)||0);
+    const observedPriceUsd=Math.max(0,Number(row.observedPriceUsd)||0);
+
+    let tradeUsd=null;
+    if(storedTradeUsd>0)tradeUsd=storedTradeUsd;
+    else if(solAmount>0 && fallbackSolUsd>0)tradeUsd=solAmount*fallbackSolUsd;
+    else if(observedPriceUsd>0)tradeUsd=tokenAmount*observedPriceUsd;
+
+    if(type==='buy'||type==='swap'){
+      p.buyTokens+=tokenAmount;
+      if(tradeUsd==null)p.unknown=true;
+      else p.buyUsd+=tradeUsd;
+    }else if(type==='sell'){
+      p.sellTokens+=tokenAmount;
+      if(tradeUsd==null)p.unknown=true;
+      else p.sellUsd+=tradeUsd;
+    }
+  }
+
+  const result=new Map();
+
+  for(const p of byToken.values()){
+    if(p.buyTokens<=eps)continue;
+
+    let stats=result.get(p.entityId);
+    if(!stats){
+      stats={
+        wins:0,
+        losses:0,
+        flat:0,
+        open:0,
+        closedTokens:0,
+        winRateKnown:false,
+        winRate:null,
+        medianProfitUsd:null,
+        tokenPnls:[]
+      };
+      result.set(p.entityId,stats);
+    }
+
+    const matchedSold=Math.min(p.buyTokens,p.sellTokens);
+    const remainingTokens=Math.max(0,p.buyTokens-matchedSold);
+    const isOpen=remainingTokens>eps;
+    if(isOpen)stats.open++;
+
+    if(p.unknown||p.buyUsd<=0)continue;
+
+    const avgBuyUsdPerToken=p.buyUsd/p.buyTokens;
+    const matchedSellUsd=p.sellTokens>eps
+      ? p.sellUsd*(matchedSold/p.sellTokens)
+      : 0;
+    const realizedPnlUsd=matchedSellUsd-(matchedSold*avgBuyUsdPerToken);
+
+    if(isOpen&&p.currentPriceUsd<=0)continue;
+
+    const openPnlUsd=isOpen
+      ? (remainingTokens*p.currentPriceUsd)-(remainingTokens*avgBuyUsdPerToken)
+      : 0;
+    const tokenPnlUsd=realizedPnlUsd+openPnlUsd;
+
+    stats.tokenPnls.push(tokenPnlUsd);
+
+    // Win Rate deliberately ignores OPEN token positions.
+    if(!isOpen){
+      const flatThreshold=.01;
+      if(tokenPnlUsd>flatThreshold)stats.wins++;
+      else if(tokenPnlUsd<-flatThreshold)stats.losses++;
+      else stats.flat++;
+    }
+  }
+
+  for(const stats of result.values()){
+    const closed=stats.wins+stats.losses+stats.flat;
+    stats.closedTokens=closed;
+    stats.winRateKnown=closed>0;
+    stats.winRate=closed>0?Number(((stats.wins/closed)*100).toFixed(1)):null;
+
+    const ordered=stats.tokenPnls.slice().sort((a,b)=>a-b);
+    if(ordered.length){
+      const middle=Math.floor(ordered.length/2);
+      const median=ordered.length%2
+        ? ordered[middle]
+        : (ordered[middle-1]+ordered[middle])/2;
+      stats.medianProfitUsd=Number(median.toFixed(2));
+    }
+
+    delete stats.tokenPnls;
+  }
+
+  return result;
+}
+/* SHADOW_ENTITY_PERFORMANCE_V2420_SERVER_END */
+
+function entityRows(db,{solUsd=0}={}) {
+  const performance=entityPerformanceMap(db,{solUsd});
+  const consistency=entityConsistencyMap(db,{solUsd});
   return db.prepare(`
     SELECT e.*,
       (SELECT COUNT(*) FROM wallets w WHERE w.entity_id=e.id) AS walletCount
     FROM entities e ORDER BY e.risk_score DESC, e.incidents DESC
-  `).all().map(e => ({
-    ...e, riskScore:e.risk_score, followerLosses:e.follower_losses, xHandle:e.x_handle,
-    walletCount:e.walletCount, createdAt:e.created_at
-  }));
+  `).all().map(e=>{
+    const perf=performance.get(e.id)||{
+      tokens:0,pricedTokens:0,profitKnown:false,
+      profitUsd:null,avgProfitUsd:null,profitEstimated:false
+    };
+    const consistencyStats=consistency.get(e.id)||{
+      wins:0,losses:0,flat:0,open:0,closedTokens:0,
+      winRateKnown:false,winRate:null,medianProfitUsd:null
+    };
+    return {
+      ...e,
+      riskScore:e.risk_score,
+      followerLosses:e.follower_losses,
+      xHandle:e.x_handle,
+      walletCount:e.walletCount,
+      createdAt:e.created_at,
+      performanceTokens:perf.tokens,
+      pricedTokens:perf.pricedTokens,
+      profitKnown:perf.profitKnown,
+      profitUsd:perf.profitUsd,
+      avgProfitUsd:perf.avgProfitUsd,
+      medianProfitUsd:consistencyStats.medianProfitUsd,
+      profitEstimated:perf.profitEstimated,
+      wins:consistencyStats.wins,
+      losses:consistencyStats.losses,
+      flat:consistencyStats.flat,
+      openTokens:consistencyStats.open,
+      closedTokens:consistencyStats.closedTokens,
+      winRateKnown:consistencyStats.winRateKnown,
+      winRate:consistencyStats.winRate
+    };
+  });
 }
+/* SHADOW_ENTITY_PROFIT_V2413_SERVER_END */
+
+/* SHADOW_TOKENS_REAL_AGE_V265 */
+const TOKENS_PERIOD_CACHE_MS=60000;
+let tokensPeriodCache={at:0,key:'',byMint:new Map()};
+
+function pctFromPrices(nowPrice,oldPrice){
+  const a=Number(nowPrice),b=Number(oldPrice);
+  if(!Number.isFinite(a)||a<=0||!Number.isFinite(b)||b<=0)return null;
+  return ((a-b)/b)*100;
+}
+
+function oneMinuteChange(db,tokenId,currentPrice,nowMs){
+  const newestAllowed=new Date(nowMs-55000).toISOString();
+  const oldestAllowed=new Date(nowMs-180000).toISOString();
+  const row=db.prepare(`
+    SELECT price_usd AS price
+    FROM market_snapshots
+    WHERE token_id=?
+      AND created_at>=?
+      AND created_at<=?
+      AND price_usd>0
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).get(tokenId,oldestAllowed,newestAllowed);
+  return row?pctFromPrices(currentPrice,row.price):null;
+}
+
+function normalizeCreationMs(value){
+  if(value==null||value==='')return null;
+
+  const numeric=Number(value);
+  if(Number.isFinite(numeric)&&numeric>0){
+    const ms=numeric<1e12?numeric*1000:numeric;
+    if(ms>=1230768000000 && ms<=Date.now()+86400000)return ms;
+  }
+
+  const parsed=Date.parse(String(value));
+  if(Number.isFinite(parsed) && parsed>=1230768000000 && parsed<=Date.now()+86400000){
+    return parsed;
+  }
+
+  return null;
+}
+
+function sleep(ms){
+  return new Promise(resolve=>setTimeout(resolve,ms));
+}
+
+async function pumpTokenCreatedAt(mint){
+  const url=`https://frontend-api-v3.pump.fun/coins-v2/${encodeURIComponent(mint)}`;
+
+  for(let attempt=0;attempt<3;attempt++){
+    try{
+      const response=await fetch(url,{
+        headers:{
+          accept:'application/json',
+          'user-agent':'ShadowIntelligence/0.6'
+        },
+        signal:AbortSignal.timeout(6500)
+      });
+
+      if(response.ok){
+        const body=await response.json();
+        const data=Array.isArray(body)
+          ? body[0]
+          : (body?.data&&typeof body.data==='object' ? body.data : body);
+
+        const createdMs=normalizeCreationMs(
+          data?.created_timestamp ??
+          data?.createdTimestamp ??
+          data?.created_at ??
+          data?.createdAt
+        );
+
+        if(createdMs)return createdMs;
+      }
+
+      if(response.status!==429 && response.status<500)return null;
+    }catch{}
+
+    if(attempt<2)await sleep(attempt===0?300:800);
+  }
+
+  return null;
+}
+
+async function mapLimit(items,limit,worker){
+  if(!items.length)return [];
+  const out=new Array(items.length);
+  let cursor=0;
+
+  async function run(){
+    while(true){
+      const index=cursor++;
+      if(index>=items.length)return;
+      out[index]=await worker(items[index],index);
+    }
+  }
+
+  await Promise.all(
+    Array.from({length:Math.min(Math.max(1,limit),items.length)},run)
+  );
+  return out;
+}
+
+function isPumpToken(row,market){
+  return !!row?.is_pump ||
+    !!market?.isPump ||
+    String(row?.mint||'').toLowerCase().endsWith('pump');
+}
+
+async function resolveTokenCreationTimes(db,rows,markets){
+  const result=new Map();
+  const update=db.prepare(`
+    UPDATE tokens
+    SET token_created_at=?,token_age_source=?
+    WHERE id=?
+  `);
+
+  const unresolved=[];
+
+  for(const row of rows){
+    const mint=String(row?.mint||'').trim();
+    if(!mint)continue;
+
+    const market=markets.get(mint);
+    const pump=isPumpToken(row,market);
+
+    const saved=String(row?.token_created_at||'').trim();
+    const savedMs=Date.parse(saved);
+    const savedSource=String(row?.token_age_source||'').trim();
+
+    // Pump tokens: ONLY trust Pump's actual coin creation timestamp.
+    // Never trust a PumpSwap/Raydium pair timestamp as the token's age.
+    if(
+      pump &&
+      savedSource==='pump_created_timestamp' &&
+      saved &&
+      Number.isFinite(savedMs)
+    ){
+      result.set(mint,{createdAt:saved,source:savedSource});
+      continue;
+    }
+
+    // Non-Pump assets may use the persisted earliest-market timestamp.
+    if(
+      !pump &&
+      saved &&
+      Number.isFinite(savedMs) &&
+      savedSource!=='shadow_observed'
+    ){
+      result.set(mint,{createdAt:saved,source:savedSource||'saved'});
+      continue;
+    }
+
+    unresolved.push({row,market,pump});
+  }
+
+  // Conservative concurrency so Pump API does not get hammered/rate-limited.
+  await mapLimit(unresolved,4,async item=>{
+    const {row,market,pump}=item;
+    const mint=String(row?.mint||'').trim();
+
+    let createdMs=null;
+    let source='';
+
+    if(pump){
+      createdMs=await pumpTokenCreatedAt(mint);
+
+      if(createdMs){
+        source='pump_created_timestamp';
+      }else{
+        // IMPORTANT:
+        // do NOT fall back to PumpSwap/Raydium pairCreatedAt for Pump tokens.
+        // That timestamp can be the migration/pool age, not the coin age.
+        result.set(mint,{createdAt:null,source:'pump_age_unavailable'});
+        try{update.run('', 'pump_age_unavailable', row.id)}catch{}
+        return;
+      }
+    }else{
+      const pairMs=normalizeCreationMs(market?.marketCreatedAtMs);
+      if(pairMs){
+        createdMs=pairMs;
+        source='earliest_market_pair';
+      }
+    }
+
+    if(createdMs){
+      const iso=new Date(createdMs).toISOString();
+      result.set(mint,{createdAt:iso,source});
+      try{update.run(iso,source,row.id)}catch{}
+    }else{
+      result.set(mint,{createdAt:null,source:''});
+    }
+  });
+
+  return result;
+}
+
+async function tokensWithMarketPeriods(db,items){
+  const rows=Array.isArray(items)?items:[];
+  const mints=[...new Set(rows.map(row=>String(row?.mint||'').trim()).filter(Boolean))];
+  if(!mints.length)return rows;
+
+  const key=mints.slice().sort().join(',');
+  const nowMs=Date.now();
+  const age=nowMs-Number(tokensPeriodCache.at||0);
+
+  if(tokensPeriodCache.key!==key || age>=TOKENS_PERIOD_CACHE_MS){
+    const markets=await getTokenMarketsBatch(mints);
+    const creation=await resolveTokenCreationTimes(db,rows,markets);
+    const byMint=new Map();
+
+    const latestSnapshot=db.prepare(`
+      SELECT created_at
+      FROM market_snapshots
+      WHERE token_id=?
+      ORDER BY created_at DESC
+      LIMIT 1
+    `);
+
+    const insertSnapshot=db.prepare(`
+      INSERT INTO market_snapshots
+        (id,token_id,price_usd,price_change,market_cap,liquidity_usd,created_at)
+      VALUES (?,?,?,?,?,?,?)
+    `);
+
+    const nowIsoValue=new Date(nowMs).toISOString();
+
+    for(const row of rows){
+      const mint=String(row?.mint||'').trim();
+      if(!mint)continue;
+
+      const market=markets.get(mint);
+      const created=creation.get(mint)||{createdAt:null,source:''};
+
+      if(!market){
+        byMint.set(mint,{
+          m1:null,m5:null,h1:null,h6:null,h24:null,
+          marketCap:Number(row.market_cap||0),
+          createdAt:created.createdAt,
+          ageSource:created.source
+        });
+        continue;
+      }
+
+      const strict=value=>{
+        if(value==null)return null;
+        const n=Number(value);
+        return Number.isFinite(n)?n:null;
+      };
+
+      const price=Number(market.priceUsd||0);
+      let m1=null;
+
+      if(row.id && Number.isFinite(price) && price>0){
+        m1=oneMinuteChange(db,row.id,price,nowMs);
+
+        const last=latestSnapshot.get(row.id);
+        const lastAt=last?.created_at?new Date(last.created_at).getTime():0;
+
+        if(!lastAt || nowMs-lastAt>=55000){
+          insertSnapshot.run(
+            id('mkt_'),
+            row.id,
+            price,
+            strict(market.priceChange1h),
+            Number(market.marketCap||0),
+            Number(market.liquidityUsd||0),
+            nowIsoValue
+          );
+        }
+      }
+
+      byMint.set(mint,{
+        m1,
+        m5:strict(market.priceChange5m),
+        h1:strict(market.priceChange1h),
+        h6:strict(market.priceChange6h),
+        h24:strict(market.priceChange24h),
+        marketCap:Number.isFinite(Number(market.marketCap))
+          ? Number(market.marketCap)
+          : Number(row.market_cap||0),
+        createdAt:created.createdAt,
+        ageSource:created.source
+      });
+    }
+
+    tokensPeriodCache={at:nowMs,key,byMint};
+  }
+
+  return rows.map(row=>{
+    const p=tokensPeriodCache.byMint.get(String(row.mint))||{};
+    const hasCreatedAt=Object.prototype.hasOwnProperty.call(p,'createdAt');
+
+    return {
+      ...row,
+      price_change_1m:p.m1??null,
+      price_change_5m:p.m5??null,
+      price_change_1h:p.h1??null,
+      price_change_6h:p.h6??null,
+      price_change_24h:p.h24??null,
+      price_change:p.h1??row.price_change??null,
+      market_cap:p.marketCap??row.market_cap,
+
+      // If Pump lookup failed, return null instead of reviving an old
+      // incorrect pair/migration timestamp from the DB row.
+      token_created_at:hasCreatedAt?p.createdAt:(row.token_created_at||null),
+      token_age_source:p.ageSource??row.token_age_source??'',
+
+      price_change_live_at:new Date(tokensPeriodCache.at).toISOString()
+    };
+  });
+}
+/* SHADOW_TOKENS_REAL_AGE_V265_END */
+
 function feedRows(db, limit = 30) {
   return db.prepare(`
     SELECT i.id,i.type,i.title,i.detail,i.severity,i.value,i.created_at AS createdAt,
@@ -441,14 +1268,50 @@ async function api(req, res, db, url, live) {
     const alerts = db.prepare("SELECT COUNT(*) AS n FROM incidents WHERE severity IN ('high','critical')").get().n;
     const losses = db.prepare('SELECT COALESCE(SUM(follower_losses),0) AS n FROM entities').get().n;
     const wallets = db.prepare('SELECT COUNT(*) AS n FROM wallets').get().n;
-    const entities=entityRows(db); const selected=entities[0]||null;
+    const solUsd=await currentSolUsd();
+    const entities=entityRows(db,{solUsd}); const selected=entities[0]||null;
     const selectedWallets=selected?db.prepare('SELECT * FROM wallets WHERE entity_id=? ORDER BY created_at').all(selected.id):[];
-    const solUsd=selected?await currentSolUsd():0;
     const selectedTokens=selected?entityTokenPnlRows(db,selected.id,8,solUsd):[];
     return json(res,200,{ stats:{trackedEntities:tracked,activeAlerts:alerts,estimatedFollowerLosses:losses,linkedWallets:wallets}, feed:feedRows(db,20), leaderboard:entities.slice(0,8), groups:groups(db), selected, selectedWallets, selectedTokens });
   }
   if (route === '/api/feed' && method === 'GET') return json(res,200,{items:feedRows(db,Math.min(Number(url.searchParams.get('limit'))||50,100))});
-  if (route === '/api/entities' && method === 'GET') return json(res,200,{items:entityRows(db)});
+  /* SHADOW_ENTITIES_CARD_INFO_V2417_SERVER */
+  if (route === '/api/entities' && method === 'GET') {
+    const solUsd=await currentSolUsd();
+    const viewer=userFor(req,db);
+
+    const copyByEntity=new Map(
+      viewer
+        ? db.prepare(`
+            SELECT entity_id AS entityId,enabled,engine_state AS engineState
+            FROM copy_subscriptions
+            WHERE user_id=?
+          `).all(viewer.id).map(row=>[row.entityId,row])
+        : []
+    );
+
+    const mainWalletStmt=db.prepare(`
+      SELECT address
+      FROM wallets
+      WHERE entity_id=?
+      ORDER BY created_at ASC
+      LIMIT 1
+    `);
+
+    const items=entityRows(db,{solUsd}).map(entity=>{
+      const mainWallet=mainWalletStmt.get(entity.id);
+      const copy=copyByEntity.get(entity.id);
+      return {
+        ...entity,
+        mainWalletAddress:mainWallet?.address||'',
+        copyTradingActive:!!copy?.enabled,
+        copyTradingState:copy?.engineState||''
+      };
+    });
+
+    return json(res,200,{items});
+  }
+  /* SHADOW_ENTITIES_CARD_INFO_V2417_SERVER_END */
   if (route === '/api/entities' && method === 'POST') {
     if (!requireOwner(req,res,db)) return;
     const b=await readJson(req); const name=clean(b.name,80); if(!name)return json(res,400,{error:'Name required'});
@@ -661,6 +1524,17 @@ async function api(req, res, db, url, live) {
     try { return json(res,200,await live.syncEntity(parts[2])); }
     catch(error){ return json(res,502,{error:error.message}); }
   }
+  /* SHADOW_TOP_24H_MOVERS_V250_API */
+  if (route === '/api/market/movers' && method === 'GET') {
+    try {
+      return json(res,200,await topMovers24h(db));
+    } catch(error) {
+      console.error('Top 24H movers failed:',error);
+      return json(res,200,{items:[],asOf:nowIso(),windowHours:1,error:'Market mover temporarily unavailable'});
+    }
+  }
+  /* SHADOW_TOP_24H_MOVERS_V250_API_END */
+
   /* SHADOW_CURRENT_HOLDINGS_V219_API */
   if (route === '/api/tokens' && method === 'GET') {
     const items=db.prepare(`
@@ -720,8 +1594,9 @@ async function api(req, res, db, url, live) {
       ORDER BY COALESCE(t.last_market_at,t.created_at) DESC
     `).all();
 
+    const strict1hItems=await tokensWithMarketPeriods(db,items);
     return json(res,200,{
-      items,
+      items:strict1hItems,
       mode:'current-entity-holdings',
       authoritative:true
     });

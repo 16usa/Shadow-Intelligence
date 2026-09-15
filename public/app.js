@@ -1829,7 +1829,25 @@ function pumpTokenLink(token,label){
 }
 /* SHADOW_PUMP_LINKS_V217_END */
 
-function focusHtml(e){const d=state.details.get(e.id),ws=d?.wallets?.length??e.walletCount??0,ts=d?.tokens?.length??0;return`<div class="si-focus-main">${avatar(e,'lg')}<div><h3>${esc(e.name)}</h3><p>${esc(e.x_handle||'')} · ${e.confidence||0}% confidence</p></div></div><div class="si-metrics"><div class="si-metric"><strong>${ws}</strong><small>Wallets</small></div><div class="si-metric"><strong>${ts}</strong><small>Tokens</small></div><div class="si-metric"><strong>${e.riskScore||0}</strong><small>Signal</small></div></div>`}
+/* SHADOW_ENTITY_PROFIT_V2413_APP */
+function entityMetricMoney(e,key){
+  if(!e?.profitKnown)return '—';
+  const value=Number(e[key]);
+  return Number.isFinite(value)?money(value):'—';
+}
+function entityMetricClass(e,key){
+  if(!e?.profitKnown)return '';
+  const value=Number(e[key]);
+  return value>0?'pos':value<0?'neg':'';
+}
+function entityHandleHtml(e){
+  const handle=String(e?.x_handle||e?.xHandle||'').trim();
+  const name=String(e?.name||'').trim();
+  if(!handle||handle.toLowerCase()===name.toLowerCase())return '';
+  return `<p>${esc(handle)}</p>`;
+}
+function focusHtml(e){return`<div class="si-focus-main">${avatar(e,'lg')}<div><h3>${esc(e.name)}</h3>${entityHandleHtml(e)}</div></div><div class="si-metrics"><div class="si-metric"><strong class="${entityMetricClass(e,'profitUsd')}">${entityMetricMoney(e,'profitUsd')}</strong><small>Profit</small></div><div class="si-metric"><strong>${Number(e.performanceTokens||0)}</strong><small>Tokens</small></div><div class="si-metric"><strong class="${entityMetricClass(e,'avgProfitUsd')}">${entityMetricMoney(e,'avgProfitUsd')}</strong><small>Avg / Token</small></div></div>`}
+/* SHADOW_ENTITY_PROFIT_V2413_APP_END */
 function eventHtml(x){
   const type=String(x.type||'activity').toLowerCase(),sell=type.includes('sell')||type==='send',tr=type.includes('transfer')||type==='receive';
   const title=(x.title||type).replace(/^./,c=>c.toUpperCase());
@@ -1839,7 +1857,300 @@ function eventHtml(x){
 function renderLive(items){$('#overviewLive').innerHTML=(items||[]).slice(0,8).map(eventHtml).join('')||'<div class="guest-note">Waiting for live activity.</div>'}
 function renderEntitiesStrip(){const arr=state.entities.slice(0,4);$('#entityStrip').innerHTML=arr.map(e=>`<div class="si-entity-chip" data-open="${e.id}">${avatar(e,'sm')}<div><strong>${esc(e.name)}</strong><small>${esc(e.x_handle||'')} · ${e.walletCount||0} wallets</small></div></div>`).join('')||'<div class="guest-note">No tracked entities.</div>';$$('[data-open]',$('#entityStrip')).forEach(x=>x.onclick=()=>openObject('entity',{id:x.dataset.open}))}
 function renderConnections(model){const pairs=[];model.tokens.slice(0,12).forEach(t=>pairs.push(`${t.symbol||t.name||'Token'} ↔ ${short(t.mint)}`));$('#connectionStrip').innerHTML=pairs.map(x=>`<span class="si-connection">${esc(x)}</span>`).join('')||'<span class="guest-note">Connections appear after wallet activity.</span>'}
-function renderEntities(q=''){const query=(q||'').toLowerCase();const a=state.entities.filter(e=>!query||[e.name,e.x_handle,e.notes].join(' ').toLowerCase().includes(query));$('#entitiesGrid').innerHTML=a.map(e=>`<article class="si-panel si-entity-card" data-entity="${e.id}"><div class="si-card-top">${avatar(e,'lg')}<div><h3>${esc(e.name)}</h3><p>${esc(e.x_handle||'')} · ${e.confidence||0}% confidence</p></div></div><div class="si-card-stats"><div class="si-card-stat"><strong>${e.walletCount||0}</strong><small>Wallets</small></div><div class="si-card-stat"><strong>${e.incidents||0}</strong><small>Events</small></div><div class="si-card-stat"><strong>${e.riskScore||0}</strong><small>Signal</small></div></div></article>`).join('')||'<div class="guest-note">No entities found.</div>';$$('[data-entity]').forEach(x=>x.onclick=()=>openObject('entity',{id:x.dataset.entity}))}
+
+/* SHADOW_ENTITIES_PROFIT_SORT_V2415 */
+/* SHADOW_ENTITIES_OVERALL_RANK_V2421 */
+function entityMetricPercentile(entity,key,{knownKey=''}={}){
+  const population=Array.isArray(state.entities)?state.entities:[];
+  const entityValue=Number(entity?.[key]);
+
+  if(
+    (knownKey && entity?.[knownKey]===false) ||
+    !Number.isFinite(entityValue)
+  ) return 50;
+
+  const values=population
+    .filter(row=>!(knownKey && row?.[knownKey]===false))
+    .map(row=>Number(row?.[key]))
+    .filter(Number.isFinite)
+    .sort((a,b)=>a-b);
+
+  if(values.length<=1)return 50;
+
+  let below=0;
+  let equal=0;
+  for(const value of values){
+    if(value<entityValue)below++;
+    else if(value===entityValue)equal++;
+  }
+
+  return ((below + Math.max(0,equal-1)/2) / (values.length-1))*100;
+}
+
+function entityOverallScore(entity){
+  const profit=entityMetricPercentile(entity,'profitUsd',{knownKey:'profitKnown'});
+  const winRate=entityMetricPercentile(entity,'winRate',{knownKey:'winRateKnown'});
+  const median=entityMetricPercentile(entity,'medianProfitUsd');
+  const avg=entityMetricPercentile(entity,'avgProfitUsd');
+
+  const raw=
+    profit*.40+
+    winRate*.30+
+    median*.20+
+    avg*.10;
+
+  const closed=Math.max(0,Number(entity?.closedTokens||0));
+  const reliability=Math.min(1,Math.sqrt(closed/12));
+  const confidenceWeight=.5+(.5*reliability);
+  const adjusted=50+((raw-50)*confidenceWeight);
+
+  return Number(Math.max(0,Math.min(100,adjusted)).toFixed(2));
+}
+
+function entityProfitSort(a,b){
+  const scoreDiff=entityOverallScore(b)-entityOverallScore(a);
+  if(Math.abs(scoreDiff)>1e-9)return scoreDiff;
+
+  const profitDiff=Number(b?.profitUsd||0)-Number(a?.profitUsd||0);
+  if(Math.abs(profitDiff)>1e-9)return profitDiff;
+
+  const winDiff=Number(b?.winRate||0)-Number(a?.winRate||0);
+  if(Math.abs(winDiff)>1e-9)return winDiff;
+
+  const medianDiff=Number(b?.medianProfitUsd||0)-Number(a?.medianProfitUsd||0);
+  if(Math.abs(medianDiff)>1e-9)return medianDiff;
+
+  return String(a?.name||'').localeCompare(String(b?.name||''));
+}
+/* SHADOW_ENTITIES_OVERALL_RANK_V2421_END */
+/* SHADOW_ENTITIES_PROFIT_SORT_V2415_END */
+
+/* SHADOW_ENTITIES_RANK_V2416 */
+/* SHADOW_ENTITIES_CARD_INFO_V2417_APP */
+
+/* SHADOW_ENTITIES_PODIUM_V2419_APP */
+function entityPodiumClass(rank){
+  const n=Number(rank||0);
+  return n===1?'si-podium-gold':n===2?'si-podium-silver':n===3?'si-podium-bronze':'';
+}
+/* SHADOW_ENTITIES_PODIUM_V2419_APP_END */
+
+/* SHADOW_ENTITY_PERFORMANCE_V2420_APP */
+
+/* SHADOW_ENTITY_METRIC_INFO_V2422B_APP */
+const ENTITY_METRIC_INFO={
+  profit:{
+    title:'Profit',
+    body:'Total dollar P&L for the Entity across all priced token positions. Positive means net profit. Negative means net loss.'
+  },
+  winRate:{
+    title:'Win Rate',
+    body:'Percentage of CLOSED token positions that finished positive. Open positions are excluded. Formula: Wins / (Wins + Losses + Flat).'
+  },
+  tokens:{
+    title:'Tokens',
+    body:'Number of distinct token positions tracked for this Entity.'
+  },
+  wins:{
+    title:'Wins',
+    body:'Fully closed token positions that finished with positive P&L.'
+  },
+  losses:{
+    title:'Losses',
+    body:'Fully closed token positions that finished with negative P&L.'
+  },
+  open:{
+    title:'Open',
+    body:'Token positions that are still open and therefore are not counted in Win Rate yet.'
+  },
+  flat:{
+    title:'Flat',
+    body:'Fully closed token positions that finished approximately break-even.'
+  },
+  avgToken:{
+    title:'Avg / Token',
+    body:'Average P&L per token position. A few very large winners or losers can move this number substantially.'
+  },
+  medianToken:{
+    title:'Median / Token',
+    body:'The middle token result after sorting all token P&Ls. It shows the typical result and is much less affected by one unusually large winner.'
+  }
+};
+
+function entityMetricInfoButton(key,label){
+  const info=ENTITY_METRIC_INFO[key];
+  if(!info)return esc(label||'');
+  return `<span class="si-metric-label-with-info">
+    <span>${esc(label||info.title)}</span>
+    <button
+      type="button"
+      class="si-info-badge"
+      data-entity-info="${esc(key)}"
+      aria-label="About ${esc(info.title)}"
+      title="About ${esc(info.title)}"
+    >i</button>
+  </span>`;
+}
+
+/* SHADOW_ENTITY_INFO_RETURN_V2424_APP */
+function closeEntityMetricInfo(){
+  const layer=document.querySelector('.si-entity-info-layer');
+  if(!layer)return false;
+  layer.remove();
+  return true;
+}
+
+function showEntityMetricInfo(key){
+  const info=ENTITY_METRIC_INFO[key];
+  if(!info)return;
+
+  const host=$('#modalBody');
+  if(!host)return;
+
+  host.querySelector('.si-entity-info-layer')?.remove();
+
+  const layer=document.createElement('div');
+  layer.className='si-entity-info-layer';
+  layer.innerHTML=`<div class="si-info-sheet">
+    <div class="si-info-sheet-head">${esc(info.title)}</div>
+    <div class="si-info-sheet-body">${esc(info.body)}</div>
+    <div class="si-info-sheet-actions">
+      <button type="button" class="si-button primary" id="closeEntityInfoSheet">OK</button>
+    </div>
+  </div>`;
+
+  host.appendChild(layer);
+
+  const closeBtn=layer.querySelector('#closeEntityInfoSheet');
+  if(closeBtn)closeBtn.onclick=()=>closeEntityMetricInfo();
+}
+/* SHADOW_ENTITY_INFO_RETURN_V2424_APP_END */
+
+if(!window.__shadowEntityMetricInfoBound){
+  window.__shadowEntityMetricInfoBound=true;
+  document.addEventListener('click',event=>{
+    const button=event.target?.closest?.('[data-entity-info]');
+    if(!button)return;
+    event.preventDefault();
+    event.stopPropagation();
+    showEntityMetricInfo(button.dataset.entityInfo);
+  });
+}
+/* SHADOW_ENTITY_METRIC_INFO_V2422B_APP_END */
+
+function entityWinRateText(e){
+  if(!e?.winRateKnown||!Number.isFinite(Number(e?.winRate)))return '—';
+  const value=Number(e.winRate);
+  return `${value.toFixed(value%1?1:0)}%`;
+}
+
+function entityPerformanceMoney(value){
+  const n=Number(value);
+  return Number.isFinite(n)?money(n):'—';
+}
+
+function entityPerformanceMoneyClass(value){
+  const n=Number(value);
+  return !Number.isFinite(n)?'':n>0?'pos':n<0?'neg':'';
+}
+
+function entityPerformanceBreakdownHtml(e){
+  return `<div class="si-entity-performance-breakdown">
+    <div class="si-performance-counts">
+      <div><strong>${Number(e?.wins||0)}</strong><small>${entityMetricInfoButton('wins','Wins')}</small></div>
+      <div><strong>${Number(e?.losses||0)}</strong><small>${entityMetricInfoButton('losses','Losses')}</small></div>
+      <div><strong>${Number(e?.openTokens||0)}</strong><small>${entityMetricInfoButton('open','Open')}</small></div>
+      <div><strong>${Number(e?.flat||0)}</strong><small>${entityMetricInfoButton('flat','Flat')}</small></div>
+    </div>
+    <div class="si-performance-money">
+      <div>
+        <span>${entityMetricInfoButton('avgToken','Avg / Token')}</span>
+        <strong class="${entityPerformanceMoneyClass(e?.avgProfitUsd)}">${entityPerformanceMoney(e?.avgProfitUsd)}</strong>
+      </div>
+      <div>
+        <span>${entityMetricInfoButton('medianToken','Median / Token')}</span>
+        <strong class="${entityPerformanceMoneyClass(e?.medianProfitUsd)}">${entityPerformanceMoney(e?.medianProfitUsd)}</strong>
+      </div>
+    </div>
+  </div>`;
+}
+/* SHADOW_ENTITY_PERFORMANCE_V2420_APP_END */
+
+function entityCardMainWalletHtml(e){
+  const address=String(e?.mainWalletAddress||'').trim();
+  if(!address){
+    return `<div class="si-entity-card-main-wallet" style="display:flex;align-items:center;gap:8px;min-width:0;opacity:.58">
+      <span style="white-space:nowrap">Main Wallet</span>
+      <span>-</span>
+    </div>`;
+  }
+
+  return `<div class="si-entity-card-main-wallet" style="display:flex;align-items:center;gap:8px;min-width:0;opacity:.64">
+    <span style="white-space:nowrap">Main Wallet</span>
+    <span aria-hidden="true">·</span>
+    ${walletAddressCopyHtml(address)}
+  </div>`;
+}
+
+function entityCardCopyStatusHtml(e){
+  const active=!!e?.copyTradingActive;
+  return `<div class="si-entity-card-copy-status" style="display:flex;align-items:center;gap:7px;white-space:nowrap;opacity:${active?'1':'.58'}">
+    <i class="si-copy-dot ${active?'live':''}" aria-hidden="true"></i>
+    <span>Copy trade · ${active?'Active':'Off'}</span>
+  </div>`;
+}
+
+/* SHADOW_ENTITIES_CARD_CLEAN_V2423B */
+function renderEntities(q=''){
+  const query=(q||'').toLowerCase();
+
+  const ranked=state.entities
+    .slice()
+    .sort(entityProfitSort)
+    .map((e,index)=>({...e,entityRank:index+1}));
+
+  const a=ranked.filter(e=>
+    !query||[e.name,e.x_handle,e.notes,e.mainWalletAddress].join(' ').toLowerCase().includes(query)
+  );
+
+  $('#entitiesGrid').innerHTML=a.map(e=>`
+    <article class="si-panel si-entity-card ${entityPodiumClass(e.entityRank)}" data-entity="${e.id}" style="position:relative">
+      <span
+        class="si-entity-rank"
+        aria-label="Rank ${e.entityRank}"
+        title="Overall performance rank"
+        style="position:absolute;top:18px;right:18px;font-size:14px;font-weight:700;line-height:1;letter-spacing:.01em;opacity:.52;pointer-events:none"
+      >#${e.entityRank}</span>
+
+      <div class="si-card-top">
+        ${avatar(e,'lg')}
+        <div>
+          <h3>${esc(e.name)}</h3>
+          ${entityHandleHtml(e)}
+        </div>
+      </div>
+
+      <div class="si-card-stats">
+        <div class="si-card-stat">
+          <strong class="${entityMetricClass(e,'profitUsd')}">${entityMetricMoney(e,'profitUsd')}</strong>
+          <small>Profit</small>
+        </div>
+        <div class="si-card-stat" title="${Number(e.wins||0)} wins · ${Number(e.losses||0)} losses · ${Number(e.flat||0)} flat">
+          <strong>${entityWinRateText(e)}</strong>
+          <small>Win Rate</small>
+        </div>
+        <div class="si-card-stat">
+          <strong>${Number(e.performanceTokens||0)}</strong>
+          <small>Tokens</small>
+        </div>
+      </div>
+    </article>
+  `).join('')||'<div class="guest-note">No entities found.</div>';
+
+  $$('[data-entity]').forEach(x=>x.onclick=()=>openObject('entity',{id:x.dataset.entity}));
+  bindWalletAddressCopy($('#entitiesGrid'));
+}
+/* SHADOW_ENTITIES_CARD_INFO_V2417_APP_END */
 /* SHADOW_WALLETS_IN_ADMIN_V233_APP */
 async function renderWalletInventory(targetSelector='#walletsAdminTable'){
   if(!['owner','admin'].includes(state.user?.role))return;
@@ -1988,7 +2299,346 @@ function siTokenAvatarHtml(token){
   return avatar(siStableTokenAvatarModel(token),'md');
 }
 /* SHADOW_TOKEN_AVATAR_STABILITY_V2411_END */
-function renderTokens(){const a=state.tokens;$('#tokensGrid').innerHTML=a.map(t=>`<article class="si-panel si-token-card" data-token="${esc(t.mint)}">${siTokenAvatarHtml(t)}<div><span class="si-token-symbol">${pumpTokenLink(t,t.symbol||'TOKEN')}</span><p>${esc(t.name||'Unknown')}<br><small>${short(t.mint)}</small></p><small>${t.is_pump?'Pump.fun / PumpSwap':esc(t.dex_id||'Solana')} · MC ${money(t.market_cap||0)}</small></div><strong class="${Number(t.price_change)>=0?'pos':'neg'}">${Number(t.price_change)>=0?'+':''}${Number(t.price_change||0).toFixed(1)}%</strong></article>`).join('')||'<div class="guest-note">Tokens appear after observed activity.</div>';$$('[data-token]').forEach(x=>x.onclick=event=>{if(event.target.closest('[data-pump-token-link]'))return;openObject('token',{mint:x.dataset.token})})}
+/* SHADOW_TOKENS_JOINT_RANK_V269_START */
+let tokenPeriod=(()=>{
+  try{
+    const saved=localStorage.getItem('si-token-period');
+    if(['m1','m5','h1','h6','h24'].includes(saved))return saved;
+
+    const legacy=localStorage.getItem('si-token-sort');
+    if(['m1','m5','h1','h6','h24'].includes(legacy))return legacy;
+    if(legacy==='top1h')return 'h1';
+
+    return 'h1';
+  }catch{
+    return 'h1';
+  }
+})();
+
+let tokenAgeDirection=(()=>{
+  try{
+    return localStorage.getItem('si-token-age-direction')==='oldest'
+      ? 'oldest'
+      : 'youngest';
+  }catch{
+    return 'youngest';
+  }
+})();
+
+let tokenMcDirection=(()=>{
+  try{
+    return localStorage.getItem('si-token-mc-direction')==='asc'
+      ? 'asc'
+      : 'desc';
+  }catch{
+    return 'desc';
+  }
+})();
+
+function tokenSortNumber(value,fallback=null){
+  if(value==null||value==='')return fallback;
+  const n=Number(value);
+  return Number.isFinite(n)?n:fallback;
+}
+
+function tokenCreatedTimestamp(token){
+  const raw=token?.token_created_at||token?.token_market_created_at||'';
+  const value=Date.parse(raw);
+  return Number.isFinite(value)?value:0;
+}
+
+function tokenAgeLabel(token){
+  const created=tokenCreatedTimestamp(token);
+  if(!created)return '—';
+
+  const minutes=Math.max(0,Math.floor((Date.now()-created)/60000));
+  if(minutes<1)return '<1m';
+  if(minutes<60)return `${minutes}m`;
+
+  const hours=Math.floor(minutes/60);
+  if(hours<24)return `${hours}h`;
+
+  const days=Math.floor(hours/24);
+  if(days<30)return `${days}d`;
+
+  const months=Math.floor(days/30);
+  if(months<12)return `${months}mo`;
+
+  return `${Math.floor(days/365)}y`;
+}
+
+function tokenChangeForPeriod(token,period=tokenPeriod){
+  if(period==='m1')return token?.price_change_1m;
+  if(period==='m5')return token?.price_change_5m;
+  if(period==='h1')return token?.price_change_1h ?? token?.price_change;
+  if(period==='h6')return token?.price_change_6h;
+  if(period==='h24')return token?.price_change_24h;
+  return token?.price_change_1h ?? token?.price_change;
+}
+
+function tokenRankKey(token,index){
+  return String(token?.mint||token?.id||`row-${index}`);
+}
+
+function buildPercentileRanks(rows,valueGetter,direction='desc',validGetter=null){
+  const ranked=[];
+
+  rows.forEach((token,index)=>{
+    const value=valueGetter(token);
+    const valid=validGetter ? !!validGetter(value,token) : Number.isFinite(value);
+
+    if(valid){
+      ranked.push({
+        key:tokenRankKey(token,index),
+        value:Number(value),
+        index
+      });
+    }
+  });
+
+  ranked.sort((a,b)=>{
+    if(a.value===b.value)return a.index-b.index;
+    return direction==='asc'
+      ? a.value-b.value
+      : b.value-a.value;
+  });
+
+  const scores=new Map();
+  const n=ranked.length;
+
+  if(!n)return scores;
+  if(n===1){
+    scores.set(ranked[0].key,1);
+    return scores;
+  }
+
+  // Same raw value receives the same percentile score.
+  let cursor=0;
+  while(cursor<n){
+    let end=cursor+1;
+    while(end<n && ranked[end].value===ranked[cursor].value)end++;
+
+    const mid=(cursor+(end-1))/2;
+    const score=1-(mid/(n-1));
+
+    for(let k=cursor;k<end;k++){
+      scores.set(ranked[k].key,score);
+    }
+
+    cursor=end;
+  }
+
+  return scores;
+}
+
+function sortedTokenRows(rows){
+  const out=[...(Array.isArray(rows)?rows:[])];
+
+  /*
+    TRUE JOINT SORT:
+      1) selected period price-change rank
+      2) Age rank
+      3) MC rank
+
+    All three are active at the same time with equal weight.
+    This is intentionally NOT a tie-break chain.
+  */
+
+  const priceRanks=buildPercentileRanks(
+    out,
+    token=>tokenSortNumber(tokenChangeForPeriod(token),null),
+    'desc',
+    value=>Number.isFinite(value)
+  );
+
+  const ageRanks=buildPercentileRanks(
+    out,
+    token=>tokenCreatedTimestamp(token),
+    tokenAgeDirection==='youngest'?'desc':'asc',
+    value=>Number.isFinite(value)&&value>0
+  );
+
+  const mcRanks=buildPercentileRanks(
+    out,
+    token=>tokenSortNumber(token?.market_cap,null),
+    tokenMcDirection==='desc'?'desc':'asc',
+    value=>Number.isFinite(value)&&value>0
+  );
+
+  const scored=out.map((token,index)=>{
+    const key=tokenRankKey(token,index);
+
+    // Missing data gets 0 for that criterion rather than a fake favorable rank.
+    const price=priceRanks.get(key)??0;
+    const age=ageRanks.get(key)??0;
+    const mc=mcRanks.get(key)??0;
+
+    return {
+      token,
+      index,
+      price,
+      age,
+      mc,
+      total:(price+age+mc)/3
+    };
+  });
+
+  scored.sort((a,b)=>
+    b.total-a.total
+    || b.price-a.price
+    || b.age-a.age
+    || b.mc-a.mc
+    || a.index-b.index
+  );
+
+  return scored.map(row=>row.token);
+}
+
+function ensureTokenSortControls(){
+  const grid=$('#tokensGrid');
+  if(!grid)return;
+
+  let wrap=$('#tokenSortWrap');
+  if(!wrap){
+    wrap=document.createElement('div');
+    wrap.id='tokenSortWrap';
+    wrap.className='si-token-sort-wrap';
+    grid.before(wrap);
+  }
+
+  wrap.innerHTML=`
+    <div class="si-token-sort" role="group" aria-label="Token joint sorting">
+      <button type="button" data-token-period="m1">1M</button>
+      <button type="button" data-token-period="m5">5M</button>
+      <button type="button" data-token-period="h1">1H</button>
+      <button type="button" data-token-period="h6">6H</button>
+      <button type="button" data-token-period="h24">24H</button>
+      <button type="button" data-token-age class="is-active">
+        Age ${tokenAgeDirection==='youngest'?'↓':'↑'}
+      </button>
+      <button type="button" data-token-mc class="is-active">
+        MC ${tokenMcDirection==='desc'?'↓':'↑'}
+      </button>
+    </div>`;
+
+  wrap.querySelectorAll('[data-token-period]').forEach(button=>{
+    const period=button.dataset.tokenPeriod;
+    const active=period===tokenPeriod;
+
+    button.classList.toggle('is-active',active);
+    button.setAttribute('aria-pressed',active?'true':'false');
+
+    button.onclick=()=>{
+      tokenPeriod=period;
+
+      try{
+        localStorage.setItem('si-token-period',period);
+      }catch{}
+
+      renderTokens();
+    };
+  });
+
+  const ageButton=wrap.querySelector('[data-token-age]');
+  if(ageButton){
+    ageButton.setAttribute('aria-pressed','true');
+
+    ageButton.onclick=()=>{
+      tokenAgeDirection=tokenAgeDirection==='youngest'
+        ? 'oldest'
+        : 'youngest';
+
+      try{
+        localStorage.setItem('si-token-age-direction',tokenAgeDirection);
+      }catch{}
+
+      renderTokens();
+    };
+  }
+
+  const mcButton=wrap.querySelector('[data-token-mc]');
+  if(mcButton){
+    mcButton.setAttribute('aria-pressed','true');
+
+    mcButton.onclick=()=>{
+      tokenMcDirection=tokenMcDirection==='desc'
+        ? 'asc'
+        : 'desc';
+
+      try{
+        localStorage.setItem('si-token-mc-direction',tokenMcDirection);
+      }catch{}
+
+      renderTokens();
+    };
+  }
+}
+
+function renderTokens(){
+  ensureTokenSortControls();
+
+  const a=sortedTokenRows(state.tokens);
+
+  $('#tokensGrid').innerHTML=a.map(t=>{
+    const raw=tokenChangeForPeriod(t);
+    const change=raw==null?null:Number(raw);
+    const known=Number.isFinite(change);
+    const changeClass=!known?'':change>=0?'pos':'neg';
+    const changeText=!known
+      ? '—'
+      : `${change>=0?'+':''}${change.toFixed(1)}%`;
+
+    return `<article class="si-panel si-token-card" data-token="${esc(t.mint)}">
+      ${siTokenAvatarHtml(t)}
+      <div>
+        <span class="si-token-symbol">${pumpTokenLink(t,t.symbol||'TOKEN')}</span>
+        <p>${esc(t.name||'Unknown')}<br><small>${short(t.mint)}</small></p>
+        <small>${t.is_pump?'Pump.fun / PumpSwap':esc(t.dex_id||'Solana')} · Age ${tokenAgeLabel(t)} · MC ${money(t.market_cap||0)}</small>
+      </div>
+      <strong class="${changeClass}">${changeText}</strong>
+    </article>`;
+  }).join('')||'<div class="guest-note">Tokens appear after observed activity.</div>';
+
+  $$('[data-token]').forEach(x=>x.onclick=event=>{
+    if(event.target.closest('[data-pump-token-link]'))return;
+    openObject('token',{mint:x.dataset.token});
+  });
+
+  ensureTokenSortControls();
+}
+/* SHADOW_TOKENS_JOINT_RANK_V269_END */
+/* SHADOW_TOKENS_MARKET_REFRESH_V264_START */
+let tokenMarketRefreshBusy=false;
+
+async function refreshTokensMarketData(){
+  const page=$('#page-tokens');
+  if(
+    document.hidden ||
+    !page?.classList.contains('active-page') ||
+    tokenMarketRefreshBusy
+  )return;
+
+  tokenMarketRefreshBusy=true;
+  try{
+    const data=await api('/api/tokens');
+    if(Array.isArray(data?.items)){
+      state.tokens=data.items;
+      renderTokens();
+    }
+  }catch(error){
+    console.debug('Tokens market refresh unavailable',error);
+  }finally{
+    tokenMarketRefreshBusy=false;
+  }
+}
+
+setInterval(refreshTokensMarketData,65000);
+
+document.addEventListener('visibilitychange',()=>{
+  if(!document.hidden)refreshTokensMarketData();
+});
+/* SHADOW_TOKENS_MARKET_REFRESH_V264_END */
+
 /* SHADOW_LIVE_AVATAR_STABILITY_V2410_START */
 /*
  * Live Activity rows are event objects, not entity objects.
@@ -2120,6 +2770,7 @@ function modal(html){
 }
 
 function closeModal(){
+  if(typeof closeEntityMetricInfo==='function' && closeEntityMetricInfo())return;
   state.detailGraph?.destroy();
   state.detailGraph=null;
   $('#modal').classList.add('hidden');
@@ -2129,30 +2780,101 @@ function closeModal(){
   state.graph?.schedule?.();
 }
 /* SHADOW_INSTANT_ENTITY_OPEN_V208_START */
+
 let entityOpenSeq=0;
 
+/* SHADOW_ENTITY_DETAIL_INFO_V2418 */
+function entityGlobalRank(entityId){
+  const id=String(entityId||'');
+  const ranked=state.entities.slice().sort(entityProfitSort);
+  const index=ranked.findIndex(e=>String(e?.id||'')===id);
+  return index>=0?index+1:null;
+}
+
+function entityDetailRankHtml(e){
+  const rank=entityGlobalRank(e?.id);
+  return rank
+    ? `<span class="si-entity-rank" aria-label="Rank ${rank}" title="Overall performance rank" style="position:absolute;top:24px;right:24px;font-size:18px;font-weight:700;line-height:1;opacity:.52;pointer-events:none">#${rank}</span>`
+    : '';
+}
+
+
+/* SHADOW_ENTITY_PUMP_LINK_V2425_APP */
+function entityPumpProfileLinkHtml(e,wallets=[]){
+  const address=String(e?.mainWalletAddress||wallets?.[0]?.address||'').trim();
+  if(!address)return '';
+
+  const href=`https://pump.fun/profile/${encodeURIComponent(address)}`;
+  return `<a
+    class="si-entity-pump-link"
+    href="${href}"
+    target="_blank"
+    rel="noopener noreferrer"
+    aria-label="Open Pump.fun profile"
+    title="Open Pump.fun profile"
+  ><svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M8 5h11v11M19 5 7 17M17 13v6H5V7h6"/>
+  </svg></a>`;
+}
+
+function entityDetailNameHtml(e,wallets=[]){
+  return `<div class="si-entity-name-row">
+    <h2>${esc(e?.name||'Entity')}</h2>
+    ${entityPumpProfileLinkHtml(e,wallets)}
+  </div>`;
+}
+/* SHADOW_ENTITY_PUMP_LINK_V2425_APP_END */
+
+function entityDetailMainWalletHtml(e,wallets=[]){
+  const address=String(e?.mainWalletAddress||wallets?.[0]?.address||'').trim();
+  return entityCardMainWalletHtml({...e,mainWalletAddress:address});
+}
+
+function entityDetailMetricsHtml(e){
+  return `<div class="si-metrics">
+    <div class="si-metric">
+      <strong class="${entityMetricClass(e,'profitUsd')}">${entityMetricMoney(e,'profitUsd')}</strong>
+      <small>${entityMetricInfoButton('profit','Profit')}</small>
+    </div>
+    <div class="si-metric" title="${Number(e?.wins||0)} wins · ${Number(e?.losses||0)} losses · ${Number(e?.flat||0)} flat">
+      <strong>${entityWinRateText(e)}</strong>
+      <small>${entityMetricInfoButton('winRate','Win Rate')}</small>
+    </div>
+    <div class="si-metric">
+      <strong>${Number(e?.performanceTokens||0)}</strong>
+      <small>${entityMetricInfoButton('tokens','Tokens')}</small>
+    </div>
+  </div>`;
+}
+/* SHADOW_ENTITY_DETAIL_INFO_V2418_END */
+
 function entityDetailLoading(e){
-  const wallets=Number(e?.walletCount||0);
-  const signal=Number(e?.riskScore??e?.risk_score??0);
   const handle=e?.xHandle||e?.x_handle||'';
 
   modal(`<div class="si-detail-layout">
     <aside class="si-detail-side">
-      <div class="si-panel" style="box-shadow:none">
-        ${avatar(e,'xl')}
-        <h2>${esc(e?.name||'Entity')}</h2>
-        <p>${esc(handle)} · ${e?.confidence||0}% confidence</p>
-        <div class="si-metrics">
-          <div class="si-metric"><strong>${wallets}</strong><small>Wallets</small></div>
-          <div class="si-metric"><strong>…</strong><small>Tokens</small></div>
-          <div class="si-metric"><strong>${signal}</strong><small>Signal</small></div>
+      <div class="si-panel si-entity-profile-panel ${entityPodiumClass(entityGlobalRank(e?.id))}" style="box-shadow:none;position:relative">
+        ${entityDetailRankHtml(e)}
+        <div class="si-entity-profile-avatar">${avatar(e,'xl')}</div>
+        ${entityDetailNameHtml(e,[])}
+        ${handle?`<p>${esc(handle)}</p>`:''}
+
+        <div style="margin-top:16px">
+          ${entityDetailMainWalletHtml(e,[])}
+        </div>
+
+        <div style="margin-top:16px">
+          ${entityDetailMetricsHtml(e)}
+          ${entityPerformanceBreakdownHtml(e)}
         </div>
       </div>
+
       <div class="si-panel" style="box-shadow:none;margin-top:12px">
         <div class="si-panel-head"><span>LIVE ACTIVITY</span></div>
         <div class="guest-note">Loading live activity…</div>
       </div>
     </aside>
+
     <section class="si-detail-map">
       <div class="guest-note">Loading network…</div>
     </section>
@@ -2318,16 +3040,19 @@ function entityDetail(d){
 
   modal(`<div class="si-detail-layout">
     <aside class="si-detail-side">
-      <div class="si-panel si-entity-profile-panel" style="box-shadow:none">
+      <div class="si-panel si-entity-profile-panel ${entityPodiumClass(entityGlobalRank(e?.id))}" style="box-shadow:none;position:relative">
+        ${entityDetailRankHtml(e)}
         <div class="si-entity-profile-avatar">${avatar(e,'xl')}</div>
-        <h2>${esc(e.name)}</h2>
-        <p>${esc(e.xHandle||e.x_handle||'')} · ${e.confidence||0}% confidence</p>
-        ${wallets[0]?.address?`<p>${walletAddressCopyHtml(wallets[0].address)}</p>`:''}
+        ${entityDetailNameHtml(e,wallets)}
+        ${(e.xHandle||e.x_handle)?`<p>${esc(e.xHandle||e.x_handle||'')}</p>`:''}
 
-        <div class="si-metrics">
-          <div class="si-metric"><strong>${wallets.length}</strong><small>Wallets</small></div>
-          <div class="si-metric"><strong>${tokens.length}</strong><small>Tokens</small></div>
-          <div class="si-metric"><strong>${e.riskScore||e.risk_score||0}</strong><small>Signal</small></div>
+        <div style="margin-top:16px">
+          ${entityDetailMainWalletHtml(e,wallets)}
+        </div>
+
+        <div style="margin-top:16px">
+          ${entityDetailMetricsHtml(e)}
+          ${entityPerformanceBreakdownHtml(e)}
         </div>
 
         ${copyControlHtml(e.id)}

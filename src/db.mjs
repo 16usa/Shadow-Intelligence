@@ -178,6 +178,7 @@ export function openDb(path = process.env.DB_PATH || './shadow-intelligence.db')
   migrateFromDemoToLive(db);
   migrateActivityNormalizerV05(db);
   migrateTradeOnlyActivityV10(db);
+  migrateStableQuoteV2413(db);
   seedOwner(db);
   if (getSetting(db,'demo_mode','false') === 'true') seedDemo(db);
   return db;
@@ -199,6 +200,14 @@ function migrateColumns(db) {
   addColumn(db,'tokens',"external_url TEXT DEFAULT ''");
   addColumn(db,'tokens',"last_market_at TEXT DEFAULT ''");
   addColumn(db,'tokens',"is_pump INTEGER NOT NULL DEFAULT 0");
+  /* SHADOW_STABLE_QUOTE_V2413_DB */
+  addColumn(db,'wallet_activity',"quote_asset TEXT DEFAULT ''");
+  addColumn(db,'wallet_activity',"quote_amount REAL DEFAULT 0");
+  addColumn(db,'wallet_activity',"trade_usd REAL DEFAULT 0");
+  addColumn(db,'wallet_activity',"trade_usd_source TEXT DEFAULT ''");
+  /* SHADOW_STABLE_QUOTE_V2413_DB_END */
+  addColumn(db,'tokens',"token_created_at TEXT DEFAULT '';");
+  addColumn(db,'tokens',"token_age_source TEXT DEFAULT '';");
   addColumn(db,'incidents',"source_key TEXT DEFAULT ''");
   addColumn(db,'evidence',"observed_at TEXT DEFAULT ''");
   addColumn(db,'evidence',"token_mint TEXT DEFAULT ''");
@@ -345,6 +354,30 @@ function migrateTradeOnlyActivityV10(db) {
   }
 }
 /* SHADOW_TRADE_ONLY_V239_DB_END */
+
+
+/* SHADOW_STABLE_QUOTE_V2413_MIGRATION */
+function migrateStableQuoteV2413(db) {
+  if (getSetting(db,'stable_quote_v2413','false') === 'true') return;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.prepare(`
+      UPDATE wallets
+      SET last_signature='',sync_status='pending',sync_error=''
+      WHERE monitoring_enabled=1
+    `).run();
+    db.prepare(`
+      INSERT INTO settings(key,value)
+      VALUES('stable_quote_v2413','true')
+      ON CONFLICT(key) DO UPDATE SET value='true'
+    `).run();
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+/* SHADOW_STABLE_QUOTE_V2413_MIGRATION_END */
 
 function seedOwner(db) {
   const email=String(process.env.OWNER_EMAIL||'').trim().toLowerCase(); const password=String(process.env.OWNER_PASSWORD||'');

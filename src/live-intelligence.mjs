@@ -1,5 +1,5 @@
 import { id, nowIso, isSolanaAddress } from './utils.mjs';
-import { getRecentWalletActivity, solanaHealth } from './adapters/solana-rpc.mjs';
+import { getRecentWalletActivity, solanaHealth, WSOL_MINT } from './adapters/solana-rpc.mjs';
 import { getTokenMarket } from './adapters/token-market.mjs';
 import { getXProfile, getXPosts, xConfigured } from './adapters/x-api.mjs';
 import { getSetting } from './db.mjs';
@@ -33,6 +33,19 @@ function isTrackedTradeActivity(activity){
 
 export function createLiveIntelligence(db,{fetchImpl=fetch}={}) {
   let timer=null, running=false, lastCycleAt='', lastError='', cycleCount=0;
+  /* SHADOW_STABLE_QUOTE_V2413_LIVE */
+  let solUsdSnapshot={value:0,at:0};
+  async function currentSolUsdForTrade(){
+    const now=Date.now();
+    if(solUsdSnapshot.value>0 && now-solUsdSnapshot.at<60000)return solUsdSnapshot.value;
+    try{
+      const market=await getTokenMarket(WSOL_MINT,{fetchImpl});
+      const value=Number(market?.priceUsd||0);
+      if(Number.isFinite(value)&&value>0)solUsdSnapshot={value,at:now};
+    }catch{}
+    return solUsdSnapshot.value||0;
+  }
+  /* SHADOW_STABLE_QUOTE_V2413_LIVE_END */
 
   async function ensureToken(mint,{force=false}={}) {
     if(!mint)return null;
@@ -71,11 +84,22 @@ export function createLiveIntelligence(db,{fetchImpl=fetch}={}) {
     if(exists)return false;
     const blockIso=isoFromUnix(activity.blockTime);
     const isPump=activity.isPump || !!token?.is_pump;
-    db.prepare(`INSERT INTO wallet_activity (id,event_key,wallet_id,entity_id,signature,slot,block_time,type,source,description,mint,token_symbol,token_name,token_amount,sol_amount,price_usd,price_change,is_pump,created_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-        id('act_'),eventKey,wallet.id,wallet.entity_id,activity.signature,activity.slot||0,blockIso,activity.type,activity.source||'solana',activity.description||'',activity.mint,
-        token?.symbol||`$${activity.mint.slice(0,4)}`,token?.name||activity.mint.slice(0,8),activity.tokenAmount||0,activity.solAmount||0,token?.price_usd||0,token?.price_change||0,isPump?1:0,nowIso()
-      );
+
+    const quoteAsset=String(activity.quoteAsset||'').trim();
+    const quoteAmount=Math.abs(Number(activity.quoteAmount||0));
+    const tradeUsd=Math.abs(Number(activity.tradeUsd||0));
+    const tradeUsdSource=String(activity.tradeUsdSource||'').trim();
+
+    db.prepare(`INSERT INTO wallet_activity (
+      id,event_key,wallet_id,entity_id,signature,slot,block_time,type,source,description,
+      mint,token_symbol,token_name,token_amount,sol_amount,price_usd,price_change,is_pump,
+      quote_asset,quote_amount,trade_usd,trade_usd_source,created_at
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      id('act_'),eventKey,wallet.id,wallet.entity_id,activity.signature,activity.slot||0,blockIso,activity.type,activity.source||'solana',activity.description||'',activity.mint,
+      token?.symbol||`$${activity.mint.slice(0,4)}`,token?.name||activity.mint.slice(0,8),activity.tokenAmount||0,activity.solAmount||0,token?.price_usd||0,token?.price_change||0,isPump?1:0,
+      quoteAsset,quoteAmount,tradeUsd,tradeUsdSource,nowIso()
+    );
+
     const symbol=token?.symbol||`$${activity.mint.slice(0,4)}`;
     const amount=Math.abs(Number(activity.tokenAmount||0));
     const sol=Math.abs(Number(activity.solAmount||0));
@@ -85,7 +109,12 @@ export function createLiveIntelligence(db,{fetchImpl=fetch}={}) {
         ?`Sold ${symbol}`
         :`Swapped into ${symbol}`;
     const sourceLabel=isPump?(String(activity.source).toLowerCase().includes('swap')?'PumpSwap':'Pump.fun'):(activity.source||'Solana');
-    const detail=[amount?`${amount.toLocaleString(undefined,{maximumFractionDigits:4})} ${symbol}`:'',sol?`${sol.toFixed(4)} SOL`:'',sourceLabel,activity.signature?`${activity.signature.slice(0,6)}…${activity.signature.slice(-6)}`:''].filter(Boolean).join(' · ');
+    const quoteText=tradeUsd>0
+      ? `$${tradeUsd.toLocaleString(undefined,{maximumFractionDigits:2})}`
+      : sol
+        ? `${sol.toFixed(4)} SOL`
+        : '';
+    const detail=[amount?`${amount.toLocaleString(undefined,{maximumFractionDigits:4})} ${symbol}`:'',quoteText,sourceLabel,activity.signature?`${activity.signature.slice(0,6)}...${activity.signature.slice(-6)}`:''].filter(Boolean).join(' · ');
     db.prepare(`INSERT OR IGNORE INTO incidents (id,entity_id,wallet_id,token_id,type,title,detail,severity,value,created_at,source_key) VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
       id('inc_'),wallet.entity_id,wallet.id,token?.id||null,activity.type,title,detail,activity.type==='sell'?'watch':'info',token?.price_change||null,blockIso,eventKey
     );
@@ -187,8 +216,26 @@ export function createLiveIntelligence(db,{fetchImpl=fetch}={}) {
       // to a public wallet. Current holdings are derived from actual trades only.
       let holdingsSnapshot={ok:true,provider:'trade-ledger',count:0};
 
-      const limit=Math.max(5,Math.min(Number(getSetting(db,'wallet_history_limit','30'))||30,100));
+      const configuredLimit=Math.max(5,Math.min(Number(getSetting(db,'wallet_history_limit','30'))||30,100));
+      const limit=wallet.last_signature?configuredLimit:100;
       const result=await getRecentWalletActivity(wallet.address,{limit,untilSignature:wallet.last_signature||'',fetchImpl});
+
+      const needsSolUsd=result.activity.some(a=>
+        Math.abs(Number(a?.solAmount||0))>1e-12 && !(Number(a?.tradeUsd||0)>0)
+      );
+      const solUsd=needsSolUsd?await currentSolUsdForTrade():0;
+      if(solUsd>0){
+        for(const activity of result.activity){
+          if(Number(activity?.tradeUsd||0)>0)continue;
+          const sol=Math.abs(Number(activity?.solAmount||0));
+          if(sol<=1e-12)continue;
+          activity.quoteAsset=activity.quoteAsset||'SOL';
+          activity.quoteAmount=Number(activity.quoteAmount||0)||sol;
+          activity.tradeUsd=sol*solUsd;
+          activity.tradeUsdSource=wallet.last_signature?'sol-live':'sol-backfill-estimate';
+        }
+      }
+
       let inserted=0;
       const tokenByMint=new Map();
       for(const activity of result.activity){

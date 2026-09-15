@@ -1,0 +1,6 @@
+/* Shadow Intelligence — Activity Ring Fix v2.7.3
+   Defensive CSS only. The activity beacon itself is NOT hidden.
+*/
+[data-si-activity-ring-neutralized="1"]{
+  /* runtime JS copies the normal inactive avatar visual here */
+}

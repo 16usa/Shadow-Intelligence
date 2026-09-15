@@ -8,10 +8,16 @@ export const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 export const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 export const TOKEN_2022_PROGRAM = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 /* SHADOW_CURRENT_HOLDINGS_V219_RPC_END */
-const STABLE_MINTS = new Set([
-  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
-  'Es9vMFrzaCERmJfrF4H2FYD3Bj4yN3nSboERoAaiQh4H' // legacy USDT
+/* SHADOW_STABLE_QUOTE_V2413_RPC */
+const STABLE_MINT_SYMBOLS = new Map([
+  ['EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v','USDC'],
+  ['Es9vMFrzaCERmJfrF4H2FYD3Bj4yN3nSboERoAaiQh4H','USDT']
 ]);
+const STABLE_MINTS = new Set(STABLE_MINT_SYMBOLS.keys());
+function stableSymbol(mint) {
+  return STABLE_MINT_SYMBOLS.get(String(mint||'')) || '';
+}
+/* SHADOW_STABLE_QUOTE_V2413_RPC_END */
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function rpcEndpoint() {
@@ -67,6 +73,17 @@ function ownerBalances(list, wallet) {
   }
   return map;
 }
+function stableBalanceQuote(pre, post) {
+  let best=null;
+  for (const mint of STABLE_MINTS) {
+    const delta=(post.get(mint)||0)-(pre.get(mint)||0);
+    if(Math.abs(delta)<=1e-12)continue;
+    if(!best||Math.abs(delta)>Math.abs(best.delta)){
+      best={mint,asset:stableSymbol(mint),delta,amount:Math.abs(delta)};
+    }
+  }
+  return best;
+}
 function programIds(tx) {
   const ids = new Set();
   const visit = (ix) => { if (ix?.programId) ids.add(String(ix.programId)); };
@@ -82,25 +99,54 @@ function normalizeRpcTransaction(tx, wallet, signature) {
   const solDelta = walletIndex >= 0 ? ((Number(tx.meta.postBalances?.[walletIndex] || 0) - Number(tx.meta.preBalances?.[walletIndex] || 0)) / 1e9) : 0;
   const pre = ownerBalances(tx.meta.preTokenBalances, wallet);
   const post = ownerBalances(tx.meta.postTokenBalances, wallet);
+  const stableQuote=stableBalanceQuote(pre,post);
   const mints = new Set([...pre.keys(), ...post.keys()]);
   const pids = programIds(tx);
   const isPump = pids.has(PUMP_PROGRAM) || pids.has(PUMP_AMM_PROGRAM);
   const source = pids.has(PUMP_PROGRAM) ? 'pump.fun' : pids.has(PUMP_AMM_PROGRAM) ? 'PumpSwap' : 'solana';
   const changes = [];
+
   for (const mint of mints) {
     if (mint === WSOL_MINT || STABLE_MINTS.has(mint)) continue;
     const tokenDelta = (post.get(mint) || 0) - (pre.get(mint) || 0);
     if (Math.abs(tokenDelta) < 1e-12) continue;
+
     let type = '';
-    // Trade-only tracking: plain token transfers are intentionally ignored.
-    if (isPump && tokenDelta > 0 && solDelta < -0.00001) type = 'buy';
-    else if (isPump && tokenDelta < 0 && solDelta > 0.00001) type = 'sell';
-    else continue;
+    let quoteAsset='';
+    let quoteAmount=0;
+    let tradeUsd=0;
+    let tradeUsdSource='';
+
+    if (stableQuote && tokenDelta > 0 && stableQuote.delta < -1e-9) {
+      type='buy';
+      quoteAsset=stableQuote.asset;
+      quoteAmount=stableQuote.amount;
+      tradeUsd=stableQuote.amount;
+      tradeUsdSource='stable';
+    } else if (stableQuote && tokenDelta < 0 && stableQuote.delta > 1e-9) {
+      type='sell';
+      quoteAsset=stableQuote.asset;
+      quoteAmount=stableQuote.amount;
+      tradeUsd=stableQuote.amount;
+      tradeUsdSource='stable';
+    } else if (isPump && tokenDelta > 0 && solDelta < -0.00001) {
+      type='buy';
+      quoteAsset='SOL';
+      quoteAmount=Math.abs(solDelta);
+    } else if (isPump && tokenDelta < 0 && solDelta > 0.00001) {
+      type='sell';
+      quoteAsset='SOL';
+      quoteAmount=Math.abs(solDelta);
+    } else {
+      continue;
+    }
 
     changes.push({
       signature, slot: tx.slot || 0, blockTime: tx.blockTime || null, type, source,
       description: `${type} ${Math.abs(tokenDelta)} token`, mint, tokenAmount: tokenDelta,
-      solAmount: solDelta, isPump, rawType: 'RPC'
+      solAmount:quoteAsset==='SOL'?solDelta:0,
+      quoteAsset,quoteAmount,tradeUsd,tradeUsdSource,
+      isPump, rawType: 'RPC'
     });
   }
   return collapseFallbackChanges(changes);
@@ -126,6 +172,24 @@ function nativeDelta(transfers, wallet) {
   }
   return lamports / 1e9;
 }
+function stableTransferQuote(transfers, wallet) {
+  const net=new Map();
+  for(const t of transfers||[]){
+    const mint=String(t?.mint||'');
+    if(!STABLE_MINTS.has(mint))continue;
+    let delta=0;
+    if(t.toUserAccount===wallet)delta+=Number(t.tokenAmount||0);
+    if(t.fromUserAccount===wallet)delta-=Number(t.tokenAmount||0);
+    if(delta)net.set(mint,(net.get(mint)||0)+delta);
+  }
+  let best=null;
+  for(const [mint,delta] of net){
+    if(!best||Math.abs(delta)>Math.abs(best.delta)){
+      best={mint,asset:stableSymbol(mint),delta,amount:Math.abs(delta)};
+    }
+  }
+  return best;
+}
 function rawSwapAmount(row) {
   const raw = row?.rawTokenAmount;
   if (!raw) return Number(row?.tokenAmount || 0) || 0;
@@ -144,6 +208,23 @@ function aggregateSwapLegs(inputs, outputs) {
   for (const row of outputs) net.set(row.mint, (net.get(row.mint) || 0) + row.amount);
   return [...net.entries()].map(([mint,amount]) => ({mint,amount})).filter(r => Math.abs(r.amount) > 1e-12 && r.mint !== WSOL_MINT && !STABLE_MINTS.has(r.mint));
 }
+function stableSwapQuote(inputs, outputs) {
+  const net=new Map();
+  for(const row of inputs){
+    if(STABLE_MINTS.has(row.mint))net.set(row.mint,(net.get(row.mint)||0)-row.amount);
+  }
+  for(const row of outputs){
+    if(STABLE_MINTS.has(row.mint))net.set(row.mint,(net.get(row.mint)||0)+row.amount);
+  }
+  let best=null;
+  for(const [mint,delta] of net){
+    if(Math.abs(delta)<=1e-12)continue;
+    if(!best||Math.abs(delta)>Math.abs(best.delta)){
+      best={mint,asset:stableSymbol(mint),delta,amount:Math.abs(delta)};
+    }
+  }
+  return best;
+}
 function chooseLargest(rows, sign) {
   return rows.filter(r => sign > 0 ? r.amount > 0 : r.amount < 0).sort((a,b)=>Math.abs(b.amount)-Math.abs(a.amount))[0] || null;
 }
@@ -156,24 +237,52 @@ function nativeSwapNet(swap, wallet) {
 function normalizeEnhancedSwap(tx, wallet) {
   const swap = tx?.events?.swap;
   if (!swap) return null;
-  const legs = aggregateSwapLegs(swapRows(swap.tokenInputs,wallet), swapRows(swap.tokenOutputs,wallet));
+
+  const inputs=swapRows(swap.tokenInputs,wallet);
+  const outputs=swapRows(swap.tokenOutputs,wallet);
+  const legs = aggregateSwapLegs(inputs,outputs);
+  const stableQuote=stableSwapQuote(inputs,outputs);
   const solNet = nativeSwapNet(swap,wallet);
   const isPump = /pump/i.test(String(tx.source || '')) || /pump/i.test(String(tx.description || ''));
   const base = { signature:tx.signature,slot:tx.slot||0,blockTime:tx.timestamp||null,source:String(tx.source||'SWAP'),description:tx.description||'',isPump,rawType:tx.type||'SWAP' };
 
+  if(stableQuote?.delta < -1e-9){
+    const bought=chooseLargest(legs,1);
+    if(bought)return [{
+      ...base,type:'buy',mint:bought.mint,tokenAmount:bought.amount,solAmount:0,
+      quoteAsset:stableQuote.asset,quoteAmount:stableQuote.amount,
+      tradeUsd:stableQuote.amount,tradeUsdSource:'stable'
+    }];
+  }
+  if(stableQuote?.delta > 1e-9){
+    const sold=chooseLargest(legs,-1);
+    if(sold)return [{
+      ...base,type:'sell',mint:sold.mint,tokenAmount:sold.amount,solAmount:0,
+      quoteAsset:stableQuote.asset,quoteAmount:stableQuote.amount,
+      tradeUsd:stableQuote.amount,tradeUsdSource:'stable'
+    }];
+  }
+
   if (solNet < -0.000001) {
     const bought = chooseLargest(legs,1);
-    if (bought) return [{...base,type:'buy',mint:bought.mint,tokenAmount:bought.amount,solAmount:solNet}];
+    if (bought) return [{
+      ...base,type:'buy',mint:bought.mint,tokenAmount:bought.amount,solAmount:solNet,
+      quoteAsset:'SOL',quoteAmount:Math.abs(solNet),tradeUsd:0,tradeUsdSource:''
+    }];
   }
   if (solNet > 0.000001) {
     const sold = chooseLargest(legs,-1);
-    if (sold) return [{...base,type:'sell',mint:sold.mint,tokenAmount:sold.amount,solAmount:solNet}];
+    if (sold) return [{
+      ...base,type:'sell',mint:sold.mint,tokenAmount:sold.amount,solAmount:solNet,
+      quoteAsset:'SOL',quoteAmount:Math.abs(solNet),tradeUsd:0,tradeUsdSource:''
+    }];
   }
 
   const bought = chooseLargest(legs,1);
   const sold = chooseLargest(legs,-1);
   if (bought && sold) {
     return [{...base,type:'swap',mint:bought.mint,tokenAmount:bought.amount,solAmount:0,
+      quoteAsset:'',quoteAmount:0,tradeUsd:0,tradeUsdSource:'',
       description:tx.description || `Swapped ${Math.abs(sold.amount)} ${sold.mint} for ${bought.amount} ${bought.mint}`}];
   }
   return null;
@@ -199,21 +308,47 @@ function normalizeHeliusTransaction(tx, wallet) {
   }
 
   const deltas = transferDelta(tx.tokenTransfers, wallet);
+  const stableQuote=stableTransferQuote(tx.tokenTransfers,wallet);
   const solDelta = nativeDelta(tx.nativeTransfers, wallet);
   const src = String(tx.source || tx.type || 'solana');
   const isPump = /pump/i.test(src) || /pump/i.test(String(tx.description || ''));
   const out=[];
+
   for (const [mint, tokenDelta] of deltas) {
     let type = '';
-    // Plain token transfers are not trading signals and are discarded.
-    if (isPump && tokenDelta > 0 && solDelta < -0.00001) type='buy';
-    else if (isPump && tokenDelta < 0 && solDelta > 0.00001) type='sell';
-    else continue;
+    let quoteAsset='';
+    let quoteAmount=0;
+    let tradeUsd=0;
+    let tradeUsdSource='';
+
+    if(stableQuote && tokenDelta>0 && stableQuote.delta < -1e-9){
+      type='buy';
+      quoteAsset=stableQuote.asset;
+      quoteAmount=stableQuote.amount;
+      tradeUsd=stableQuote.amount;
+      tradeUsdSource='stable';
+    }else if(stableQuote && tokenDelta<0 && stableQuote.delta > 1e-9){
+      type='sell';
+      quoteAsset=stableQuote.asset;
+      quoteAmount=stableQuote.amount;
+      tradeUsd=stableQuote.amount;
+      tradeUsdSource='stable';
+    }else if (isPump && tokenDelta > 0 && solDelta < -0.00001) {
+      type='buy';
+      quoteAsset='SOL';
+      quoteAmount=Math.abs(solDelta);
+    }else if (isPump && tokenDelta < 0 && solDelta > 0.00001) {
+      type='sell';
+      quoteAsset='SOL';
+      quoteAmount=Math.abs(solDelta);
+    }else continue;
 
     out.push({
       signature:tx.signature,slot:tx.slot||0,blockTime:tx.timestamp||null,
       type,source:src,description:tx.description||'',mint,tokenAmount:tokenDelta,
-      solAmount:solDelta,isPump,rawType:tx.type||''
+      solAmount:quoteAsset==='SOL'?solDelta:0,
+      quoteAsset,quoteAmount,tradeUsd,tradeUsdSource,
+      isPump,rawType:tx.type||''
     });
   }
   return collapseFallbackChanges(out);

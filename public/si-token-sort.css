@@ -1,0 +1,15 @@
+/* Shadow Intelligence — Tokens Period + Age Sort v2.6.1 */
+.si-token-sort-wrap{display:flex;align-items:center;margin:-2px 0 22px;max-width:100%}
+.si-token-sort{display:flex;align-items:center;width:max-content;max-width:100%;height:36px;overflow-x:auto;overflow-y:hidden;border:.5px solid var(--si-line);border-radius:999px;background:transparent;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.si-token-sort::-webkit-scrollbar{display:none}
+.si-token-sort button{appearance:none;-webkit-appearance:none;flex:0 0 auto;height:100%;min-width:54px;margin:0;padding:0 13px;border:0;border-left:.5px solid var(--si-line);border-radius:0;background:transparent;color:var(--si-muted);font:inherit;font-size:12px;font-weight:680;line-height:1;white-space:nowrap;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .16s ease,color .16s ease}
+.si-token-sort button:first-child{border-left:0}
+.si-token-sort button.is-active{background:var(--si-text);color:var(--si-panel)}
+.si-token-sort button:active{opacity:.72}
+.si-token-sort button[data-token-sort="age"],.si-token-sort button[data-token-sort="mc"]{min-width:58px}
+@media(max-width:720px){
+  .si-token-sort-wrap{margin:-4px 0 18px}
+  .si-token-sort{height:34px}
+  .si-token-sort button{min-width:50px;padding:0 11px;font-size:11px}
+  .si-token-sort button[data-token-sort="age"],.si-token-sort button[data-token-sort="mc"]{min-width:54px}
+}

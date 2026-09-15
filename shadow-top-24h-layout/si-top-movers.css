@@ -1,0 +1,193 @@
+/* Shadow Intelligence — Top 24H Movers layout v2.5.1 */
+.si-top-movers24h{
+  position:fixed;
+  z-index:72;
+  top:calc(env(safe-area-inset-top,0px) + 126px);
+  left:0;
+  right:0;
+  width:100%;
+  pointer-events:none;
+  color:var(--si-text);
+}
+.si-top-movers24h[hidden]{display:none!important}
+
+.si-movers-caption{
+  display:flex;
+  align-items:center;
+  justify-content:flex-start;
+  gap:8px;
+  height:17px;
+  padding:0 18px 5px;
+  color:var(--si-muted);
+  font-size:10px;
+  font-weight:800;
+  letter-spacing:.11em;
+  line-height:1;
+  pointer-events:none;
+
+  /* The strip originates from the notification/bell side. */
+  direction:rtl;
+}
+.si-movers-caption > *{direction:ltr}
+.si-movers-caption small{
+  font-size:9px;
+  font-weight:600;
+  letter-spacing:.02em;
+  text-transform:none;
+  opacity:.68;
+}
+
+.si-movers-track{
+  display:flex;
+  gap:9px;
+  width:100%;
+  overflow-x:auto;
+  overflow-y:hidden;
+  padding:0 16px 6px;
+  scroll-padding-inline:16px;
+  scroll-snap-type:x proximity;
+  overscroll-behavior-inline:contain;
+  -webkit-overflow-scrolling:touch;
+  scrollbar-width:none;
+  pointer-events:auto;
+  touch-action:pan-x;
+
+  /* First/top mover sits on the right, under the bell side. */
+  direction:rtl;
+}
+.si-movers-track::-webkit-scrollbar{display:none}
+
+.si-mover-card{
+  appearance:none;
+  -webkit-appearance:none;
+  flex:0 0 244px;
+  width:244px;
+  height:62px;
+  margin:0;
+  padding:7px 9px;
+  display:grid;
+  grid-template-columns:40px minmax(0,1fr) 68px;
+  align-items:center;
+  gap:8px;
+  border:.5px solid var(--si-line);
+  border-radius:16px;
+  background:color-mix(in srgb,var(--si-panel) 94%,transparent);
+  color:var(--si-text);
+  text-align:left;
+  box-shadow:none;
+  cursor:pointer;
+  scroll-snap-align:start;
+  -webkit-tap-highlight-color:transparent;
+  backdrop-filter:blur(12px);
+  -webkit-backdrop-filter:blur(12px);
+
+  /* Keep card content normal while the scroller itself is RTL. */
+  direction:ltr;
+}
+.si-mover-card:active{transform:scale(.985)}
+
+.si-mover-avatar{
+  width:40px;
+  height:40px;
+  border:0;
+  border-radius:50%;
+  object-fit:cover;
+  display:grid;
+  place-items:center;
+  background:var(--si-line);
+  color:var(--si-muted);
+  font-size:11px;
+  font-weight:800;
+}
+.si-mover-copy{
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+}
+.si-mover-symbol{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:14px;
+  font-weight:780;
+  letter-spacing:-.015em;
+  line-height:1.02;
+}
+.si-mover-name{
+  margin-top:2px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  color:var(--si-muted);
+  font-size:9px;
+  line-height:1.05;
+}
+.si-mover-market{
+  display:flex;
+  align-items:baseline;
+  gap:6px;
+  margin-top:4px;
+  white-space:nowrap;
+}
+.si-mover-market strong{
+  color:var(--si-text);
+  font-size:10px;
+  font-weight:680;
+}
+.si-mover-market b{
+  font-size:10px;
+  font-weight:760;
+}
+.si-mover-chart{
+  width:68px;
+  height:34px;
+  display:block;
+  align-self:center;
+}
+.si-mover-spark{
+  display:block;
+  width:100%;
+  height:100%;
+  overflow:visible;
+  color:var(--si-muted);
+}
+.si-mover-spark path{
+  fill:none;
+  stroke:currentColor;
+  stroke-width:1.8;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+  vector-effect:non-scaling-stroke;
+}
+.si-mover-spark.is-positive{color:var(--si-green)}
+.si-mover-spark.is-negative{color:var(--si-pink)}
+.si-mover-spark.is-empty{opacity:.28}
+.si-mover-spark.is-empty path{stroke-width:1}
+
+@media(max-width:720px){
+  .si-top-movers24h{
+    top:calc(env(safe-area-inset-top,0px) + 126px);
+  }
+  .si-movers-caption{
+    padding-left:16px;
+    padding-right:16px;
+  }
+  .si-movers-track{
+    gap:8px;
+    padding-left:16px;
+    padding-right:16px;
+    scroll-padding-inline:16px;
+  }
+  .si-mover-card{
+    flex-basis:min(68vw,244px);
+    width:min(68vw,244px);
+    height:62px;
+    grid-template-columns:40px minmax(0,1fr) 66px;
+    gap:8px;
+    padding:7px 9px;
+    border-radius:16px;
+  }
+  .si-mover-avatar{width:40px;height:40px}
+  .si-mover-chart{width:66px;height:34px}
+}

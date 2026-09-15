@@ -1,0 +1,15 @@
+/* Shadow Intelligence — Search Scope Fix v2.7.2 */
+[data-si-search-scope-controlled="1"] svg{
+  width:28px;
+  height:28px;
+  fill:none;
+  stroke:currentColor;
+  stroke-width:1.8;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+  pointer-events:none;
+}
+[data-si-search-scope-controlled="1"][data-si-search-mode="close"] svg{
+  width:26px;
+  height:26px;
+}

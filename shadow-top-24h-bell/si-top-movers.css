@@ -1,0 +1,157 @@
+/* Shadow Intelligence — Top 24H Movers bell-row layout v2.5.2 */
+.si-top-movers24h{
+  position:fixed;
+  z-index:72;
+  top:calc(env(safe-area-inset-top,0px) + 14px);
+  left:14px;
+  right:78px; /* 18px screen edge + 50px bell + 10px gap */
+  width:auto;
+  height:50px;
+  pointer-events:none;
+  color:var(--si-text);
+}
+.si-top-movers24h[hidden]{display:none!important}
+
+/* Same row as the bell: no separate heading above the cards. */
+.si-movers-caption{display:none!important}
+
+.si-movers-track{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  width:100%;
+  height:50px;
+  overflow-x:auto;
+  overflow-y:hidden;
+  padding:0;
+  scroll-padding-inline:0;
+  scroll-snap-type:x proximity;
+  overscroll-behavior-inline:contain;
+  -webkit-overflow-scrolling:touch;
+  scrollbar-width:none;
+  pointer-events:auto;
+  touch-action:pan-x;
+  direction:rtl;
+}
+.si-movers-track::-webkit-scrollbar{display:none}
+
+.si-mover-card{
+  appearance:none;
+  -webkit-appearance:none;
+  flex:0 0 220px;
+  width:220px;
+  height:50px;
+  margin:0;
+  padding:6px 8px;
+  display:grid;
+  grid-template-columns:34px minmax(0,1fr) 58px;
+  align-items:center;
+  gap:7px;
+  border:.5px solid var(--si-line);
+  border-radius:999px;
+  background:color-mix(in srgb,var(--si-panel) 94%,transparent);
+  color:var(--si-text);
+  text-align:left;
+  box-shadow:none;
+  cursor:pointer;
+  scroll-snap-align:start;
+  -webkit-tap-highlight-color:transparent;
+  backdrop-filter:blur(12px);
+  -webkit-backdrop-filter:blur(12px);
+  direction:ltr;
+}
+.si-mover-card:active{transform:scale(.985)}
+
+.si-mover-avatar{
+  width:34px;
+  height:34px;
+  border:0;
+  border-radius:50%;
+  object-fit:cover;
+  display:grid;
+  place-items:center;
+  background:var(--si-line);
+  color:var(--si-muted);
+  font-size:9px;
+  font-weight:800;
+}
+.si-mover-copy{
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+}
+.si-mover-symbol{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:12px;
+  font-weight:780;
+  line-height:1;
+}
+.si-mover-name{display:none!important}
+.si-mover-market{
+  display:flex;
+  align-items:baseline;
+  gap:5px;
+  margin-top:4px;
+  white-space:nowrap;
+}
+.si-mover-market strong{
+  color:var(--si-text);
+  font-size:9px;
+  font-weight:680;
+}
+.si-mover-market b{
+  font-size:9px;
+  font-weight:760;
+}
+.si-mover-chart{
+  width:58px;
+  height:28px;
+  display:block;
+  align-self:center;
+}
+.si-mover-spark{
+  display:block;
+  width:100%;
+  height:100%;
+  overflow:visible;
+  color:var(--si-muted);
+}
+.si-mover-spark path{
+  fill:none;
+  stroke:currentColor;
+  stroke-width:1.7;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+  vector-effect:non-scaling-stroke;
+}
+.si-mover-spark.is-positive{color:var(--si-green)}
+.si-mover-spark.is-negative{color:var(--si-pink)}
+.si-mover-spark.is-empty{opacity:.28}
+.si-mover-spark.is-empty path{stroke-width:1}
+
+@media(max-width:720px){
+  .si-top-movers24h{
+    top:calc(env(safe-area-inset-top,0px) + 14px);
+    left:14px;
+    right:78px;
+    height:50px;
+  }
+  .si-movers-track{
+    gap:7px;
+    height:50px;
+  }
+  .si-mover-card{
+    flex-basis:min(62vw,220px);
+    width:min(62vw,220px);
+    height:50px;
+    grid-template-columns:34px minmax(0,1fr) 56px;
+    gap:7px;
+    padding:6px 8px;
+    border-radius:999px;
+  }
+  .si-mover-avatar{width:34px;height:34px}
+  .si-mover-chart{width:56px;height:28px}
+}
