@@ -103,6 +103,35 @@ export function openDb(path = process.env.DB_PATH || './shadow-intelligence.db')
     CREATE TABLE IF NOT EXISTS chat_messages (id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,body TEXT NOT NULL,created_at TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at ON chat_messages(created_at DESC);
     CREATE TABLE IF NOT EXISTS direct_messages (id TEXT PRIMARY KEY,sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,recipient_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,body TEXT NOT NULL,created_at TEXT NOT NULL);
+
+    /* SHADOW_NOTIFICATIONS_V240_DB */
+    CREATE TABLE IF NOT EXISTS user_notification_preferences (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      entities_enabled INTEGER NOT NULL DEFAULT 0,
+      tokens_enabled INTEGER NOT NULL DEFAULT 0,
+      live_enabled INTEGER NOT NULL DEFAULT 0,
+      started_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS user_notification_entities (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (user_id,entity_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_notification_entities_user
+      ON user_notification_entities(user_id,entity_id);
+    CREATE TABLE IF NOT EXISTS user_notification_tokens (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      mint TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (user_id,mint)
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_notification_tokens_user
+      ON user_notification_tokens(user_id,mint);
+    /* SHADOW_NOTIFICATIONS_V240_DB_END */
+
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY,value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS wallet_activity (
       id TEXT PRIMARY KEY,event_key TEXT UNIQUE NOT NULL,wallet_id TEXT NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,

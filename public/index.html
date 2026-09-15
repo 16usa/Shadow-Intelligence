@@ -13,7 +13,7 @@
 
 
 
-<link rel="stylesheet" href="/si-current.css?v=watermark-removed-2.1.9-20260914"/>
+<link rel="stylesheet" href="/si-current.css?v=notifications-2.4.0-20260914"/>
 </head>
 <body>
 <!-- SHADOW_USER_COPY_TRADING_V230 -->
@@ -21,16 +21,25 @@
 <div id="app" class="si-app">
 <header class="si-topbar">
   <!-- SHADOW_THEME_LEFT_V234 -->
-  <button id="themeToggle" class="si-icon si-theme-left" type="button" title="Theme" aria-label="Toggle theme">◐</button>
-  <nav class="si-mainnav" aria-label="Primary">
+  <!-- SHADOW_THEME_ICON_UNIFY_V241 -->
+<nav class="si-mainnav" aria-label="Primary">
     <button data-nav="overview" class="active">Map</button><button data-nav="entities">Entities</button><button data-nav="tokens">Tokens</button><button data-nav="feed">Live</button>
   </nav>
-  <div class="si-top-actions"><button id="userButton" class="si-user"><span id="userAvatar" class="avatar avatar-sm">?</span><span id="userLabel">Sign in</span></button></div>
+  <div class="si-top-actions">
+    <!-- SHADOW_NOTIFICATIONS_V240 -->
+    <button id="notificationButton" class="si-notification-button" type="button" aria-label="Notifications" title="Notifications">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M6.5 10.2a5.5 5.5 0 0 1 11 0v3.1l1.7 2.5H4.8l1.7-2.5v-3.1Z"/>
+        <path d="M9.8 18.3a2.4 2.4 0 0 0 4.4 0"/>
+      </svg>
+      <span id="notificationBadge" class="si-notification-badge" hidden>0</span>
+    </button>
+  </div>
 </header>
 <div class="si-layout">
 <aside class="si-rail">
   <div class="si-rail-section"><span class="si-rail-label">INTELLIGENCE</span><button data-nav="overview" class="active"><i>◉</i>Map</button><button data-nav="feed"><i>↯</i>Live Stream</button><button data-nav="entities"><i>◎</i>Entities</button><button data-nav="tokens"><i>●</i>Tokens</button></div>
-  <div class="si-rail-section"><span class="si-rail-label">SYSTEM</span><button data-nav="evidence"><i>◇</i>Evidence</button><button data-nav="chat"><i>◌</i>Chat</button><button data-nav="messages" class="auth-only"><i>✉</i>Messages</button><button data-nav="settings" class="owner-only"><i>⚙</i>Admin</button></div>
+  <div class="si-rail-section"><span class="si-rail-label">SYSTEM</span><button data-nav="evidence"><i>◇</i>Evidence</button><button data-nav="chat"><i>◌</i>Chat</button><button data-nav="settings" class="owner-only"><i>⚙</i>Admin</button></div>
   <div class="si-rail-bottom"><span class="si-live-dot"></span><span>Solana</span><span id="railStatus">checking</span></div>
 </aside>
 <main class="si-main">
@@ -97,6 +106,15 @@
       <path d="M15 11h5v4h-5a2 2 0 1 1 0-4Z"/>
     </svg>
     <span>Wallet</span>
+  </button>
+
+  <!-- SHADOW_THEME_TO_DOCK_V2414 -->
+  <button id="themeToggleDock" class="si-theme-dock-button" type="button"
+    aria-label="Toggle light and dark theme" title="Theme">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="7.5"></circle>
+      <path class="si-theme-half" d="M12 4.5a7.5 7.5 0 0 0 0 15z"></path>
+    </svg>
   </button>
   <button data-nav="settings" class="owner-only" aria-label="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.7"/><path d="M12 3.8v2M12 18.2v2M20.2 12h-2M5.8 12h-2M17.8 6.2l-1.4 1.4M7.6 16.4l-1.4 1.4M17.8 17.8l-1.4-1.4M7.6 7.6L6.2 6.2"/></svg><span>Settings</span></button>
 </nav>

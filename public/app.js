@@ -139,7 +139,7 @@ function bindWalletAddressCopy(root=document){
 }
 /* SHADOW_ENTITY_WALLET_COPY_V221_END */
 
-const state={user:null,settings:{},entities:[],tokens:[],overview:null,details:new Map(),graph:null,detailGraph:null,lastEventIds:new Set(),activeDm:null,userWallet:null,copySubscriptions:new Map()};
+const state={user:null,settings:{},entities:[],tokens:[],overview:null,details:new Map(),graph:null,detailGraph:null,lastEventIds:new Set(),activeDm:null,userWallet:null,copySubscriptions:new Map(),notifications:{settings:null,items:[],unread:0,lastTopId:'',pollSeeded:false}};
 /* SHADOW_USER_COPY_TRADING_V230_CLIENT */
 let activeWalletProvider=null;
 
@@ -234,6 +234,7 @@ async function connectInjectedWallet(candidate){
   state.user=verified.user||state.user;
   state.userWallet=verified.wallet;
   setAuth();
+  await loadNotificationState({silent:true});
   renderWalletButton();
   toast(`Wallet connected · ${short(address)}`);
   walletConnectionModal();
@@ -503,6 +504,183 @@ async function copyTradingModal(entityId,preloaded=null){
 /* SHADOW_USER_COPY_TRADING_V230_CLIENT_END */
 async function api(url,opt={}){const r=await fetch(url,{...opt,headers:{'content-type':'application/json',...(opt.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||`HTTP ${r.status}`);return d}
 function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove('show'),2400)}
+/* SHADOW_NOTIFICATIONS_V240_CLIENT */
+function resetNotificationState(){
+  state.notifications={settings:null,items:[],unread:0,lastTopId:'',pollSeeded:false};
+  renderNotificationBell();
+}
+
+function renderNotificationBell(){
+  const button=$('#notificationButton');
+  const badge=$('#notificationBadge');
+  if(!button||!badge)return;
+  /* SHADOW_NOTIFICATION_ZERO_HIDE_V247 */
+  const unread=Math.max(0,Number(state.user?state.notifications?.unread||0:0)||0);
+  const hasUnread=unread>0;
+  badge.hidden=!hasUnread;
+  badge.style.display=hasUnread?'grid':'none';
+  badge.textContent=hasUnread?(unread>99?'99+':String(unread)):'';
+  button.classList.toggle('has-unread',hasUnread);
+  button.title=state.user
+    ? unread>0?`${unread} unread notification${unread===1?'':'s'}`:'Notifications'
+    : 'Notifications · sign in to configure';
+  button.setAttribute('aria-label',button.title);
+}
+
+function notificationEntityLabel(row){
+  const handle=String(row?.xHandle||'').trim();
+  if(handle)return handle.startsWith('@')?handle:`@${handle}`;
+  return String(row?.entityName||'Entity').trim()||'Entity';
+}
+function notificationTokenLabel(row){
+  const raw=String(row?.symbol||row?.tokenName||short(row?.tokenMint||'Token')).trim();
+  return raw.startsWith('$')?raw:`$${raw}`;
+}
+function notificationAction(row){
+  const type=String(row?.type||'').toLowerCase();
+  return type==='sell'?'sold':type==='swap'?'swapped into':'bought';
+}
+function notificationEventHtml(row,index){
+  const entity=notificationEntityLabel(row);
+  const token=notificationTokenLabel(row);
+  const amountSol=Number(row?.solAmount||0);
+  const meta=[amountSol>0?`${amountSol.toFixed(amountSol<1?3:2)} SOL`:'',row?.eventAt?ago(row.eventAt):''].filter(Boolean).join(' · ');
+  return `<button type="button" class="si-notification-row" data-notification-row="${index}">
+    ${avatar({avatar:row?.entityAvatar,name:entity},'sm')}
+    <span class="si-notification-copy"><strong>${esc(entity)} ${esc(notificationAction(row))} ${esc(token)}</strong><small>${esc(meta||'Confirmed on-chain trade')}</small></span>
+    <span class="si-notification-chevron">›</span>
+  </button>`;
+}
+
+async function loadNotificationState({silent=false}={}){
+  if(!state.user){resetNotificationState();return;}
+  try{
+    const data=await api('/api/notifications?limit=60');
+    state.notifications.settings=data.settings||null;
+    state.notifications.items=Array.isArray(data.items)?data.items:[];
+    state.notifications.unread=Number(data.unread||0);
+    const topId=String(state.notifications.items[0]?.id||'');
+    if(!state.notifications.pollSeeded){
+      state.notifications.lastTopId=topId;
+      state.notifications.pollSeeded=true;
+    }else if(topId&&state.notifications.lastTopId&&topId!==state.notifications.lastTopId&&state.notifications.unread>0&&!silent){
+      const first=state.notifications.items[0];
+      toast(`${notificationEntityLabel(first)} ${notificationAction(first)} ${notificationTokenLabel(first)}`);
+      state.notifications.lastTopId=topId;
+    }else if(topId){state.notifications.lastTopId=topId;}
+    renderNotificationBell();
+  }catch(error){if(!silent)console.debug('Notification poll failed',error);}
+}
+
+async function markNotificationsRead(){
+  if(!state.user)return;
+  try{
+    await api('/api/notifications/read',{method:'POST',body:'{}'});
+    state.notifications.unread=0;
+    renderNotificationBell();
+  }catch(error){console.debug('Could not mark notifications read',error);}
+}
+
+function filterNotificationOptionRows(input,selector){
+  const q=String(input?.value||'').trim().toLowerCase();
+  document.querySelectorAll(selector).forEach(row=>{
+    row.hidden=!!q&&!String(row.dataset.search||'').toLowerCase().includes(q);
+  });
+}
+
+function notificationGuestModal(){
+  modal(`<div class="si-notification-center">
+    <div class="si-notification-head"><div><div class="si-eyebrow">ALERTS</div><h2>Notifications</h2><p>Sign in or connect a wallet to save alert preferences.</p></div></div>
+    <div class="si-notification-guest-actions">
+      <button id="notificationSignIn" class="si-button primary" type="button">Sign in</button>
+      <button id="notificationConnectWallet" class="si-button" type="button">Connect wallet</button>
+    </div>
+  </div>`);
+  $('#notificationSignIn').onclick=()=>authModal('login');
+  $('#notificationConnectWallet').onclick=()=>walletConnectionModal();
+}
+
+function notificationCenterModal(tab='notifications'){
+  if(!state.user)return notificationGuestModal();
+  const settings=state.notifications.settings||{entitiesEnabled:false,tokensEnabled:false,liveEnabled:false,entityIds:[],tokenMints:[]};
+  const selectedEntities=new Set(settings.entityIds||[]);
+  const selectedTokens=new Set(settings.tokenMints||[]);
+  const notificationsActive=tab==='notifications';
+  const body=notificationsActive
+    ? `<div class="si-notification-list">${(state.notifications.items||[]).map(notificationEventHtml).join('')||'<div class="si-notification-empty">No matching trade alerts yet.</div>'}</div>`
+    : `<form id="notificationSettingsForm" class="si-notification-settings">
+        <section class="si-notification-setting-block">
+          <label class="si-notification-master"><span><strong>Entities</strong><small>Alert only for selected people.</small></span><input id="notifyEntitiesEnabled" type="checkbox" ${settings.entitiesEnabled?'checked':''}/></label>
+          <input id="notifyEntitySearch" class="si-input" type="search" placeholder="Find an entity"/>
+          <div class="si-notification-options si-notification-entity-options">
+            ${(state.entities||[]).map(e=>{const name=e.xHandle||e.x_handle||e.name||'Entity';return `<label class="si-notification-option" data-notify-entity-row data-search="${esc([name,e.name].filter(Boolean).join(' '))}"><input type="checkbox" value="${esc(e.id)}" ${selectedEntities.has(e.id)?'checked':''}/>${avatar(e,'sm')}<span><strong>${esc(name)}</strong><small>${esc(e.name||'')}</small></span></label>`;}).join('')||'<div class="si-notification-empty">No Entities available.</div>'}
+          </div>
+        </section>
+        <section class="si-notification-setting-block">
+          <label class="si-notification-master"><span><strong>Tokens</strong><small>Alert when tracked Entities trade selected tokens.</small></span><input id="notifyTokensEnabled" type="checkbox" ${settings.tokensEnabled?'checked':''}/></label>
+          <input id="notifyTokenSearch" class="si-input" type="search" placeholder="Find a token"/>
+          <div class="si-notification-options si-notification-token-options">
+            ${(state.tokens||[]).map(t=>{const symbol=t.symbol||t.name||'Token';return `<label class="si-notification-option" data-notify-token-row data-search="${esc([symbol,t.name,t.mint].filter(Boolean).join(' '))}"><input type="checkbox" value="${esc(t.mint)}" ${selectedTokens.has(t.mint)?'checked':''}/>${avatar(t,'sm')}<span><strong>${esc(symbol.startsWith('$')?symbol:`$${symbol}`)}</strong><small>${esc(t.name||short(t.mint))}</small></span></label>`;}).join('')||'<div class="si-notification-empty">No Tokens available.</div>'}
+          </div>
+        </section>
+        <section class="si-notification-setting-block">
+          <label class="si-notification-master"><span><strong>Live</strong><small>Alert for every confirmed Buy / Sell / Swap across the tracked system.</small></span><input id="notifyLiveEnabled" type="checkbox" ${settings.liveEnabled?'checked':''}/></label>
+        </section>
+        <button class="si-button primary si-notification-save" type="submit">Save notifications</button>
+      </form>`;
+
+  modal(`<div class="si-notification-center"><div class="si-notification-head"><div><div class="si-eyebrow">ALERTS</div><h2>Notifications</h2><p>Only confirmed Buy / Sell / Swap activity can trigger an alert.</p></div></div><div class="si-notification-tabs"><button type="button" data-notify-tab="notifications" class="${notificationsActive?'active':''}">Notifications</button><button type="button" data-notify-tab="settings" class="${!notificationsActive?'active':''}">Settings</button></div>${body}</div>`);
+
+  $$('[data-notify-tab]').forEach(button=>{button.onclick=()=>notificationCenterModal(button.dataset.notifyTab);});
+  if(notificationsActive){
+    $$('[data-notification-row]').forEach(button=>{button.onclick=()=>{const row=state.notifications.items[Number(button.dataset.notificationRow)];if(!row)return;closeModal();if(row.entityId)return openObject('entity',{id:row.entityId});if(row.tokenMint)return openObject('token',{mint:row.tokenMint});};});
+    markNotificationsRead();
+    return;
+  }
+
+  const entitySearch=$('#notifyEntitySearch');
+  const tokenSearch=$('#notifyTokenSearch');
+  if(entitySearch)entitySearch.oninput=()=>filterNotificationOptionRows(entitySearch,'[data-notify-entity-row]');
+  if(tokenSearch)tokenSearch.oninput=()=>filterNotificationOptionRows(tokenSearch,'[data-notify-token-row]');
+  const form=$('#notificationSettingsForm');
+  if(form)form.onsubmit=async event=>{
+    event.preventDefault();
+    const save=form.querySelector('.si-notification-save');
+    save.disabled=true;save.textContent='Saving...';
+    const payload={
+      entitiesEnabled:!!$('#notifyEntitiesEnabled')?.checked,
+      tokensEnabled:!!$('#notifyTokensEnabled')?.checked,
+      liveEnabled:!!$('#notifyLiveEnabled')?.checked,
+      entityIds:$$('[data-notify-entity-row] input:checked').map(x=>x.value),
+      tokenMints:$$('[data-notify-token-row] input:checked').map(x=>x.value)
+    };
+    try{
+      const saved=await api('/api/notification-settings',{method:'PUT',body:JSON.stringify(payload)});
+      state.notifications.settings=saved.settings;
+      state.notifications.items=[];state.notifications.unread=0;state.notifications.lastTopId='';state.notifications.pollSeeded=false;
+      renderNotificationBell();
+      toast('Notification settings saved');
+      await loadNotificationState({silent:true});
+      notificationCenterModal('notifications');
+    }catch(error){toast(error.message);save.disabled=false;save.textContent='Save notifications';}
+  };
+}
+
+function bindNotificationButton(){
+  const button=$('#notificationButton');
+  if(!button)return;
+  button.onclick=async()=>{
+    if(!state.user)return notificationGuestModal();
+    await loadNotificationState({silent:true});
+    notificationCenterModal('notifications');
+  };
+  renderNotificationBell();
+}
+async function pollNotifications(){
+  if(!state.user||document.hidden)return;
+  await loadNotificationState({silent:false});
+}
+/* SHADOW_NOTIFICATIONS_V240_CLIENT_END */
 /* SHADOW_TOKEN_IMAGE_FIX_V211_START */
 function imageSource(item){
   if(!item) return '';
@@ -532,7 +710,16 @@ function avatar(item,size='md'){
   return `<span class="avatar avatar-${size}" style="${bg}"></span>`;
 }
 /* SHADOW_TOKEN_IMAGE_FIX_V211_END */
-function setAuth(){document.body.classList.toggle('is-auth',!!state.user);document.body.classList.toggle('is-owner',['owner','admin'].includes(state.user?.role));$('#userLabel').textContent=state.user?.displayName||'Sign in';$('#userAvatar').outerHTML=avatar(state.user,'sm').replace('class="avatar','id="userAvatar" class="avatar');$$('.auth-only').forEach(x=>x.style.display=state.user?'':'none');$$('.guest-only').forEach(x=>x.style.display=state.user?'none':'');$$('.owner-only').forEach(x=>x.style.display=['owner','admin'].includes(state.user?.role)?'':'none')}
+function setAuth(){
+  const authed=!!state.user;
+  document.body.classList.toggle('is-auth',authed);
+  document.body.classList.toggle('is-owner',['owner','admin'].includes(state.user?.role));
+  $$('.auth-only').forEach(x=>x.style.display=authed?'':'none');
+  $$('.guest-only').forEach(x=>x.style.display=authed?'none':'');
+  $$('.owner-only').forEach(x=>x.style.display=['owner','admin'].includes(state.user?.role)?'':'none');
+  if(!authed)resetNotificationState();
+  renderNotificationBell();
+}
 function theme(){return document.documentElement.dataset.theme==='dark'?'dark':'light'}
 function toggleTheme(){const n=theme()==='dark'?'light':'dark';document.documentElement.dataset.theme=n;localStorage.setItem('si-theme',n);state.graph?.schedule();state.detailGraph?.schedule()}
 let currentPage='overview';
@@ -589,7 +776,177 @@ function backPage(){
   nav('overview',{push:false,replace:true});
 }
 
+
+/* SHADOW_SECTION_COUNTS_V246 */
+const siSectionCounts={entities:null,wallets:null,tokens:null};
+let siSectionCountObserver=null;
+let siSectionCountQueued=false;
+
+function siCaptureLegacyOverviewCounts(){
+  const pattern=/^(\d+)\s+entities\s*[·•]\s*(\d+)\s+wallets\s*[·•]\s*(\d+)\s+tokens$/i;
+
+  document.querySelectorAll('div,span,p').forEach(el=>{
+    if(el.children.length)return;
+    const text=String(el.textContent||'').replace(/\s+/g,' ').trim();
+    const match=text.match(pattern);
+    if(!match)return;
+
+    siSectionCounts.entities=Number(match[1]);
+    siSectionCounts.wallets=Number(match[2]);
+    siSectionCounts.tokens=Number(match[3]);
+
+    /* SHADOW_SECTION_COUNTS_CLEANUP_V2461 */
+    let shell=el;
+    for(let i=0;i<3 && shell.parentElement;i++){
+      const parent=shell.parentElement;
+      const parentText=String(parent.textContent||'').replace(/\s+/g,' ').trim();
+      if(parentText===text && parent.children.length<=4){
+        shell=parent;
+        continue;
+      }
+      break;
+    }
+    shell.classList.add('si-legacy-overview-count-shell-hidden');
+    shell.setAttribute('aria-hidden','true');
+    el.classList.add('si-legacy-overview-count-hidden');
+    el.setAttribute('aria-hidden','true');
+  });
+}
+
+function siOverviewCount(key){
+  if(key==='entities' && Array.isArray(state?.entities))return state.entities.length;
+  if(key==='tokens' && Array.isArray(state?.tokens))return state.tokens.length;
+
+  const overview=state?.overview||{};
+  const candidates=[
+    overview?.[key],
+    overview?.counts?.[key],
+    overview?.summary?.[key],
+    overview?.stats?.[key],
+    overview?.[`${key}Count`],
+    overview?.[`${key}_count`]
+  ];
+
+  for(const value of candidates){
+    const number=Number(value);
+    if(Number.isFinite(number)&&number>=0)return number;
+  }
+
+  const cached=Number(siSectionCounts[key]);
+  return Number.isFinite(cached)&&cached>=0?cached:null;
+}
+
+/* SHADOW_SECTION_COUNTS_REMOVE_SOURCE_V2462 */
+function siRemoveLegacyCounterShell(){
+  const seeds=[
+    ...document.querySelectorAll(
+      '.si-legacy-overview-count-hidden,.si-legacy-overview-count-shell-hidden'
+    )
+  ];
+
+  for(const seed of seeds){
+    let node=seed;
+    for(let depth=0;depth<7 && node?.parentElement;depth++){
+      const parent=node.parentElement;
+      const rect=parent.getBoundingClientRect();
+      const style=getComputedStyle(parent);
+      const radius=parseFloat(style.borderTopLeftRadius)||0;
+
+      const isSmallRenderedShell=
+        rect.width>=16 &&
+        rect.width<=520 &&
+        rect.height>=12 &&
+        rect.height<=96 &&
+        radius>=8;
+
+      if(isSmallRenderedShell){
+        parent.remove();
+        break;
+      }
+      node=parent;
+    }
+  }
+
+  const viewportH=window.innerHeight||document.documentElement.clientHeight||0;
+  document.querySelectorAll('#main div,#main span,main div,main span').forEach(el=>{
+    if(el.children.length || String(el.textContent||'').trim())return;
+    const rect=el.getBoundingClientRect();
+    if(rect.width<16 || rect.width>100 || rect.height<12 || rect.height>50)return;
+    if(rect.top < viewportH*0.55)return;
+
+    const style=getComputedStyle(el);
+    const radius=parseFloat(style.borderTopLeftRadius)||0;
+    const borderWidth=parseFloat(style.borderTopWidth)||0;
+    if(radius<8 || borderWidth<=0)return;
+    if(el.closest('button,a,input,nav,.si-immersive-dock,.si-bottom-cluster'))return;
+    el.remove();
+  });
+}
+/* SHADOW_SECTION_COUNTS_REMOVE_SOURCE_V2462_END */
+
+function siSyncSectionCount(){
+  siCaptureLegacyOverviewCounts();
+  siRemoveLegacyCounterShell();
+
+  const main=document.querySelector('#main')||document.querySelector('main');
+  if(!main)return;
+
+  const titles=[...main.querySelectorAll('h1')];
+  for(const h1 of titles){
+    const title=[...h1.childNodes]
+      .filter(node=>node.nodeType===Node.TEXT_NODE)
+      .map(node=>node.textContent||'')
+      .join('')
+      .trim()
+      .toLowerCase();
+
+    const key=title==='entities'?'entities':title==='tokens'?'tokens':title==='wallets'?'wallets':'';
+    const existing=h1.querySelector(':scope > .si-section-count');
+
+    if(!key){
+      existing?.remove();
+      continue;
+    }
+
+    const count=siOverviewCount(key);
+    if(count===null)continue;
+
+    let badge=existing;
+    if(!badge){
+      badge=document.createElement('span');
+      badge.className='si-section-count';
+      badge.setAttribute('aria-hidden','true');
+      h1.appendChild(badge);
+    }
+    badge.textContent=String(count);
+    badge.title=`${count} ${key}`;
+  }
+}
+
+function siQueueSectionCountSync(){
+  if(siSectionCountQueued)return;
+  siSectionCountQueued=true;
+  requestAnimationFrame(()=>{
+    siSectionCountQueued=false;
+    siSyncSectionCount();
+  });
+}
+
+function startSectionCountSync(){
+  if(siSectionCountObserver)return;
+  siSectionCountObserver=new MutationObserver(siQueueSectionCountSync);
+  siSectionCountObserver.observe(document.body,{
+    subtree:true,
+    childList:true,
+    characterData:true
+  });
+  siQueueSectionCountSync();
+}
+/* SHADOW_SECTION_COUNTS_V246_END */
+
+
 async function boot(){
+ startSectionCountSync();
  try{
    const me=await api('/api/me');
    state.user=me.user;
@@ -601,11 +958,15 @@ async function boot(){
  bind();
  bindWalletButton();
  bindSearchPage();
+ bindNotificationButton();
  nav('overview',{push:false,replace:true});
  refresh();
  startMapSignalPoll();
  setInterval(()=>{
    if(!['chat','messages','settings'].includes(currentPage))refresh();
+ },7000);
+ setInterval(()=>{
+   pollNotifications().catch(()=>{});
  },7000);
 }
 function bind(){
@@ -613,7 +974,7 @@ function bind(){
    const target=b.dataset.nav;
    nav(target);
    if(target==='overview')renderOverview().catch(e=>console.error('Map render failed',e));
- });$('#themeToggle').onclick=toggleTheme;$('#adminTheme').onclick=toggleTheme;$('#userButton').onclick=()=>state.user?nav('messages'):authModal('login');$('#modalClose').onclick=closeModal;$('#modal').onclick=e=>{if(e.target.id==='modal')closeModal()};$('#addEntityBtn').onclick=entityModal;$('#entitiesAddBtn').onclick=entityModal;$('#evidenceAddBtn').onclick=evidenceModal;$('#chatForm').onsubmit=sendChat;$('#dmForm').onsubmit=sendDm;$('#userSearch').oninput=()=>searchUsers($('#userSearch').value);$('#settingsForm').onsubmit=saveSettings;$('#fitMap').onclick=()=>state.graph?.fit();
+ });const themeDockButton=$('#themeToggleDock');if(themeDockButton)themeDockButton.onclick=toggleTheme;$('#adminTheme').onclick=toggleTheme;$('#modalClose').onclick=closeModal;$('#modal').onclick=e=>{if(e.target.id==='modal')closeModal()};$('#addEntityBtn').onclick=entityModal;$('#entitiesAddBtn').onclick=entityModal;$('#evidenceAddBtn').onclick=evidenceModal;$('#chatForm').onsubmit=sendChat;$('#dmForm').onsubmit=sendDm;$('#userSearch').oninput=()=>searchUsers($('#userSearch').value);$('#settingsForm').onsubmit=saveSettings;$('#fitMap').onclick=()=>state.graph?.fit();
   $('#pageBack').onclick=backPage;
   window.addEventListener('popstate',e=>{
     const name=e.state?.shadowPage||'overview';
@@ -1546,7 +1907,189 @@ async function renderWalletInventory(targetSelector='#walletsAdminTable'){
 async function renderWallets(){
   return renderWalletInventory('#walletsAdminTable');
 }
-function renderTokens(){const a=state.tokens;$('#tokensGrid').innerHTML=a.map(t=>`<article class="si-panel si-token-card" data-token="${esc(t.mint)}">${avatar(t,'md')}<div><span class="si-token-symbol">${pumpTokenLink(t,t.symbol||'TOKEN')}</span><p>${esc(t.name||'Unknown')}<br><small>${short(t.mint)}</small></p><small>${t.is_pump?'Pump.fun / PumpSwap':esc(t.dex_id||'Solana')} · MC ${money(t.market_cap||0)}</small></div><strong class="${Number(t.price_change)>=0?'pos':'neg'}">${Number(t.price_change)>=0?'+':''}${Number(t.price_change||0).toFixed(1)}%</strong></article>`).join('')||'<div class="guest-note">Tokens appear after observed activity.</div>';$$('[data-token]').forEach(x=>x.onclick=event=>{if(event.target.closest('[data-pump-token-link]'))return;openObject('token',{mint:x.dataset.token})})}
+/* SHADOW_TOKEN_AVATAR_STABILITY_V2411_START */
+const siTokenAvatarCache = new Map();
+
+function siTokenAvatarKey(token){
+  return String(token?.mint || token?.address || token?.tokenMint || '').trim();
+}
+
+function siFindDetailedToken(token){
+  const mint = siTokenAvatarKey(token);
+  if(!mint) return null;
+
+  for(const value of state.details.values()){
+    if(!value) continue;
+
+    if(value?.token){
+      const t = value.token;
+      if(String(t?.mint || t?.address || t?.tokenMint || '').trim() === mint) return t;
+    }
+
+    const lists = [
+      value?.tokens,
+      value?.entity?.tokens,
+      value?.holdings,
+      value?.positions
+    ];
+
+    for(const list of lists){
+      if(!Array.isArray(list)) continue;
+      const hit = list.find(t =>
+        String(t?.mint || t?.address || t?.tokenMint || '').trim() === mint
+      );
+      if(hit) return hit;
+    }
+  }
+
+  return null;
+}
+
+function siStableTokenAvatarModel(token){
+  const key = siTokenAvatarKey(token);
+  const detailed = siFindDetailedToken(token);
+
+  const currentSource = imageSource(token) || imageSource(detailed);
+
+  if(currentSource && key){
+    siTokenAvatarCache.set(key, currentSource);
+  }
+
+  const stableSource =
+    currentSource ||
+    (key ? siTokenAvatarCache.get(key) : '') ||
+    '';
+
+  return {
+    ...(detailed || {}),
+    ...(token || {}),
+    avatar: stableSource,
+    image: stableSource,
+    imageUrl: stableSource,
+    image_url: stableSource,
+    imageURI: stableSource,
+    image_uri: stableSource,
+    icon: stableSource,
+    iconUrl: stableSource,
+    icon_url: stableSource,
+    logo: stableSource,
+    logoUrl: stableSource,
+    logo_url: stableSource,
+    logoURI: stableSource,
+    logo_uri: stableSource,
+    thumbnail: stableSource,
+    thumb: stableSource,
+    picture: stableSource,
+    photo: stableSource
+  };
+}
+
+function siTokenAvatarHtml(token){
+  return avatar(siStableTokenAvatarModel(token),'md');
+}
+/* SHADOW_TOKEN_AVATAR_STABILITY_V2411_END */
+function renderTokens(){const a=state.tokens;$('#tokensGrid').innerHTML=a.map(t=>`<article class="si-panel si-token-card" data-token="${esc(t.mint)}">${siTokenAvatarHtml(t)}<div><span class="si-token-symbol">${pumpTokenLink(t,t.symbol||'TOKEN')}</span><p>${esc(t.name||'Unknown')}<br><small>${short(t.mint)}</small></p><small>${t.is_pump?'Pump.fun / PumpSwap':esc(t.dex_id||'Solana')} · MC ${money(t.market_cap||0)}</small></div><strong class="${Number(t.price_change)>=0?'pos':'neg'}">${Number(t.price_change)>=0?'+':''}${Number(t.price_change||0).toFixed(1)}%</strong></article>`).join('')||'<div class="guest-note">Tokens appear after observed activity.</div>';$$('[data-token]').forEach(x=>x.onclick=event=>{if(event.target.closest('[data-pump-token-link]'))return;openObject('token',{mint:x.dataset.token})})}
+/* SHADOW_LIVE_AVATAR_STABILITY_V2410_START */
+/*
+ * Live Activity rows are event objects, not entity objects.
+ * A refresh can therefore omit the avatar even though the tracked Entity
+ * still has one. Resolve the row back to its Entity and remember the last
+ * known-good image so the avatar does not blink/disappear between refreshes.
+ */
+const siLiveAvatarCache = new Map();
+
+function siNormIdentity(value){
+  return String(value ?? '').trim().toLowerCase().replace(/^@/,'');
+}
+
+function siLiveEventEntity(event){
+  const rows = Array.isArray(state.entities) ? state.entities : [];
+  if(!rows.length || !event) return null;
+
+  const eventId = String(event.entityId ?? event.entity_id ?? '').trim();
+  if(eventId){
+    const hit = rows.find(e => String(e?.id ?? '').trim() === eventId);
+    if(hit) return hit;
+  }
+
+  const names = [
+    event.entityName,event.entity_name,event.entity,
+    event.x_handle,event.xHandle,event.handle,event.username
+  ].map(siNormIdentity).filter(Boolean);
+
+  if(names.length){
+    const hit = rows.find(e => {
+      const entityNames = [
+        e?.name,e?.displayName,e?.entityName,
+        e?.x_handle,e?.xHandle,e?.handle,e?.username
+      ].map(siNormIdentity).filter(Boolean);
+      return names.some(n => entityNames.includes(n));
+    });
+    if(hit) return hit;
+  }
+
+  const wallet = siNormIdentity(
+    event.walletAddress ?? event.wallet_address ?? event.wallet ?? event.address
+  );
+  if(wallet){
+    const hit = rows.find(e => {
+      const direct = [
+        e?.walletAddress,e?.wallet_address,e?.wallet,e?.address
+      ].map(siNormIdentity).filter(Boolean);
+      const nested = Array.isArray(e?.wallets)
+        ? e.wallets.flatMap(w => [
+            w?.address,w?.walletAddress,w?.wallet_address,w?.wallet
+          ].map(siNormIdentity).filter(Boolean))
+        : [];
+      return direct.includes(wallet) || nested.includes(wallet);
+    });
+    if(hit) return hit;
+  }
+
+  return null;
+}
+
+function siLiveAvatarKey(event, entity){
+  return [
+    entity?.id,
+    event?.entityId,event?.entity_id,
+    entity?.x_handle,entity?.xHandle,
+    event?.entityName,event?.entity_name,
+    event?.x_handle,event?.xHandle,
+    event?.walletAddress,event?.wallet_address
+  ].map(siNormIdentity).find(Boolean) || '';
+}
+
+function siLiveAvatarModel(event){
+  const entity = siLiveEventEntity(event);
+  const key = siLiveAvatarKey(event, entity);
+
+  const currentSource = imageSource(event) || imageSource(entity);
+
+  if(currentSource && key){
+    siLiveAvatarCache.set(key, currentSource);
+  }
+
+  const stableSource = currentSource || (key ? siLiveAvatarCache.get(key) : '') || '';
+
+  return {
+    ...(entity || {}),
+    ...(event || {}),
+    avatar: stableSource,
+    image: stableSource,
+    imageUrl: stableSource,
+    image_url: stableSource,
+    profileImage: stableSource,
+    profile_image: stableSource,
+    name: event?.entityName || event?.entity_name || entity?.name || event?.name || 'Entity',
+    x_handle: entity?.x_handle || entity?.xHandle || event?.x_handle || event?.xHandle || ''
+  };
+}
+
+function siLiveAvatarHtml(event){
+  return avatar(siLiveAvatarModel(event),'md');
+}
+/* SHADOW_LIVE_AVATAR_STABILITY_V2410_END */
 function renderFeed(){
   const rows=state.overview?.feed||[];
   $('#fullFeed').innerHTML=rows.map(x=>{
@@ -1554,7 +2097,7 @@ function renderFeed(){
     const titleHtml=x.tokenMint
       ? pumpTokenLink({mint:x.tokenMint},title)
       : `<strong>${esc(title)}</strong>`;
-    return `<div class="si-feed-row">${avatar(x,'md')}<div><h3>${titleHtml}</h3><p>${esc(x.detail||x.symbol||x.walletAddress||'')}</p><time>${esc(x.entityName||'Unknown')} · ${ago(x.createdAt)}</time></div><strong class="${Number(x.value)<0?'neg':'pos'}">${x.value!=null?(Number(x.value)>0?'+':'')+esc(x.value)+'%':''}</strong></div>`;
+    return `<div class="si-feed-row">${siLiveAvatarHtml(x)}<div><h3>${titleHtml}</h3><p>${esc(x.detail||x.symbol||x.walletAddress||'')}</p><time>${esc(x.entityName||'Unknown')} · ${ago(x.createdAt)}</time></div><strong class="${Number(x.value)<0?'neg':'pos'}">${x.value!=null?(Number(x.value)>0?'+':'')+esc(x.value)+'%':''}</strong></div>`;
   }).join('')||'<div class="guest-note">No live events yet.</div>';
   loadHealth();
 }

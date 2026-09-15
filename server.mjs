@@ -218,6 +218,95 @@ function numBetween(value,min,max,fallback){
   return Number.isFinite(n)?Math.max(min,Math.min(max,n)):fallback;
 }
 /* SHADOW_USER_COPY_TRADING_V230_SERVER_HELPERS_END */
+/* SHADOW_NOTIFICATIONS_V240_SERVER */
+function ensureNotificationPreferences(db,userId){
+  let row=db.prepare(`
+    SELECT * FROM user_notification_preferences WHERE user_id=?
+  `).get(userId);
+  if(!row){
+    const at=nowIso();
+    db.prepare(`
+      INSERT INTO user_notification_preferences
+        (user_id,entities_enabled,tokens_enabled,live_enabled,started_at,last_seen_at,updated_at)
+      VALUES (?,0,0,0,?,?,?)
+    `).run(userId,at,at,at);
+    row=db.prepare(`SELECT * FROM user_notification_preferences WHERE user_id=?`).get(userId);
+  }
+  return row;
+}
+
+function notificationSettingsRow(db,userId){
+  const row=ensureNotificationPreferences(db,userId);
+  const entityIds=db.prepare(`
+    SELECT entity_id AS id FROM user_notification_entities
+    WHERE user_id=? ORDER BY created_at,entity_id
+  `).all(userId).map(x=>x.id);
+  const tokenMints=db.prepare(`
+    SELECT mint FROM user_notification_tokens
+    WHERE user_id=? ORDER BY created_at,mint
+  `).all(userId).map(x=>x.mint);
+  return {
+    entitiesEnabled:!!row.entities_enabled,
+    tokensEnabled:!!row.tokens_enabled,
+    liveEnabled:!!row.live_enabled,
+    entityIds,tokenMints,
+    startedAt:row.started_at,lastSeenAt:row.last_seen_at,updatedAt:row.updated_at
+  };
+}
+
+const NOTIFICATION_MATCH_SQL=`
+  a.type IN ('buy','sell','swap')
+  AND COALESCE(NULLIF(a.block_time,''),a.created_at) >= p.started_at
+  AND (
+    p.live_enabled=1
+    OR (
+      p.entities_enabled=1
+      AND EXISTS (
+        SELECT 1 FROM user_notification_entities ne
+        WHERE ne.user_id=p.user_id AND ne.entity_id=a.entity_id
+      )
+    )
+    OR (
+      p.tokens_enabled=1
+      AND EXISTS (
+        SELECT 1 FROM user_notification_tokens nt
+        WHERE nt.user_id=p.user_id AND nt.mint=a.mint
+      )
+    )
+  )
+`;
+
+function notificationRows(db,userId,limit=60){
+  ensureNotificationPreferences(db,userId);
+  const safeLimit=Math.max(1,Math.min(Number(limit)||60,100));
+  const items=db.prepare(`
+    SELECT
+      a.id,a.type,a.entity_id AS entityId,a.mint AS tokenMint,
+      ABS(COALESCE(a.token_amount,0)) AS tokenAmount,
+      ABS(COALESCE(a.sol_amount,0)) AS solAmount,
+      COALESCE(NULLIF(a.block_time,''),a.created_at) AS eventAt,
+      e.name AS entityName,e.x_handle AS xHandle,e.avatar AS entityAvatar,
+      t.symbol,t.name AS tokenName,t.image AS tokenImage
+    FROM wallet_activity a
+    JOIN user_notification_preferences p ON p.user_id=?
+    LEFT JOIN entities e ON e.id=a.entity_id
+    LEFT JOIN tokens t ON t.mint=a.mint
+    WHERE ${NOTIFICATION_MATCH_SQL}
+    ORDER BY COALESCE(NULLIF(a.block_time,''),a.created_at) DESC
+    LIMIT ?
+  `).all(userId,safeLimit);
+  const countRow=db.prepare(`
+    SELECT COUNT(*) AS n
+    FROM wallet_activity a
+    JOIN user_notification_preferences p ON p.user_id=?
+    WHERE ${NOTIFICATION_MATCH_SQL}
+      AND COALESCE(NULLIF(a.block_time,''),a.created_at)
+          > COALESCE(NULLIF(p.last_seen_at,''),p.started_at)
+  `).get(userId);
+  return {items,unread:Number(countRow?.n||0)};
+}
+/* SHADOW_NOTIFICATIONS_V240_SERVER_END */
+
 function entityRows(db) {
   return db.prepare(`
     SELECT e.*,
@@ -264,6 +353,53 @@ async function api(req, res, db, url, live) {
     return json(res,200,await live.syncAll());
   }
   if (route === '/api/me' && method === 'GET') return json(res, 200, { user:userFor(req, db), settings:{ platformName:getSetting(db,'platform_name','Shadow Intelligence') } });
+  /* SHADOW_NOTIFICATIONS_V240_ROUTES */
+  if (route === '/api/notification-settings' && method === 'GET') {
+    const user=requireUser(req,res,db); if(!user)return;
+    return json(res,200,{settings:notificationSettingsRow(db,user.id)});
+  }
+  if (route === '/api/notification-settings' && method === 'PUT') {
+    const user=requireUser(req,res,db); if(!user)return;
+    const b=await readJson(req);
+    ensureNotificationPreferences(db,user.id);
+    const entityIds=[...new Set((Array.isArray(b.entityIds)?b.entityIds:[]).map(x=>clean(x,120)).filter(Boolean))].slice(0,100);
+    const tokenMints=[...new Set((Array.isArray(b.tokenMints)?b.tokenMints:[]).map(x=>clean(x,120)).filter(Boolean))].slice(0,200);
+    const entityExists=db.prepare('SELECT 1 FROM entities WHERE id=?');
+    const tokenExists=db.prepare('SELECT 1 FROM tokens WHERE mint=?');
+    const validEntityIds=entityIds.filter(value=>entityExists.get(value));
+    const validTokenMints=tokenMints.filter(value=>tokenExists.get(value));
+    const at=nowIso();
+    db.exec('BEGIN IMMEDIATE');
+    try{
+      db.prepare(`
+        UPDATE user_notification_preferences
+        SET entities_enabled=?,tokens_enabled=?,live_enabled=?,started_at=?,last_seen_at=?,updated_at=?
+        WHERE user_id=?
+      `).run(b.entitiesEnabled?1:0,b.tokensEnabled?1:0,b.liveEnabled?1:0,at,at,at,user.id);
+      db.prepare('DELETE FROM user_notification_entities WHERE user_id=?').run(user.id);
+      db.prepare('DELETE FROM user_notification_tokens WHERE user_id=?').run(user.id);
+      const addEntity=db.prepare(`INSERT OR IGNORE INTO user_notification_entities (user_id,entity_id,created_at) VALUES (?,?,?)`);
+      for(const entityId of validEntityIds)addEntity.run(user.id,entityId,at);
+      const addToken=db.prepare(`INSERT OR IGNORE INTO user_notification_tokens (user_id,mint,created_at) VALUES (?,?,?)`);
+      for(const mint of validTokenMints)addToken.run(user.id,mint,at);
+      db.exec('COMMIT');
+    }catch(error){db.exec('ROLLBACK');throw error;}
+    return json(res,200,{settings:notificationSettingsRow(db,user.id)});
+  }
+  if (route === '/api/notifications' && method === 'GET') {
+    const user=requireUser(req,res,db); if(!user)return;
+    const limit=Math.min(Number(url.searchParams.get('limit'))||60,100);
+    const result=notificationRows(db,user.id,limit);
+    return json(res,200,{...result,settings:notificationSettingsRow(db,user.id)});
+  }
+  if (route === '/api/notifications/read' && method === 'POST') {
+    const user=requireUser(req,res,db); if(!user)return;
+    ensureNotificationPreferences(db,user.id);
+    const at=nowIso();
+    db.prepare(`UPDATE user_notification_preferences SET last_seen_at=?,updated_at=? WHERE user_id=?`).run(at,at,user.id);
+    return json(res,200,{ok:true,lastSeenAt:at});
+  }
+  /* SHADOW_NOTIFICATIONS_V240_ROUTES_END */
   if (route === '/api/auth/register' && method === 'POST') {
     if (getSetting(db,'registration_enabled','true') !== 'true') return json(res,403,{error:'Registration is disabled'});
     const body = await readJson(req);

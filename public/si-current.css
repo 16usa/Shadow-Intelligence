@@ -214,15 +214,16 @@ body{overflow:hidden!important;background:var(--si-bg)}
   background:var(--imm-glass);box-shadow:var(--imm-dock-shadow);
   backdrop-filter:blur(24px) saturate(160%);-webkit-backdrop-filter:blur(24px) saturate(160%);
 }
+/* SHADOW_DOCK_ICON_ONLY_V2421 */
 .si-immersive-dock button{
-  min-width:50px;height:48px;padding:5px 9px;border:0;border-radius:999px;background:transparent;color:var(--si-muted);
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer;transition:background .16s ease,color .16s ease,transform .16s ease;
+  width:var(--si-dock-hit);min-width:var(--si-dock-hit);height:44px;padding:0;border:0;border-radius:999px;background:transparent;color:var(--si-muted);
+  display:grid;place-items:center;cursor:pointer;transition:background .16s ease,color .16s ease,transform .16s ease;
 }
 .si-immersive-dock button:hover{color:var(--si-text);background:color-mix(in srgb,var(--si-text) 7%,transparent)}
 .si-immersive-dock button:active{transform:scale(.96)}
 .si-immersive-dock button.active{color:var(--si-text);background:color-mix(in srgb,var(--si-text) 10%,transparent)}
-.si-immersive-dock svg{width:18px;height:18px;display:block;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-.si-immersive-dock span{font-size:9px;font-weight:720;letter-spacing:.01em;line-height:1}
+.si-immersive-dock svg{width:21px;height:21px;display:block;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.si-immersive-dock button>span{display:none!important}
 
 /* Secondary sections are real full-screen application pages. */
 .si-page:not(#page-overview){display:none!important}
@@ -325,9 +326,9 @@ body:has(.si-page.active-page:not(#page-overview)) #page-overview .si-map-header
   .si-graph-hud>span:nth-child(2){display:none!important}
   #page-overview .si-map-header{top:calc(env(safe-area-inset-top,0px) + 64px)!important}
   .si-immersive-dock{bottom:calc(env(safe-area-inset-bottom,0px) + 9px);padding:5px;gap:1px}
-  .si-immersive-dock button{min-width:46px;height:46px;padding:4px 7px}
-  .si-immersive-dock svg{width:17px;height:17px}
-  .si-immersive-dock span{font-size:8.5px}
+  .si-immersive-dock button{width:var(--si-dock-hit);min-width:var(--si-dock-hit);height:44px;padding:0}
+  .si-immersive-dock svg{width:21px;height:21px}
+  .si-immersive-dock button>span{display:none!important}
   .si-modal{padding:8px 6px 0!important}
   .si-modal-card{max-height:90dvh!important;border-radius:25px 25px 0 0!important;padding:24px 15px calc(18px + env(safe-area-inset-bottom,0px))!important}
   .si-detail-layout{grid-template-columns:1fr!important}
@@ -336,8 +337,8 @@ body:has(.si-page.active-page:not(#page-overview)) #page-overview .si-map-header
 }
 @media(max-width:390px){
   .si-search{width:44vw!important}
-  .si-immersive-dock button{min-width:43px;padding-inline:5px}
-  .si-immersive-dock span{font-size:8px}
+  .si-immersive-dock button{width:var(--si-dock-hit);min-width:var(--si-dock-hit);padding:0}
+  .si-immersive-dock button>span{display:none!important}
 }
 @media(prefers-reduced-motion:reduce){.si-page:not(#page-overview).active-page,.si-modal-card{animation:none!important}.si-immersive-dock button,.si-page-back{transition:none!important}}
 @supports not ((backdrop-filter:blur(2px)) or (-webkit-backdrop-filter:blur(2px))){.si-topbar .si-brand,.si-search,.si-icon,.si-user,.si-immersive-dock,.si-map-footer,.si-graph-hud,.si-page-back{background:var(--imm-glass-strong)!important}.si-page:not(#page-overview).active-page,.si-modal-card{background:var(--si-panel)!important}}
@@ -976,32 +977,27 @@ html[data-theme=dark] #page-overview #globalMap{
 
 
 /* SHADOW_WALLET_DOCK_V231 */
-/* Wallet connection now lives in the immersive bottom dock after Chat. */
+/* Wallet connection uses the same icon-only geometry as the rest of the dock. */
 .si-immersive-dock #walletButton.si-wallet-dock-button{
-  width:auto!important;
-  height:48px!important;
-  min-width:50px!important;
-  padding:5px 9px!important;
-  flex:0 0 auto!important;
-  border:0!important;
-  border-radius:999px!important;
-  background:transparent!important;
-  color:var(--si-muted)!important;
-  display:flex!important;
-  flex-direction:column!important;
-  align-items:center!important;
-  justify-content:center!important;
-  gap:2px!important;
+  width:var(--si-dock-hit)!important;
+  height:44px!important;
+  min-width:var(--si-dock-hit)!important;
+  padding:0!important;
+  flex:0 0 var(--si-dock-hit)!important;
+  display:grid!important;
+  place-items:center!important;
+  gap:0!important;
 }
 .si-immersive-dock #walletButton.si-wallet-dock-button svg{
-  width:18px!important;
-  height:18px!important;
+  width:21px!important;
+  height:21px!important;
   fill:none!important;
   stroke:currentColor!important;
   stroke-width:1.7!important;
   stroke-linecap:round!important;
   stroke-linejoin:round!important;
 }
+.si-immersive-dock #walletButton.si-wallet-dock-button>span{display:none!important}
 .si-immersive-dock #walletButton.si-wallet-dock-button.is-connected{
   color:var(--si-green)!important;
   background:color-mix(in srgb,var(--si-green) 11%,transparent)!important;
@@ -1010,24 +1006,19 @@ html[data-theme=dark] #page-overview #globalMap{
   color:var(--si-text)!important;
   background:color-mix(in srgb,var(--si-text) 7%,transparent)!important;
 }
-.si-immersive-dock #walletButton.si-wallet-dock-button:active{
-  transform:scale(.96);
-}
+.si-immersive-dock #walletButton.si-wallet-dock-button:active{transform:scale(.96)}
 @media(max-width:760px){
   .si-immersive-dock #walletButton.si-wallet-dock-button{
-    width:auto!important;
-    height:46px!important;
-    min-width:46px!important;
-    padding:4px 7px!important;
+    width:44px!important;height:44px!important;min-width:44px!important;padding:0!important;
   }
 }
 @media(max-width:390px){
   .si-immersive-dock #walletButton.si-wallet-dock-button{
-    min-width:43px!important;
-    padding-inline:5px!important;
+    width:44px!important;min-width:44px!important;padding:0!important;
   }
 }
 /* SHADOW_WALLET_DOCK_V231_END */
+/* SHADOW_DOCK_ICON_ONLY_V2421_END */
 
 
 /* SHADOW_WALLETS_IN_ADMIN_V233_CSS */
@@ -1077,20 +1068,51 @@ html[data-theme=dark] #page-overview #globalMap{
 
 
 /* SHADOW_THEME_LEFT_V234 */
+/* SHADOW_THEME_ICON_UNIFY_V241 */
 .si-topbar{
   grid-template-columns:auto 1fr auto!important;
 }
 .si-topbar .si-theme-left{
   grid-column:1!important;
   justify-self:start!important;
-  width:42px!important;
-  height:42px!important;
-  min-width:42px!important;
+  width:50px!important;
+  height:50px!important;
+  min-width:50px!important;
+  padding:0!important;
   display:grid!important;
   place-items:center!important;
-  padding:0!important;
-  font-size:20px!important;
-  line-height:1!important;
+  border:1px solid var(--si-line)!important;
+  border-radius:50%!important;
+  background:var(--si-panel)!important;
+  color:var(--si-muted)!important;
+  box-shadow:none!important;
+  cursor:pointer!important;
+  font-size:0!important;
+  -webkit-tap-highlight-color:transparent;
+  transition:color .15s ease,background .15s ease,transform .15s ease!important;
+}
+.si-topbar .si-theme-left:hover{
+  color:var(--si-text)!important;
+  background:color-mix(in srgb,var(--si-text) 6%,var(--si-panel))!important;
+}
+.si-topbar .si-theme-left:active{
+  transform:scale(.96)!important;
+}
+.si-topbar .si-theme-left svg{
+  width:21px!important;
+  height:21px!important;
+  display:block!important;
+  overflow:visible!important;
+  fill:none!important;
+  stroke:currentColor!important;
+  stroke-width:1.7!important;
+  stroke-linecap:round!important;
+  stroke-linejoin:round!important;
+}
+.si-topbar .si-theme-left .si-theme-half{
+  fill:currentColor!important;
+  stroke:none!important;
+  opacity:.92!important;
 }
 .si-topbar .si-mainnav{
   grid-column:2!important;
@@ -1100,14 +1122,13 @@ html[data-theme=dark] #page-overview #globalMap{
 }
 @media(max-width:760px){
   .si-topbar{
-    grid-template-columns:54px minmax(0,1fr) auto!important;
+    grid-template-columns:50px minmax(0,1fr) auto!important;
   }
   .si-topbar .si-theme-left{
-    width:48px!important;
-    height:48px!important;
-    min-width:48px!important;
-    border-radius:16px!important;
-    font-size:22px!important;
+    width:50px!important;
+    height:50px!important;
+    min-width:50px!important;
+    border-radius:50%!important;
   }
 }
 /* SHADOW_THEME_LEFT_V234_END */
@@ -1360,3 +1381,316 @@ body:has(#page-search.active-page) .si-search-dock{
   }
 }
 /* SHADOW_SEARCH_PAGE_V237_CSS_END */
+
+
+/* SHADOW_NOTIFICATIONS_V240_CSS */
+.si-notification-button{position:relative;width:50px;height:50px;min-width:50px;padding:0;display:grid;place-items:center;border:1px solid var(--si-line);border-radius:50%;background:var(--si-panel);color:var(--si-muted);cursor:pointer;-webkit-tap-highlight-color:transparent;transition:color .15s ease,background .15s ease,transform .15s ease}
+.si-notification-button:hover,.si-notification-button.has-unread{color:var(--si-text);background:color-mix(in srgb,var(--si-text) 6%,var(--si-panel))}.si-notification-button:active{transform:scale(.96)}
+.si-notification-button svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.si-notification-badge{position:absolute;top:-3px;right:-3px;min-width:18px;height:18px;padding:0 5px;display:grid;place-items:center;border:2px solid var(--si-bg);border-radius:999px;background:var(--si-pink);color:#fff;font-size:9px;font-weight:800;line-height:1}
+.si-notification-center{width:min(620px,100%);margin:0 auto}.si-notification-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:16px}.si-notification-head h2{margin:5px 0 5px;font-size:26px;letter-spacing:-.025em}.si-notification-head p{margin:0;color:var(--si-muted);font-size:12px;line-height:1.4}
+.si-notification-tabs{display:grid;grid-template-columns:1fr 1fr;padding:3px;margin-bottom:12px;border:1px solid var(--si-line);border-radius:999px;background:color-mix(in srgb,var(--si-text) 4%,transparent)}.si-notification-tabs button{min-height:38px;border:0;border-radius:999px;background:transparent;color:var(--si-muted);font-size:12px;font-weight:750;cursor:pointer}.si-notification-tabs button.active{background:var(--si-panel);color:var(--si-text);box-shadow:0 1px 4px color-mix(in srgb,var(--si-text) 10%,transparent)}
+.si-notification-list{border-top:1px solid var(--si-line)}.si-notification-row{width:100%;min-height:68px;padding:10px 2px;border:0;border-bottom:1px solid var(--si-line);background:transparent;color:var(--si-text);display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:11px;text-align:left;cursor:pointer}.si-notification-row:active{background:color-mix(in srgb,var(--si-text) 5%,transparent)}.si-notification-copy{min-width:0}.si-notification-copy strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.si-notification-copy small{display:block;margin-top:4px;color:var(--si-muted);font-size:10px}.si-notification-chevron{color:var(--si-muted);font-size:22px;font-weight:300}.si-notification-empty{padding:24px 2px;color:var(--si-muted);font-size:12px}
+.si-notification-settings{display:flex;flex-direction:column;gap:12px}.si-notification-setting-block{border:1px solid var(--si-line);border-radius:16px;padding:14px;background:var(--si-panel)}.si-notification-master{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:12px}.si-notification-master span{min-width:0}.si-notification-master strong{display:block;font-size:14px}.si-notification-master small{display:block;margin-top:3px;color:var(--si-muted);font-size:10px;line-height:1.35}.si-notification-master input{width:20px;height:20px;accent-color:var(--si-blue)}.si-notification-setting-block>.si-input{width:100%;margin-bottom:8px}.si-notification-options{max-height:250px;overflow:auto;border-top:1px solid var(--si-line)}.si-notification-option{min-height:54px;padding:8px 1px;display:grid;grid-template-columns:auto auto minmax(0,1fr);align-items:center;gap:9px;border-bottom:1px solid var(--si-line);cursor:pointer}.si-notification-option:last-child{border-bottom:0}.si-notification-option>input{width:18px;height:18px;accent-color:var(--si-blue)}.si-notification-option span:last-child{min-width:0}.si-notification-option strong,.si-notification-option small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.si-notification-option strong{font-size:12px}.si-notification-option small{margin-top:2px;color:var(--si-muted);font-size:9px}.si-notification-save{width:100%;min-height:46px}.si-notification-guest-actions{display:flex;gap:8px;flex-wrap:wrap}.si-notification-guest-actions .si-button{flex:1 1 150px}
+@media(max-width:760px){.si-top-actions{position:fixed!important;top:calc(env(safe-area-inset-top,0px) + 14px)!important;right:18px!important;z-index:140!important;display:flex!important}.si-notification-button{width:50px;height:50px;min-width:50px}.si-notification-center{width:100%}.si-notification-options{max-height:220px}}
+/* SHADOW_NOTIFICATIONS_V240_CSS_END */
+
+
+/* SHADOW_DOCK_ADAPTIVE_V243 */
+/*
+  Adaptive dock behavior:
+  - current items stay compact;
+  - adding one more item compresses spacing/hit widths smoothly;
+  - if many items are added, the dock scrolls horizontally instead of
+    wrapping, overflowing the viewport, or shrinking the 21px icons.
+*/
+.si-immersive-dock{
+  --si-dock-hit:clamp(36px,9.5vw,44px);
+  width:max-content!important;
+  max-width:calc(100vw - 76px)!important;
+  gap:clamp(2px,.7vw,6px)!important;
+  padding-left:clamp(6px,1.6vw,10px)!important;
+  padding-right:clamp(6px,1.6vw,10px)!important;
+  justify-content:flex-start!important;
+  overflow-x:auto!important;
+  overflow-y:hidden!important;
+  overscroll-behavior-x:contain;
+  -webkit-overflow-scrolling:touch;
+  scrollbar-width:none;
+}
+.si-immersive-dock::-webkit-scrollbar{display:none}
+
+.si-immersive-dock button{
+  flex:0 0 var(--si-dock-hit)!important;
+  width:var(--si-dock-hit)!important;
+  min-width:var(--si-dock-hit)!important;
+}
+
+/* Icon geometry never changes when more menu items are added. */
+.si-immersive-dock svg,
+.si-immersive-dock #walletButton.si-wallet-dock-button svg{
+  width:21px!important;
+  height:21px!important;
+}
+
+/* Keep the detached Search control independent from dock growth. */
+.si-bottom-cluster .si-floating-search-button{
+  flex:0 0 52px!important;
+}
+
+@media(min-width:520px){
+  .si-immersive-dock{
+    --si-dock-hit:44px;
+    gap:6px!important;
+    max-width:calc(100vw - 92px)!important;
+  }
+}
+/* SHADOW_DOCK_ADAPTIVE_V243_END */
+
+
+/* SHADOW_DOCK_ACTIVE_NO_FILL_V245 */
+/*
+  Active dock items must not use a filled circle/pill.
+  Selection is communicated only through icon color/contrast.
+*/
+.si-immersive-dock button.active,
+.si-immersive-dock button[aria-current="page"],
+.si-immersive-dock button.is-active,
+.si-immersive-dock button[data-active="true"]{
+  background:transparent!important;
+  box-shadow:none!important;
+  color:var(--si-text)!important;
+}
+
+/* Keep hover/tap feedback subtle without restoring a persistent fill. */
+.si-immersive-dock button:hover{
+  background:transparent!important;
+}
+.si-immersive-dock button:active{
+  background:transparent!important;
+  transform:scale(.96);
+}
+/* SHADOW_DOCK_ACTIVE_NO_FILL_V245_END */
+
+
+/* SHADOW_SECTION_COUNTS_V246_CSS */
+/* Old combined “Entities · Wallets · Tokens” bubble is retired. */
+.si-legacy-overview-count-hidden{
+  display:none!important;
+}
+
+/* Each section owns its own count directly beside the page title. */
+h1>.si-section-count{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:28px;
+  height:24px;
+  margin-left:10px;
+  padding:0 8px;
+  vertical-align:middle;
+  border:1px solid var(--si-line);
+  border-radius:999px;
+  background:transparent;
+  color:var(--si-muted);
+  font-size:11px;
+  font-weight:650;
+  line-height:1;
+  letter-spacing:0;
+  transform:translateY(-2px);
+}
+
+@media(max-width:760px){
+  h1>.si-section-count{
+    min-width:26px;
+    height:23px;
+    margin-left:8px;
+    padding:0 7px;
+    font-size:10.5px;
+  }
+}
+/* SHADOW_SECTION_COUNTS_V246_CSS_END */
+
+
+/* SHADOW_SECTION_COUNTS_CLEANUP_V2461_CSS */
+.si-legacy-overview-count-shell-hidden{
+  display:none!important;
+  width:0!important;
+  height:0!important;
+  min-width:0!important;
+  min-height:0!important;
+  margin:0!important;
+  padding:0!important;
+  border:0!important;
+}
+.si-legacy-overview-count-hidden{
+  display:none!important;
+}
+/* SHADOW_SECTION_COUNTS_CLEANUP_V2461_CSS_END */
+
+/* SHADOW_NOTIFICATION_ZERO_HIDE_V247_CSS */
+.si-notification-badge[hidden],
+.si-notification-badge:empty{
+  display:none!important;
+}
+/* SHADOW_NOTIFICATION_ZERO_HIDE_V247_CSS_END */
+
+/* SHADOW_SURFACE_UNIFY_V248 */
+/*
+  Match the lower dock and detached Search button to the Notification bell:
+  same panel surface, same border family, no extra blur/shadow.
+*/
+.si-immersive-dock,
+.si-bottom-cluster .si-floating-search-button{
+  background:var(--si-panel)!important;
+  border-color:var(--si-line)!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+}
+
+/* Keep the dock itself flat; active-item fill remains disabled by v2.4.5. */
+.si-immersive-dock{
+  box-shadow:none!important;
+}
+
+/* Search uses the same neutral surface as Bell, without changing its geometry. */
+.si-bottom-cluster .si-floating-search-button{
+  box-shadow:none!important;
+}
+/* SHADOW_SURFACE_UNIFY_V248_END */
+
+
+/* SHADOW_LIVE_AVATAR_STABILITY_V2410_CSS_START */
+/* Keep a permanent avatar slot on every Live Activity row. */
+.si-feed-row > .avatar{
+  display:inline-block!important;
+  flex:0 0 auto!important;
+  visibility:visible!important;
+  opacity:1!important;
+  align-self:start;
+}
+@media(max-width:720px){
+  .si-feed-row > .avatar{
+    grid-column:1!important;
+    grid-row:1 / span 2!important;
+  }
+  .si-feed-row > div{
+    grid-column:2!important;
+    min-width:0;
+  }
+}
+/* SHADOW_LIVE_AVATAR_STABILITY_V2410_CSS_END */
+
+/* SHADOW_TOKEN_AVATAR_STABILITY_V2411_CSS_START */
+.si-token-card > .avatar{
+  display:inline-block!important;
+  width:40px!important;
+  height:40px!important;
+  min-width:40px!important;
+  flex:0 0 40px!important;
+  visibility:visible!important;
+  opacity:1!important;
+  background-repeat:no-repeat!important;
+  background-size:cover!important;
+  background-position:center!important;
+}
+/* SHADOW_TOKEN_AVATAR_STABILITY_V2411_CSS_END */\n\n/* SHADOW_REMOVE_IMAGE_BLUE_FRAMES_V2412_START */
+.avatar,
+.si-feed-row > .avatar,
+.si-token-card > .avatar,
+.si-entity-card .avatar,
+.si-entity-chip .avatar,
+.si-focus-main .avatar,
+.si-detail-avatar .avatar,
+.si-detail-token-row .avatar{
+  border:0!important;
+  outline:0!important;
+  box-shadow:none!important;
+}
+/* SHADOW_REMOVE_IMAGE_BLUE_FRAMES_V2412_END */\n
+
+/* SHADOW_MAP_BLUE_RING_FIX_V24121_START */
+/*
+  The visible blue circle on Map is defined on the swarm wrapper:
+  #page-overview .si-dom-node
+  Remove only that permanent blue wrapper ring/glow.
+  Live trade beacons (.si-entity-beacon) are intentionally untouched.
+*/
+#page-overview .si-dom-node,
+#page-overview .si-dom-node.dragging{
+  border:0!important;
+  outline:0!important;
+  box-shadow:none!important;
+}
+
+#page-overview .si-dom-node > img,
+#page-overview .si-dom-node > .si-dom-node-fallback{
+  border:0!important;
+  outline:0!important;
+  box-shadow:none!important;
+}
+/* SHADOW_MAP_BLUE_RING_FIX_V24121_END */
+
+/* SHADOW_MAP_BLUE_RING_FINAL_V24122_START */
+/*
+  Final Map ring cleanup.
+  The blue edge that remains after border removal is the blue gradient background
+  of the .si-dom-node wrapper showing through around the circular image.
+  Make the wrapper itself fully transparent.
+*/
+#page-overview .si-dom-node,
+#page-overview .si-dom-node.dragging{
+  border:0!important;
+  outline:0!important;
+  box-shadow:none!important;
+  background:transparent!important;
+  background-color:transparent!important;
+  background-image:none!important;
+  -webkit-tap-highlight-color:transparent!important;
+}
+
+#page-overview .si-dom-node > img{
+  border:0!important;
+  outline:0!important;
+  box-shadow:none!important;
+}
+
+/* Preserve fallback artwork when an Entity has no avatar. */
+#page-overview .si-dom-node > .si-dom-node-fallback{
+  border:0!important;
+  outline:0!important;
+  box-shadow:none!important;
+}
+/* SHADOW_MAP_BLUE_RING_FINAL_V24122_END */
+
+/* SHADOW_BEACON_AVATAR_RING_V2413_START */
+/*
+  Keep the existing large trade beacon exactly as-is.
+  While a beacon is active, add a thin ring directly around the avatar.
+  The newest active beacon controls the avatar-ring color.
+*/
+#page-overview .si-dom-node:has(> .si-entity-beacon.buy:last-child){
+  box-shadow:0 0 0 1.5px var(--si-green)!important;
+}
+
+#page-overview .si-dom-node:has(> .si-entity-beacon.sell:last-child){
+  box-shadow:0 0 0 1.5px var(--si-pink)!important;
+}
+/* SHADOW_BEACON_AVATAR_RING_V2413_END */
+
+
+/* SHADOW_THEME_TO_DOCK_V2414_CSS_START */
+#themeToggle.si-theme-left{
+  display:none!important;
+}
+
+.si-immersive-dock #themeToggleDock.si-theme-dock-button{
+  flex:0 0 auto;
+  color:var(--si-muted);
+}
+
+.si-immersive-dock #themeToggleDock .si-theme-half{
+  fill:currentColor!important;
+  stroke:none!important;
+}
+/* SHADOW_THEME_TO_DOCK_V2414_CSS_END */

@@ -1,0 +1,16 @@
+diff --git a/public/si-graph.js b/public/si-graph.js
+--- a/public/si-graph.js
++++ b/public/si-graph.js
+@@ -258,12 +258,6 @@
+       }
+       c.restore();
+ 
+-      c.strokeStyle=`rgba(${col},.92)`;
+-      c.lineWidth=n.kind==='entity'?1.7:1.2;
+-      c.beginPath();
+-      c.arc(p.x,p.y,r+2,0,Math.PI*2);
+-      c.stroke();
+-
+       if(this.mode==='detail'){
+         c.fillStyle=dark?'#e7e9ea':'#0f1419';
+         c.font=`${n.kind==='entity'?700:600} ${n.kind==='entity'?11:9}px Inter,system-ui`;
