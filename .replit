@@ -31,4 +31,5 @@ waitForPort = 3000
 outputType = "webview"
 
 [deployment]
+run = ["sh", "-c", "npm start"]
 deploymentTarget = "cloudrun"

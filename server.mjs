@@ -756,17 +756,18 @@ function entityConsistencyMap(db,{solUsd=0}={}) {
 
     stats.tokenPnls.push(tokenPnlUsd);
 
-    // Win Rate deliberately ignores OPEN token positions.
+    /* SHADOW_ENTITY_REMOVE_FLAT_V2428_SERVER */
+    // Every fully closed token is either a Win or a Loss.
+    // Open positions remain excluded from Win Rate until fully closed.
     if(!isOpen){
-      const flatThreshold=.01;
-      if(tokenPnlUsd>flatThreshold)stats.wins++;
-      else if(tokenPnlUsd<-flatThreshold)stats.losses++;
-      else stats.flat++;
+      if(tokenPnlUsd>=0)stats.wins++;
+      else stats.losses++;
     }
+    /* SHADOW_ENTITY_REMOVE_FLAT_V2428_SERVER_END */
   }
 
   for(const stats of result.values()){
-    const closed=stats.wins+stats.losses+stats.flat;
+    const closed=stats.wins+stats.losses;
     stats.closedTokens=closed;
     stats.winRateKnown=closed>0;
     stats.winRate=closed>0?Number(((stats.wins/closed)*100).toFixed(1)):null;

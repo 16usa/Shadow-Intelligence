@@ -552,33 +552,84 @@ function notificationEventHtml(row,index){
   </button>`;
 }
 
+
+/* SHADOW_NOTIFICATION_BADGE_RACE_FIX_V2427 */
+let notificationRequestSeq=0;
+let notificationAppliedSeq=0;
+let notificationMutationEpoch=0;
+let notificationPollInFlight=null;
+let notificationReadPending=false;
+
+function invalidateNotificationRequests(){
+  notificationMutationEpoch++;
+  notificationAppliedSeq=Math.max(notificationAppliedSeq,notificationRequestSeq);
+}
+
 async function loadNotificationState({silent=false}={}){
   if(!state.user){resetNotificationState();return;}
+
+  const requestUserId=String(state.user?.id||'');
+  const requestSeq=++notificationRequestSeq;
+  const requestEpoch=notificationMutationEpoch;
+
   try{
-    const data=await api('/api/notifications?limit=60');
+    const data=await api('/api/notifications?limit=60',{cache:'no-store'});
+
+    if(requestEpoch!==notificationMutationEpoch)return;
+    if(String(state.user?.id||'')!==requestUserId)return;
+    if(requestSeq<notificationAppliedSeq)return;
+    if(notificationReadPending)return;
+
+    notificationAppliedSeq=requestSeq;
     state.notifications.settings=data.settings||null;
     state.notifications.items=Array.isArray(data.items)?data.items:[];
-    state.notifications.unread=Number(data.unread||0);
+    state.notifications.unread=Math.max(0,Number(data.unread||0)||0);
+
     const topId=String(state.notifications.items[0]?.id||'');
     if(!state.notifications.pollSeeded){
       state.notifications.lastTopId=topId;
       state.notifications.pollSeeded=true;
-    }else if(topId&&state.notifications.lastTopId&&topId!==state.notifications.lastTopId&&state.notifications.unread>0&&!silent){
+    }else if(
+      topId &&
+      state.notifications.lastTopId &&
+      topId!==state.notifications.lastTopId &&
+      state.notifications.unread>0 &&
+      !silent
+    ){
       const first=state.notifications.items[0];
       toast(`${notificationEntityLabel(first)} ${notificationAction(first)} ${notificationTokenLabel(first)}`);
       state.notifications.lastTopId=topId;
-    }else if(topId){state.notifications.lastTopId=topId;}
+    }else if(topId){
+      state.notifications.lastTopId=topId;
+    }
+
     renderNotificationBell();
-  }catch(error){if(!silent)console.debug('Notification poll failed',error);}
+  }catch(error){
+    if(!silent)console.debug('Notification poll failed',error);
+  }
 }
+/* SHADOW_NOTIFICATION_BADGE_RACE_FIX_V2427_LOAD_END */
 
 async function markNotificationsRead(){
   if(!state.user)return;
+
+  notificationReadPending=true;
+  invalidateNotificationRequests();
+
   try{
-    await api('/api/notifications/read',{method:'POST',body:'{}'});
+    await api('/api/notifications/read',{
+      method:'POST',
+      body:'{}',
+      cache:'no-store'
+    });
+
     state.notifications.unread=0;
     renderNotificationBell();
-  }catch(error){console.debug('Could not mark notifications read',error);}
+  }catch(error){
+    console.debug('Could not mark notifications read',error);
+  }finally{
+    notificationReadPending=false;
+  }
 }
 
 function filterNotificationOptionRows(input,selector){
@@ -675,11 +726,32 @@ function bindNotificationButton(){
     notificationCenterModal('notifications');
   };
   renderNotificationBell();
+  if(state.user)pollNotifications().catch(()=>{});
 }
 async function pollNotifications(){
-  if(!state.user||document.hidden)return;
-  await loadNotificationState({silent:false});
+  if(!state.user||document.hidden||notificationReadPending)return;
+  if(notificationPollInFlight)return notificationPollInFlight;
+
+  notificationPollInFlight=loadNotificationState({silent:false})
+    .finally(()=>{
+      notificationPollInFlight=null;
+    });
+
+  return notificationPollInFlight;
 }
+
+function syncNotificationsOnResume(){
+  if(document.hidden||!state.user)return;
+  pollNotifications().catch(()=>{});
+}
+
+document.addEventListener('visibilitychange',()=>{
+  if(!document.hidden)syncNotificationsOnResume();
+},{passive:true});
+
+window.addEventListener('pageshow',syncNotificationsOnResume,{passive:true});
+window.addEventListener('focus',syncNotificationsOnResume,{passive:true});
+/* SHADOW_NOTIFICATION_BADGE_RACE_FIX_V2427_END */
 /* SHADOW_NOTIFICATIONS_V240_CLIENT_END */
 /* SHADOW_TOKEN_IMAGE_FIX_V211_START */
 function imageSource(item){
@@ -757,6 +829,7 @@ function nav(name,{push=true,replace=false}={}){
 
   try{page.scrollTo({top:0,behavior:'instant'})}catch{page.scrollTop=0}
 
+  if(name==='overview')renderOverview().catch(e=>console.error('Map render failed',e));
   if(name==='entities')renderEntities();
   if(name==='tokens')renderTokens();
   if(name==='feed')renderFeed();
@@ -984,9 +1057,14 @@ function bind(){
 let refreshSeq=0;
 let graphEntityKey='';
 
+/* SHADOW_GLOBAL_ENTITY_SWARM_V2426 */
 function globalEntityModel(){
-  return {entities:state.entities.slice(0,18),wallets:[],tokens:[],activity:[]};
+  // Every tracked Entity belongs on the global home swarm.
+  // Do not cap this list: the DOM swarm already handles dynamic rebuilds,
+  // collision resolution, persisted positions and fallback avatars.
+  return {entities:state.entities.slice(),wallets:[],tokens:[],activity:[]};
 }
+/* SHADOW_GLOBAL_ENTITY_SWARM_V2426_END */
 
 function currentMapCounts(){
   return {
@@ -1945,7 +2023,7 @@ const ENTITY_METRIC_INFO={
   },
   winRate:{
     title:'Win Rate',
-    body:'Percentage of CLOSED token positions that finished positive. Open positions are excluded. Formula: Wins / (Wins + Losses + Flat).'
+    body:'Percentage of CLOSED token positions that finished positive. Open positions are excluded. Formula: Wins / (Wins + Losses).'
   },
   tokens:{
     title:'Tokens',
@@ -1963,10 +2041,11 @@ const ENTITY_METRIC_INFO={
     title:'Open',
     body:'Token positions that are still open and therefore are not counted in Win Rate yet.'
   },
-  flat:{
-    title:'Flat',
-    body:'Fully closed token positions that finished approximately break-even.'
+  closed:{
+    title:'Closed',
+    body:'Total number of fully closed token positions. Closed equals Wins + Losses.'
   },
+
   avgToken:{
     title:'Avg / Token',
     body:'Average P&L per token position. A few very large winners or losers can move this number substantially.'
@@ -2054,13 +2133,15 @@ function entityPerformanceMoneyClass(value){
   return !Number.isFinite(n)?'':n>0?'pos':n<0?'neg':'';
 }
 
+/* SHADOW_ENTITY_REMOVE_FLAT_V2428_APP */
 function entityPerformanceBreakdownHtml(e){
+  const closed=Number(e?.closedTokens ?? (Number(e?.wins||0)+Number(e?.losses||0)));
   return `<div class="si-entity-performance-breakdown">
     <div class="si-performance-counts">
       <div><strong>${Number(e?.wins||0)}</strong><small>${entityMetricInfoButton('wins','Wins')}</small></div>
       <div><strong>${Number(e?.losses||0)}</strong><small>${entityMetricInfoButton('losses','Losses')}</small></div>
       <div><strong>${Number(e?.openTokens||0)}</strong><small>${entityMetricInfoButton('open','Open')}</small></div>
-      <div><strong>${Number(e?.flat||0)}</strong><small>${entityMetricInfoButton('flat','Flat')}</small></div>
+      <div><strong>${closed}</strong><small>${entityMetricInfoButton('closed','Closed')}</small></div>
     </div>
     <div class="si-performance-money">
       <div>
@@ -2074,6 +2155,7 @@ function entityPerformanceBreakdownHtml(e){
     </div>
   </div>`;
 }
+/* SHADOW_ENTITY_REMOVE_FLAT_V2428_APP_END */
 /* SHADOW_ENTITY_PERFORMANCE_V2420_APP_END */
 
 function entityCardMainWalletHtml(e){
@@ -2135,7 +2217,7 @@ function renderEntities(q=''){
           <strong class="${entityMetricClass(e,'profitUsd')}">${entityMetricMoney(e,'profitUsd')}</strong>
           <small>Profit</small>
         </div>
-        <div class="si-card-stat" title="${Number(e.wins||0)} wins · ${Number(e.losses||0)} losses · ${Number(e.flat||0)} flat">
+        <div class="si-card-stat" title="${Number(e.wins||0)} wins · ${Number(e.losses||0)} losses">
           <strong>${entityWinRateText(e)}</strong>
           <small>Win Rate</small>
         </div>
@@ -2836,7 +2918,7 @@ function entityDetailMetricsHtml(e){
       <strong class="${entityMetricClass(e,'profitUsd')}">${entityMetricMoney(e,'profitUsd')}</strong>
       <small>${entityMetricInfoButton('profit','Profit')}</small>
     </div>
-    <div class="si-metric" title="${Number(e?.wins||0)} wins · ${Number(e?.losses||0)} losses · ${Number(e?.flat||0)} flat">
+    <div class="si-metric" title="${Number(e?.wins||0)} wins · ${Number(e?.losses||0)} losses">
       <strong>${entityWinRateText(e)}</strong>
       <small>${entityMetricInfoButton('winRate','Win Rate')}</small>
     </div>
@@ -2965,7 +3047,7 @@ async function openObject(kind,raw){
 /* SHADOW_ENTITY_TOKENS_V210_START */
 function entityTokenRows(tokens=[]){
   if(!tokens.length){
-    return '<div class="guest-note si-detail-token-empty">No tracked tokens yet.</div>';
+    return '<div class="guest-note si-detail-token-empty">No open positions.</div>';
   }
 
   return `<div class="si-detail-token-list">${
@@ -3076,8 +3158,9 @@ function entityDetail(d){
       </div>
 
       <div class="si-panel si-detail-tokens-panel" style="box-shadow:none;margin-top:12px">
+        <!-- SHADOW_ENTITY_OPEN_POSITIONS_V2429 -->
         <div class="si-panel-head">
-          <span>TOKENS</span>
+          <span>OPEN POSITIONS</span>
           <span>${tokens.length}</span>
         </div>
         ${entityTokenRows(tokens)}
