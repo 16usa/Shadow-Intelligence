@@ -1081,13 +1081,10 @@ function updateMapCounts(){
   el.textContent=`${c.entities} entities · ${c.wallets} wallets · ${c.tokens} tokens`;
 }
 
-/* SHADOW_LIVE_TRADE_BEACON_V291_START */
-const MAP_SIGNAL_TTL_MS=60000;
+/* SHADOW_LIVE_TRADE_BEACON_V214_START */
 let mapSignalPollTimer=0;
 let mapSignalPollBusy=false;
-const mapSignalRecent=new Map();
-let mapSignalGraph=null;
-let mapSignalRenderedIds=new Set();
+let mapSignalSeeded=false;
 
 function mapSignalKind(event){
   const type=String(event?.type||'').toLowerCase();
@@ -1095,32 +1092,7 @@ function mapSignalKind(event){
 
   if(type==='buy'||type.includes('buy')||title.startsWith('bought ')||title.includes(' bought '))return 'buy';
   if(type==='sell'||type.includes('sell')||title.startsWith('sold ')||title.includes(' sold '))return 'sell';
-
-  // Pump/PumpSwap token-to-token swaps are stored against the token received.
-  // Treat that acquired-token leg as a BUY beacon. If a future feed row explicitly
-  // says the token was swapped out/from, render it as SELL instead.
-  if(type==='swap'||title.startsWith('swapped ')||title.includes(' swapped ')){
-    if(title.includes('swapped out')||title.includes('swapped from'))return 'sell';
-    return 'buy';
-  }
   return '';
-}
-
-function mapSignalEventTime(event){
-  const raw=event?.createdAt||event?.blockTime||event?.block_time||event?.created_at||'';
-  const value=Date.parse(raw);
-  return Number.isFinite(value)?value:0;
-}
-
-function mapSignalRecord(event,now=Date.now()){
-  const id=String(event?.id||'').trim();
-  const entityId=String(event?.entityId||event?.entity_id||'').trim();
-  const kind=mapSignalKind(event);
-  const startedAt=mapSignalEventTime(event);
-  if(!id||!entityId||!kind||!startedAt)return null;
-  const expiresAt=startedAt+MAP_SIGNAL_TTL_MS;
-  if(expiresAt<=now)return null;
-  return {id,entityId,kind,startedAt,expiresAt};
 }
 
 function rememberMapSignal(id){
@@ -1132,55 +1104,38 @@ function rememberMapSignal(id){
   }
 }
 
-function pruneMapSignals(now=Date.now()){
-  for(const [id,row] of mapSignalRecent){
-    if(Number(row?.expiresAt)<=now){
-      mapSignalRecent.delete(id);
-      mapSignalRenderedIds.delete(id);
-    }
-  }
-}
-
-function syncActiveMapSignals(now=Date.now()){
-  pruneMapSignals(now);
-  const graph=state.graph;
-  if(graph!==mapSignalGraph){
-    mapSignalGraph=graph;
-    mapSignalRenderedIds=new Set();
-  }
-  if(!graph||currentPage!=='overview'||document.body.classList.contains('si-detail-page-open'))return;
-
-  const rows=[...mapSignalRecent.values()]
-    .filter(row=>row.expiresAt>now)
-    .sort((a,b)=>a.startedAt-b.startedAt);
-
-  for(const row of rows){
-    if(mapSignalRenderedIds.has(row.id))continue;
-    const mounted=graph.mountBeacon?.(row.entityId,row.kind,row.expiresAt,false);
-    if(mounted)mapSignalRenderedIds.add(row.id);
-  }
-}
-
 function consumeMapSignals(items=[]){
   const rows=Array.isArray(items)?items:[];
-  const now=Date.now();
 
-  for(const event of rows){
-    const id=String(event?.id||'').trim();
-    if(id)rememberMapSignal(id);
-    const record=mapSignalRecord(event,now);
-    if(record)mapSignalRecent.set(record.id,record);
-    else if(id)mapSignalRecent.delete(id);
+  if(!mapSignalSeeded){
+    rows.forEach(event=>rememberMapSignal(event?.id));
+    mapSignalSeeded=true;
+    return;
   }
 
-  syncActiveMapSignals(now);
+  const fresh=rows
+    .filter(event=>event?.id&&!state.lastEventIds.has(String(event.id)))
+    .reverse();
+
+  for(const event of fresh){
+    rememberMapSignal(event.id);
+    const kind=mapSignalKind(event);
+    if(!kind||!event?.entityId)continue;
+
+    if(
+      currentPage==='overview' &&
+      !document.body.classList.contains('si-detail-page-open')
+    ){
+      state.graph?.pulseEntity?.(event.entityId,kind);
+    }
+  }
 }
 
 async function pollMapSignals(){
   if(mapSignalPollBusy||document.hidden)return;
   mapSignalPollBusy=true;
   try{
-    const data=await api('/api/feed?limit=100');
+    const data=await api('/api/feed?limit=30');
     consumeMapSignals(data?.items||[]);
   }catch(error){
     console.debug('Map signal poll skipped:',error?.message||error);
@@ -1194,16 +1149,7 @@ function startMapSignalPoll(){
   pollMapSignals();
   mapSignalPollTimer=setInterval(pollMapSignals,2000);
 }
-
-if(!window.__shadowLiveBeaconVisibilityV291){
-  window.__shadowLiveBeaconVisibilityV291=true;
-  document.addEventListener('visibilitychange',()=>{
-    if(document.hidden)return;
-    pollMapSignals();
-    syncActiveMapSignals();
-  },{passive:true});
-}
-/* SHADOW_LIVE_TRADE_BEACON_V291_END */
+/* SHADOW_LIVE_TRADE_BEACON_V214_END */
 
 function renderOverviewChrome(live=state.liveStatus){
   const o=state.overview||{};
@@ -1247,13 +1193,7 @@ class ShadowDomSwarm{
     this.h=1;
     this.centerX=0;
     this.centerY=0;
-    this.safe={left:0,right:0,top:0,bottom:0};
-    this.camera={zoom:1,panX:0,panY:0,minZoom:.55,maxZoom:8};
-    this.cameraPointers=new Map();
-    this.cameraPan=null;
-    this.cameraPinch=null;
-    this.cameraLastTap={time:0,x:0,y:0};
-    this.cameraLastTouchDouble=0;
+    this.safe={left:28,right:28,top:118,bottom:158};
 
     root.dataset.renderer='dom-v207';
     root.dataset.rendererState='booting';
@@ -1267,8 +1207,6 @@ class ShadowDomSwarm{
     if(!this.layer||!this.empty){
       throw new Error('Global map DOM scaffold could not be created');
     }
-
-    this.bindCamera();
 
     this.ro=typeof ResizeObserver==='function'
       ? new ResizeObserver(()=>this.resize())
@@ -1386,7 +1324,12 @@ class ShadowDomSwarm{
   }
 
   restorePersistedBeacons(){
-    // v2.9.1: live beacons are restored from /api/feed using the original event timestamp.
+    const now=Date.now();
+    const rows=Array.isArray(this.persisted?.beacons)?this.persisted.beacons:[];
+    for(const row of rows){
+      if(Number(row?.expiresAt)<=now)continue;
+      this.mountBeacon(String(row.entityId||''),row.kind,Number(row.expiresAt),false);
+    }
   }
 
   syncNodeVisual(node,raw,index){
@@ -1427,7 +1370,6 @@ class ShadowDomSwarm{
     this.entities=incoming;
     this.model={...(this.model||{}),entities:incoming};
     this.nodes=nextNodes;
-    this.applyAdaptiveSizes();
     this.root.dataset.nodeCount=String(this.nodes.length);
     this.schedule();
     return true;
@@ -1505,7 +1447,7 @@ class ShadowDomSwarm{
       const node={
         raw,el,seed,index:i,
         x:0,y:0,vx:0,vy:0,
-        radius:23,visualSize:46,overallScore:50,percentile:50,
+        radius:23,
         phase:(seed%6283)/1000,
         phase2:((seed>>>8)%6283)/1000
       };
@@ -1519,253 +1461,9 @@ class ShadowDomSwarm{
       this.nodes.push(node);
     }
 
-    this.applyAdaptiveSizes();
     this.empty.style.display=this.nodes.length?'none':'grid';
     this.root.dataset.nodeCount=String(this.nodes.length);
   }
-
-
-  /* SHADOW_MAP_ADAPTIVE_CAMERA_V290_JS_START */
-  adaptiveSizeRange(count){
-    if(count<=20)return [30,64];
-    if(count<=50)return [20,58];
-    if(count<=100)return [14,52];
-    return [10,46];
-  }
-
-  ensureNodeInfo(n){
-    if(!n?.el)return null;
-    let info=n.el.querySelector('.si-dom-node-info');
-    if(!info){
-      info=document.createElement('span');
-      info.className='si-dom-node-info';
-      const title=document.createElement('strong');
-      const meta=document.createElement('small');
-      info.append(title,meta);
-      n.el.appendChild(info);
-    }
-    const title=info.querySelector('strong');
-    const meta=info.querySelector('small');
-    const label=n.raw?.x_handle||n.raw?.xHandle||n.raw?.name||'Entity';
-    if(title)title.textContent=label;
-    const profit=Number(n.raw?.profitUsd);
-    const profitText=n.raw?.profitKnown&&Number.isFinite(profit)?` · ${money(profit)}`:'';
-    if(meta)meta.textContent=`Score ${Math.round(Number(n.overallScore||0))}${profitText}`;
-    return info;
-  }
-
-  applyAdaptiveSizes(){
-    const count=this.nodes.length;
-    if(!count)return;
-    const [minSize,maxSize]=this.adaptiveSizeRange(count);
-    const ranked=this.nodes.map((n,index)=>{
-      let score=50;
-      try{
-        const value=Number(entityOverallScore(n.raw));
-        if(Number.isFinite(value))score=value;
-      }catch{}
-      return {n,index,score};
-    }).sort((a,b)=>a.score-b.score||a.index-b.index);
-
-    let cursor=0;
-    while(cursor<ranked.length){
-      let end=cursor+1;
-      while(end<ranked.length&&ranked[end].score===ranked[cursor].score)end++;
-      const mid=(cursor+end-1)/2;
-      const percentile=ranked.length===1?1:mid/(ranked.length-1);
-      const curved=Math.pow(percentile,.9);
-      for(let i=cursor;i<end;i++){
-        const {n,score}=ranked[i];
-        const size=minSize+(maxSize-minSize)*curved;
-        n.overallScore=score;
-        n.percentile=percentile;
-        n.visualSize=size;
-        n.radius=size/2;
-        n.el.style.setProperty('width',`${size.toFixed(2)}px`,'important');
-        n.el.style.setProperty('height',`${size.toFixed(2)}px`,'important');
-        n.el.style.setProperty('min-width',`${size.toFixed(2)}px`,'important');
-        n.el.style.setProperty('min-height',`${size.toFixed(2)}px`,'important');
-        n.el.style.setProperty('--si-node-visual-size',`${size.toFixed(2)}px`);
-        n.el.dataset.overallScore=score.toFixed(2);
-        n.el.dataset.percentile=percentile.toFixed(4);
-        this.ensureNodeInfo(n);
-        this.keepNodeInside(n);
-      }
-      cursor=end;
-    }
-  }
-
-  bindCamera(){
-    this.root.style.touchAction='none';
-    this.layer.style.transformOrigin='0 0';
-    this.layer.style.webkitTransformOrigin='0 0';
-    this._cameraDown=e=>this.cameraPointerDown(e);
-    this._cameraMove=e=>this.cameraPointerMove(e);
-    this._cameraUp=e=>this.cameraPointerUp(e);
-    this._cameraWheel=e=>{
-      if(this.dead)return;
-      e.preventDefault();
-      const local=this.cameraLocalPoint(e);
-      const factor=Math.exp(-Number(e.deltaY||0)*.0015);
-      this.zoomAt(local.x,local.y,this.camera.zoom*factor);
-    };
-    this._cameraDouble=e=>{
-      if(this.dead||performance.now()-this.cameraLastTouchDouble<450||e.target?.closest?.('.si-dom-node'))return;
-      e.preventDefault();
-      const local=this.cameraLocalPoint(e);
-      if(this.camera.zoom>1.05)this.resetCamera();
-      else this.zoomAt(local.x,local.y,Math.min(2.2,this.camera.maxZoom));
-    };
-    this.root.addEventListener('pointerdown',this._cameraDown,{capture:true,passive:false});
-    this.root.addEventListener('pointermove',this._cameraMove,{capture:true,passive:false});
-    this.root.addEventListener('pointerup',this._cameraUp,{capture:true,passive:false});
-    this.root.addEventListener('pointercancel',this._cameraUp,{capture:true,passive:false});
-    this.root.addEventListener('wheel',this._cameraWheel,{passive:false});
-    this.root.addEventListener('dblclick',this._cameraDouble,{passive:false});
-  }
-
-  cameraLocalPoint(e){
-    const r=this.root.getBoundingClientRect();
-    return {x:e.clientX-r.left,y:e.clientY-r.top};
-  }
-
-  clampCamera(){
-    const z=this.camera.zoom;
-    const scaledW=this.w*z;
-    const scaledH=this.h*z;
-    if(scaledW<=this.w)this.camera.panX=(this.w-scaledW)/2;
-    else this.camera.panX=Math.min(0,Math.max(this.w-scaledW,this.camera.panX));
-    if(scaledH<=this.h)this.camera.panY=(this.h-scaledH)/2;
-    else this.camera.panY=Math.min(0,Math.max(this.h-scaledH,this.camera.panY));
-  }
-
-  applyCamera(){
-    if(!this.layer||!this.camera)return;
-    this.clampCamera();
-    const z=this.camera.zoom;
-    const transform=`translate3d(${this.camera.panX.toFixed(3)}px,${this.camera.panY.toFixed(3)}px,0) scale(${z.toFixed(5)})`;
-    this.layer.style.setProperty('transform',transform,'important');
-    this.layer.style.setProperty('-webkit-transform',transform,'important');
-    this.layer.style.setProperty('--si-camera-inverse',String(1/Math.max(.001,z)));
-    this.root.classList.toggle('si-map-zoom-labels',z>=2);
-    this.root.classList.toggle('si-map-zoom-metrics',z>=4);
-    this.root.dataset.cameraZoom=z.toFixed(2);
-  }
-
-  resetCamera(){
-    this.camera.zoom=1;
-    this.camera.panX=0;
-    this.camera.panY=0;
-    this.applyCamera();
-  }
-
-  zoomAt(x,y,nextZoom){
-    const oldZoom=this.camera.zoom;
-    const zoom=Math.max(this.camera.minZoom,Math.min(this.camera.maxZoom,Number(nextZoom)||oldZoom));
-    const worldX=(x-this.camera.panX)/oldZoom;
-    const worldY=(y-this.camera.panY)/oldZoom;
-    this.camera.zoom=zoom;
-    this.camera.panX=x-worldX*zoom;
-    this.camera.panY=y-worldY*zoom;
-    this.applyCamera();
-  }
-
-  cancelNodeDrag(){
-    const d=this.drag;
-    if(!d)return;
-    if(d.holdTimer)clearTimeout(d.holdTimer);
-    d.node?.el?.classList.remove('dragging');
-    try{d.node?.el?.releasePointerCapture?.(d.id)}catch{}
-    this.drag=null;
-  }
-
-  beginPinch(){
-    if(this.cameraPointers.size<2)return;
-    this.cancelNodeDrag();
-    this.cameraPan=null;
-    const pts=[...this.cameraPointers.values()].slice(0,2);
-    const mid={x:(pts[0].x+pts[1].x)/2,y:(pts[0].y+pts[1].y)/2};
-    const distance=Math.max(1,Math.hypot(pts[1].x-pts[0].x,pts[1].y-pts[0].y));
-    this.cameraPinch={
-      distance,
-      zoom:this.camera.zoom,
-      worldX:(mid.x-this.camera.panX)/this.camera.zoom,
-      worldY:(mid.y-this.camera.panY)/this.camera.zoom
-    };
-  }
-
-  cameraPointerDown(e){
-    if(this.dead)return;
-    const local=this.cameraLocalPoint(e);
-    this.cameraPointers.set(e.pointerId,{x:local.x,y:local.y});
-    if(this.cameraPointers.size>=2){
-      e.preventDefault();
-      this.beginPinch();
-      return;
-    }
-    if(e.target?.closest?.('.si-dom-node'))return;
-    this.cameraPan={
-      id:e.pointerId,
-      startX:local.x,startY:local.y,
-      panX:this.camera.panX,panY:this.camera.panY,
-      moved:false,
-      pointerType:e.pointerType||''
-    };
-  }
-
-  cameraPointerMove(e){
-    if(this.dead||!this.cameraPointers.has(e.pointerId))return;
-    const local=this.cameraLocalPoint(e);
-    this.cameraPointers.set(e.pointerId,{x:local.x,y:local.y});
-    if(this.cameraPinch&&this.cameraPointers.size>=2){
-      e.preventDefault();
-      const pts=[...this.cameraPointers.values()].slice(0,2);
-      const mid={x:(pts[0].x+pts[1].x)/2,y:(pts[0].y+pts[1].y)/2};
-      const distance=Math.max(1,Math.hypot(pts[1].x-pts[0].x,pts[1].y-pts[0].y));
-      const zoom=Math.max(this.camera.minZoom,Math.min(this.camera.maxZoom,this.cameraPinch.zoom*(distance/this.cameraPinch.distance)));
-      this.camera.zoom=zoom;
-      this.camera.panX=mid.x-this.cameraPinch.worldX*zoom;
-      this.camera.panY=mid.y-this.cameraPinch.worldY*zoom;
-      this.applyCamera();
-      return;
-    }
-    const pan=this.cameraPan;
-    if(!pan||pan.id!==e.pointerId)return;
-    const dx=local.x-pan.startX,dy=local.y-pan.startY;
-    if(Math.hypot(dx,dy)>4)pan.moved=true;
-    this.camera.panX=pan.panX+dx;
-    this.camera.panY=pan.panY+dy;
-    this.applyCamera();
-    if(pan.moved)e.preventDefault();
-  }
-
-  cameraPointerUp(e){
-    if(this.dead)return;
-    const local=this.cameraLocalPoint(e);
-    const pan=this.cameraPan&&this.cameraPan.id===e.pointerId?this.cameraPan:null;
-    this.cameraPointers.delete(e.pointerId);
-    if(this.cameraPinch){
-      if(this.cameraPointers.size<2)this.cameraPinch=null;
-      this.cameraPan=null;
-      return;
-    }
-    if(pan){
-      this.cameraPan=null;
-      if(!pan.moved&&String(e.pointerType||'')==='touch'&&!e.target?.closest?.('.si-dom-node')){
-        const now=performance.now();
-        const last=this.cameraLastTap;
-        if(last&&now-last.time<320&&Math.hypot(local.x-last.x,local.y-last.y)<34){
-          this.cameraLastTap={time:0,x:0,y:0};
-          this.cameraLastTouchDouble=now;
-          if(this.camera.zoom>1.05)this.resetCamera();
-          else this.zoomAt(local.x,local.y,Math.min(2.2,this.camera.maxZoom));
-        }else{
-          this.cameraLastTap={time:now,x:local.x,y:local.y};
-        }
-      }
-    }
-  }
-  /* SHADOW_MAP_ADAPTIVE_CAMERA_V290_JS_END */
 
   ensureFallback(el,raw){
     if(el.querySelector('.si-dom-node-fallback'))return;
@@ -1791,12 +1489,12 @@ class ShadowDomSwarm{
     this.w=nw;
     this.h=nh;
 
-    this.safe.top=0;
-    this.safe.bottom=0;
+    this.safe.top=Math.min(136,Math.max(104,this.h*.14));
+    this.safe.bottom=Math.min(190,Math.max(150,this.h*.18));
     this.centerX=this.w*.5;
 
     const usable=Math.max(180,this.h-this.safe.top-this.safe.bottom);
-    this.centerY=this.h*.5;
+    this.centerY=this.safe.top+usable*.46;
 
     this.root.dataset.mapSize=`${Math.round(this.w)}x${Math.round(this.h)}`;
 
@@ -1817,16 +1515,14 @@ class ShadowDomSwarm{
 
     for(let i=0;i<4;i++)this.resolveCollisions(null);
     this.renderNodes();
-    this.applyCamera();
     this.schedule();
   }
 
   fit(){
     if(!this.nodes.length)return;
-    this.applyAdaptiveSizes();
+
     const usableH=Math.max(180,this.h-this.safe.top-this.safe.bottom);
-    const spreadX=Math.max(90,this.w*.46);
-    const spreadY=Math.max(120,usableH*.44);
+    const spread=Math.max(82,Math.min(this.w*.31,usableH*.29,142));
     const golden=2.399963229728653;
     const total=this.nodes.length;
 
@@ -1834,21 +1530,22 @@ class ShadowDomSwarm{
       const f=Math.sqrt((i+.72)/Math.max(1,total));
       const jitter=((n.seed&1023)/1023)-.5;
       const angle=i*golden+jitter*.64;
-      n.x=this.centerX+Math.cos(angle)*spreadX*f;
-      n.y=this.centerY+Math.sin(angle)*spreadY*f;
+      const dist=42+f*Math.max(40,spread-42);
+
+      n.x=this.centerX+Math.cos(angle)*dist;
+      n.y=this.centerY+Math.sin(angle)*dist*.84;
       n.vx=0;
       n.vy=0;
       this.keepNodeInside(n);
     });
 
-    for(let i=0;i<5;i++)this.resolveCollisions(null);
+    for(let i=0;i<10;i++)this.resolveCollisions(null);
     this.renderNodes();
-    this.resetCamera();
     this.schedule();
   }
 
   keepNodeInside(n){
-    const r=n.radius;
+    const r=n.radius+7;
     const minX=this.safe.left+r;
     const maxX=Math.max(minX,this.w-this.safe.right-r);
     const minY=this.safe.top+r;
@@ -1860,52 +1557,61 @@ class ShadowDomSwarm{
 
   resolveCollisions(dragged=null){
     if(this.nodes.length<2)return;
-    const maxRadius=Math.max(...this.nodes.map(n=>Number(n.radius||0)),1);
-    const cellSize=Math.max(28,(maxRadius+8)*2);
 
-    for(let pass=0;pass<3;pass++){
-      const buckets=new Map();
-      for(let i=0;i<this.nodes.length;i++){
-        const n=this.nodes[i];
-        const cx=Math.floor(n.x/cellSize),cy=Math.floor(n.y/cellSize);
-        const key=`${cx}:${cy}`;
-        if(!buckets.has(key))buckets.set(key,[]);
-        buckets.get(key).push({n,i,cx,cy});
-      }
-
+    for(let pass=0;pass<4;pass++){
       let changed=false;
+
       for(let i=0;i<this.nodes.length;i++){
         const a=this.nodes[i];
-        const acx=Math.floor(a.x/cellSize),acy=Math.floor(a.y/cellSize);
-        for(let ox=-1;ox<=1;ox++)for(let oy=-1;oy<=1;oy++){
-          const rows=buckets.get(`${acx+ox}:${acy+oy}`)||[];
-          for(const row of rows){
-            if(row.i<=i)continue;
-            const b=row.n;
-            let dx=b.x-a.x;
-            let dy=b.y-a.y;
-            let d=Math.hypot(dx,dy);
-            if(d<.01){
-              const angle=((a.seed^b.seed)%6283)/1000;
-              dx=Math.cos(angle);dy=Math.sin(angle);d=1;
-            }
-            const min=a.radius+b.radius+8;
-            if(d>=min)continue;
-            const nx=dx/d,ny=dy/d,overlap=min-d;
-            if(a===dragged&&b!==dragged){
-              b.x+=nx*overlap;b.y+=ny*overlap;b.vx=b.vy=0;this.keepNodeInside(b);
-            }else if(b===dragged&&a!==dragged){
-              a.x-=nx*overlap;a.y-=ny*overlap;a.vx=a.vy=0;this.keepNodeInside(a);
-            }else{
-              a.x-=nx*overlap*.5;a.y-=ny*overlap*.5;
-              b.x+=nx*overlap*.5;b.y+=ny*overlap*.5;
-              a.vx*=.32;a.vy*=.32;b.vx*=.32;b.vy*=.32;
-              this.keepNodeInside(a);this.keepNodeInside(b);
-            }
-            changed=true;
+
+        for(let j=i+1;j<this.nodes.length;j++){
+          const b=this.nodes[j];
+
+          let dx=b.x-a.x;
+          let dy=b.y-a.y;
+          let d=Math.hypot(dx,dy);
+
+          if(d<.01){
+            const angle=((a.seed^b.seed)%6283)/1000;
+            dx=Math.cos(angle);
+            dy=Math.sin(angle);
+            d=1;
           }
+
+          const min=a.radius+b.radius+10;
+          if(d>=min)continue;
+
+          const nx=dx/d;
+          const ny=dy/d;
+          const overlap=min-d;
+
+          if(a===dragged&&b!==dragged){
+            b.x+=nx*overlap;
+            b.y+=ny*overlap;
+            b.vx=b.vy=0;
+            this.keepNodeInside(b);
+          }else if(b===dragged&&a!==dragged){
+            a.x-=nx*overlap;
+            a.y-=ny*overlap;
+            a.vx=a.vy=0;
+            this.keepNodeInside(a);
+          }else{
+            a.x-=nx*overlap*.5;
+            a.y-=ny*overlap*.5;
+            b.x+=nx*overlap*.5;
+            b.y+=ny*overlap*.5;
+
+            a.vx*=.22;a.vy*=.22;
+            b.vx*=.22;b.vy*=.22;
+
+            this.keepNodeInside(a);
+            this.keepNodeInside(b);
+          }
+
+          changed=true;
         }
       }
+
       if(!changed)break;
     }
   }
@@ -1914,8 +1620,6 @@ class ShadowDomSwarm{
     const dt=Math.max(.45,Math.min(2.2,(now-this.last)/16.667));
     this.last=now;
     const motionNow=Date.now();
-    const damping=Math.pow(.972,dt);
-    const centerGravity=this.nodes.length>80?.000032:this.nodes.length>40?.000038:.000045;
 
     for(const n of this.nodes){
       if(this.drag?.node===n)continue;
@@ -1927,10 +1631,10 @@ class ShadowDomSwarm{
         Math.cos(motionNow*.00019+n.phase2)*.007+
         Math.sin(motionNow*.00011+n.phase)*.004;
 
-      n.vx+=((this.centerX-n.x)*centerGravity+wanderX)*dt;
-      n.vy+=((this.centerY-n.y)*centerGravity+wanderY)*dt;
-      n.vx*=damping;
-      n.vy*=damping;
+      n.vx+=((this.centerX-n.x)*.00013+wanderX)*dt;
+      n.vy+=((this.centerY-n.y)*.00013+wanderY)*dt;
+      n.vx*=.972;
+      n.vy*=.972;
 
       const speed=Math.hypot(n.vx,n.vy);
       if(speed>.72){
@@ -1946,23 +1650,18 @@ class ShadowDomSwarm{
     this.resolveCollisions(null);
   }
 
-  /* SHADOW_MAP_SMOOTH_MOTION_V280_JS_START */
   renderNodes(){
     for(const n of this.nodes){
-      // Keep full sub-pixel coordinates. left/top are pinned once and motion is
-      // compositor-driven so Safari does not quantize every frame to integers.
-      const left=n.x-n.radius;
-      const top=n.y-n.radius;
-      const transform=`translate3d(${left.toFixed(3)}px,${top.toFixed(3)}px,0)`;
+      const left=Math.round(n.x-n.radius);
+      const top=Math.round(n.y-n.radius);
 
-      if(n.el.style.left!=='0px')n.el.style.left='0px';
-      if(n.el.style.top!=='0px')n.el.style.top='0px';
-      n.el.style.setProperty('transform',transform,'important');
-      n.el.style.setProperty('-webkit-transform',transform,'important');
+      n.el.style.left=`${left}px`;
+      n.el.style.top=`${top}px`;
+      n.el.style.transform='none';
+      n.el.style.webkitTransform='none';
       n.el.style.zIndex=String(12+n.index);
     }
   }
-  /* SHADOW_MAP_SMOOTH_MOTION_V280_JS_END */
 
   render(){
     if(this.dead)return;
@@ -1973,6 +1672,12 @@ class ShadowDomSwarm{
     }
 
     const now=performance.now();
+
+    if(now-this.lastPaint<30){
+      this.schedule();
+      return;
+    }
+
     this.lastPaint=now;
     this.physics(now);
     this.renderNodes();
@@ -1990,44 +1695,41 @@ class ShadowDomSwarm{
   }
 
   pointerDown(e,node){
-    if(this.dead||this.cameraPointers.size>1||this.cameraPinch)return;
+    if(this.dead)return;
     e.preventDefault();
     e.stopPropagation();
+
     try{node.el.setPointerCapture(e.pointerId)}catch{}
 
-    const d={
-      node,id:e.pointerId,
-      startX:e.clientX,startY:e.clientY,
-      originX:node.x,originY:node.y,
-      moved:false,cancelled:false,active:false,holdTimer:0
+    this.drag={
+      node,
+      id:e.pointerId,
+      startX:e.clientX,
+      startY:e.clientY,
+      originX:node.x,
+      originY:node.y,
+      moved:false
     };
-    d.holdTimer=setTimeout(()=>{
-      if(this.drag!==d||this.cameraPointers.size>1||this.cameraPinch)return;
-      d.active=true;
-      node.el.classList.add('dragging');
-    },220);
-    this.drag=d;
+
     node.vx=node.vy=0;
+    node.el.classList.add('dragging');
   }
 
   pointerMove(e,node){
     const d=this.drag;
     if(!d||d.id!==e.pointerId||d.node!==node)return;
+
     e.preventDefault();
     e.stopPropagation();
-    const dx=e.clientX-d.startX,dy=e.clientY-d.startY;
-    const distance=Math.hypot(dx,dy);
-    if(!d.active){
-      if(distance>8){
-        d.moved=true;d.cancelled=true;
-        if(d.holdTimer){clearTimeout(d.holdTimer);d.holdTimer=0;}
-      }
-      return;
-    }
-    if(distance>4)d.moved=true;
-    const zoom=Math.max(.001,this.camera.zoom||1);
-    node.x=d.originX+dx/zoom;
-    node.y=d.originY+dy/zoom;
+
+    const dx=e.clientX-d.startX;
+    const dy=e.clientY-d.startY;
+
+    if(Math.hypot(dx,dy)>4)d.moved=true;
+
+    node.x=d.originX+dx;
+    node.y=d.originY+dy;
+
     this.keepNodeInside(node);
     this.resolveCollisions(node);
     this.renderNodes();
@@ -2036,14 +1738,17 @@ class ShadowDomSwarm{
   pointerUp(e,node){
     const d=this.drag;
     if(!d||d.id!==e.pointerId||d.node!==node)return;
+
     e.preventDefault();
     e.stopPropagation();
-    if(d.holdTimer)clearTimeout(d.holdTimer);
+
     try{node.el.releasePointerCapture(e.pointerId)}catch{}
+
     node.el.classList.remove('dragging');
     this.drag=null;
     node.vx=node.vy=0;
-    if(!d.active&&!d.cancelled&&!d.moved)this.onSelect('entity',node.raw);
+
+    if(!d.moved)this.onSelect('entity',node.raw);
     this.schedule();
   }
 
@@ -2063,7 +1768,6 @@ class ShadowDomSwarm{
     this.persisted=this.loadPersistedState();
     this.didInitialRestore=false;
     this.build();
-    this.resetCamera();
     if(!this.restorePersistedLayout())this.fit();
   }
 
@@ -2079,16 +1783,6 @@ class ShadowDomSwarm{
     window.visualViewport?.removeEventListener('resize',this._onViewportResize);
     window.removeEventListener('pagehide',this._onPageHide);
     document.removeEventListener('visibilitychange',this._onVisibilityChange);
-    this.root.removeEventListener('pointerdown',this._cameraDown,true);
-    this.root.removeEventListener('pointermove',this._cameraMove,true);
-    this.root.removeEventListener('pointerup',this._cameraUp,true);
-    this.root.removeEventListener('pointercancel',this._cameraUp,true);
-    this.root.removeEventListener('wheel',this._cameraWheel);
-    this.root.removeEventListener('dblclick',this._cameraDouble);
-    this.cancelNodeDrag();
-    this.cameraPointers.clear();
-    this.cameraPan=null;
-    this.cameraPinch=null;
 
     this.drag=null;
   }
@@ -2144,7 +1838,7 @@ function mountGlobalGraph(){
 
 async function renderOverview(live=state.liveStatus){
   let model=null;
-  try{model=mountGlobalGraph();syncActiveMapSignals()}
+  try{model=mountGlobalGraph()}
   catch(error){
     console.error('Global graph render failed:',error);
     toast('3D renderer failed to start');
@@ -3166,7 +2860,6 @@ function closeModal(){
   document.body.classList.remove('si-detail-page-open');
   delete document.body.dataset.detailReturnPage;
   state.graph?.schedule?.();
-  syncActiveMapSignals?.();
 }
 /* SHADOW_INSTANT_ENTITY_OPEN_V208_START */
 

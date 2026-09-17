@@ -2056,8 +2056,8 @@ html[data-theme=dark]{
 }
 /* SHADOW_MAP_ADAPTIVE_CAMERA_V290_CSS_END */
 
-/* SHADOW_X_COMMUNITY_ICON_V295_CSS_START */
-/* Icon-only top controls with large invisible tap targets. */
+/* SHADOW_X_COMMUNITY_ICON_V294_CSS_START */
+/* Icon-only top controls with equal optical weight and large invisible tap targets. */
 .si-x-community-link,
 .si-notification-button{
   width:50px!important;
@@ -2078,7 +2078,9 @@ html[data-theme=dark]{
   text-decoration:none!important;
   cursor:pointer;
 }
-.si-notification-button{position:relative!important;}
+.si-notification-button{
+  position:relative!important;
+}
 .si-x-community-link:hover,
 .si-x-community-link:focus-visible,
 .si-notification-button:hover,
@@ -2088,24 +2090,26 @@ html[data-theme=dark]{
   background:transparent!important;
 }
 .si-x-community-link:active,
-.si-notification-button:active{transform:scale(.94);}
-/* Recognizable X logo geometry, rendered as a thin outline icon. */
+.si-notification-button:active{
+  transform:scale(.94);
+}
+/* X now uses the same outline language as the rest of the interface. */
 .si-x-community-link svg{
   width:23px!important;
   height:23px!important;
-  display:block!important;
-  overflow:visible!important;
+  display:block;
   fill:none!important;
   stroke:currentColor!important;
-  stroke-width:1.25!important;
+  stroke-width:1.7!important;
   stroke-linecap:round!important;
   stroke-linejoin:round!important;
 }
+/* Match the bell's optical footprint to the X glyph. */
 .si-notification-button svg{
   width:23px!important;
   height:23px!important;
 }
-/* Badge is visually anchored to the bell glyph, not the 50x50 tap target. */
+/* Badge remains visually anchored to the bell glyph, not to the 50x50 tap target. */
 .si-notification-button .si-notification-badge{
   top:7px!important;
   right:7px!important;
@@ -2124,6 +2128,8 @@ html[data-theme=dark]{
     left:18px!important;
     z-index:140!important;
   }
-  .si-top-actions{right:18px!important;}
+  .si-top-actions{
+    right:18px!important;
+  }
 }
-/* SHADOW_X_COMMUNITY_ICON_V295_CSS_END */
+/* SHADOW_X_COMMUNITY_ICON_V294_CSS_END */

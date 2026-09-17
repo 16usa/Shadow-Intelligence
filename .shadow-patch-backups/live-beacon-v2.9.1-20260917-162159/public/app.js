@@ -1081,13 +1081,10 @@ function updateMapCounts(){
   el.textContent=`${c.entities} entities · ${c.wallets} wallets · ${c.tokens} tokens`;
 }
 
-/* SHADOW_LIVE_TRADE_BEACON_V291_START */
-const MAP_SIGNAL_TTL_MS=60000;
+/* SHADOW_LIVE_TRADE_BEACON_V214_START */
 let mapSignalPollTimer=0;
 let mapSignalPollBusy=false;
-const mapSignalRecent=new Map();
-let mapSignalGraph=null;
-let mapSignalRenderedIds=new Set();
+let mapSignalSeeded=false;
 
 function mapSignalKind(event){
   const type=String(event?.type||'').toLowerCase();
@@ -1095,32 +1092,7 @@ function mapSignalKind(event){
 
   if(type==='buy'||type.includes('buy')||title.startsWith('bought ')||title.includes(' bought '))return 'buy';
   if(type==='sell'||type.includes('sell')||title.startsWith('sold ')||title.includes(' sold '))return 'sell';
-
-  // Pump/PumpSwap token-to-token swaps are stored against the token received.
-  // Treat that acquired-token leg as a BUY beacon. If a future feed row explicitly
-  // says the token was swapped out/from, render it as SELL instead.
-  if(type==='swap'||title.startsWith('swapped ')||title.includes(' swapped ')){
-    if(title.includes('swapped out')||title.includes('swapped from'))return 'sell';
-    return 'buy';
-  }
   return '';
-}
-
-function mapSignalEventTime(event){
-  const raw=event?.createdAt||event?.blockTime||event?.block_time||event?.created_at||'';
-  const value=Date.parse(raw);
-  return Number.isFinite(value)?value:0;
-}
-
-function mapSignalRecord(event,now=Date.now()){
-  const id=String(event?.id||'').trim();
-  const entityId=String(event?.entityId||event?.entity_id||'').trim();
-  const kind=mapSignalKind(event);
-  const startedAt=mapSignalEventTime(event);
-  if(!id||!entityId||!kind||!startedAt)return null;
-  const expiresAt=startedAt+MAP_SIGNAL_TTL_MS;
-  if(expiresAt<=now)return null;
-  return {id,entityId,kind,startedAt,expiresAt};
 }
 
 function rememberMapSignal(id){
@@ -1132,55 +1104,38 @@ function rememberMapSignal(id){
   }
 }
 
-function pruneMapSignals(now=Date.now()){
-  for(const [id,row] of mapSignalRecent){
-    if(Number(row?.expiresAt)<=now){
-      mapSignalRecent.delete(id);
-      mapSignalRenderedIds.delete(id);
-    }
-  }
-}
-
-function syncActiveMapSignals(now=Date.now()){
-  pruneMapSignals(now);
-  const graph=state.graph;
-  if(graph!==mapSignalGraph){
-    mapSignalGraph=graph;
-    mapSignalRenderedIds=new Set();
-  }
-  if(!graph||currentPage!=='overview'||document.body.classList.contains('si-detail-page-open'))return;
-
-  const rows=[...mapSignalRecent.values()]
-    .filter(row=>row.expiresAt>now)
-    .sort((a,b)=>a.startedAt-b.startedAt);
-
-  for(const row of rows){
-    if(mapSignalRenderedIds.has(row.id))continue;
-    const mounted=graph.mountBeacon?.(row.entityId,row.kind,row.expiresAt,false);
-    if(mounted)mapSignalRenderedIds.add(row.id);
-  }
-}
-
 function consumeMapSignals(items=[]){
   const rows=Array.isArray(items)?items:[];
-  const now=Date.now();
 
-  for(const event of rows){
-    const id=String(event?.id||'').trim();
-    if(id)rememberMapSignal(id);
-    const record=mapSignalRecord(event,now);
-    if(record)mapSignalRecent.set(record.id,record);
-    else if(id)mapSignalRecent.delete(id);
+  if(!mapSignalSeeded){
+    rows.forEach(event=>rememberMapSignal(event?.id));
+    mapSignalSeeded=true;
+    return;
   }
 
-  syncActiveMapSignals(now);
+  const fresh=rows
+    .filter(event=>event?.id&&!state.lastEventIds.has(String(event.id)))
+    .reverse();
+
+  for(const event of fresh){
+    rememberMapSignal(event.id);
+    const kind=mapSignalKind(event);
+    if(!kind||!event?.entityId)continue;
+
+    if(
+      currentPage==='overview' &&
+      !document.body.classList.contains('si-detail-page-open')
+    ){
+      state.graph?.pulseEntity?.(event.entityId,kind);
+    }
+  }
 }
 
 async function pollMapSignals(){
   if(mapSignalPollBusy||document.hidden)return;
   mapSignalPollBusy=true;
   try{
-    const data=await api('/api/feed?limit=100');
+    const data=await api('/api/feed?limit=30');
     consumeMapSignals(data?.items||[]);
   }catch(error){
     console.debug('Map signal poll skipped:',error?.message||error);
@@ -1194,16 +1149,7 @@ function startMapSignalPoll(){
   pollMapSignals();
   mapSignalPollTimer=setInterval(pollMapSignals,2000);
 }
-
-if(!window.__shadowLiveBeaconVisibilityV291){
-  window.__shadowLiveBeaconVisibilityV291=true;
-  document.addEventListener('visibilitychange',()=>{
-    if(document.hidden)return;
-    pollMapSignals();
-    syncActiveMapSignals();
-  },{passive:true});
-}
-/* SHADOW_LIVE_TRADE_BEACON_V291_END */
+/* SHADOW_LIVE_TRADE_BEACON_V214_END */
 
 function renderOverviewChrome(live=state.liveStatus){
   const o=state.overview||{};
@@ -1386,7 +1332,12 @@ class ShadowDomSwarm{
   }
 
   restorePersistedBeacons(){
-    // v2.9.1: live beacons are restored from /api/feed using the original event timestamp.
+    const now=Date.now();
+    const rows=Array.isArray(this.persisted?.beacons)?this.persisted.beacons:[];
+    for(const row of rows){
+      if(Number(row?.expiresAt)<=now)continue;
+      this.mountBeacon(String(row.entityId||''),row.kind,Number(row.expiresAt),false);
+    }
   }
 
   syncNodeVisual(node,raw,index){
@@ -2144,7 +2095,7 @@ function mountGlobalGraph(){
 
 async function renderOverview(live=state.liveStatus){
   let model=null;
-  try{model=mountGlobalGraph();syncActiveMapSignals()}
+  try{model=mountGlobalGraph()}
   catch(error){
     console.error('Global graph render failed:',error);
     toast('3D renderer failed to start');
@@ -3166,7 +3117,6 @@ function closeModal(){
   document.body.classList.remove('si-detail-page-open');
   delete document.body.dataset.detailReturnPage;
   state.graph?.schedule?.();
-  syncActiveMapSignals?.();
 }
 /* SHADOW_INSTANT_ENTITY_OPEN_V208_START */
 
