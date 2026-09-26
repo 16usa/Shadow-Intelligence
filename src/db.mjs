@@ -20,7 +20,7 @@ export function openDb(path = process.env.DB_PATH || './shadow-intelligence.db')
     );
     CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS entities (
-      id TEXT PRIMARY KEY,name TEXT NOT NULL,x_handle TEXT DEFAULT '',avatar TEXT DEFAULT '',avatar_source TEXT DEFAULT 'manual',
+      id TEXT PRIMARY KEY,name TEXT NOT NULL,x_handle TEXT DEFAULT '',profile_platform TEXT DEFAULT 'auto',profile_handle TEXT DEFAULT '',profile_url TEXT DEFAULT '',avatar TEXT DEFAULT '',avatar_source TEXT DEFAULT 'manual',
       risk_score INTEGER NOT NULL DEFAULT 0,confidence INTEGER NOT NULL DEFAULT 50,incidents INTEGER NOT NULL DEFAULT 0,
       follower_losses REAL NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'watch',notes TEXT DEFAULT '',created_at TEXT NOT NULL
     );
@@ -193,6 +193,11 @@ function migrateColumns(db) {
   addColumn(db,'entities',"x_user_id TEXT DEFAULT ''");
   addColumn(db,'entities',"x_last_post_id TEXT DEFAULT ''");
   addColumn(db,'entities',"x_last_synced_at TEXT DEFAULT ''");
+  /* SHADOW_PROFILE_SOURCE_V270_DB */
+  addColumn(db,'entities',"profile_platform TEXT DEFAULT 'auto'");
+  addColumn(db,'entities',"profile_handle TEXT DEFAULT ''");
+  addColumn(db,'entities',"profile_url TEXT DEFAULT ''");
+  /* SHADOW_PROFILE_SOURCE_V270_DB_END */
   addColumn(db,'tokens',"price_usd REAL DEFAULT 0");
   addColumn(db,'tokens',"market_cap REAL DEFAULT 0");
   addColumn(db,'tokens',"liquidity_usd REAL DEFAULT 0");
@@ -218,7 +223,7 @@ function migrateColumns(db) {
 function seedSettings(db) {
   const defaults = {
     platform_name:'Shadow Intelligence', registration_enabled:'true', community_chat_enabled:'true', copy_trading_enabled:'true',
-    risk_high_threshold:'80', demo_mode:'false', live_monitor_enabled:'true', live_poll_seconds:'60', wallet_history_limit:'30', x_monitor_enabled:'true'
+    risk_high_threshold:'80', demo_mode:'false', live_monitor_enabled:'true', live_poll_seconds:'60', wallet_history_limit:'30', x_monitor_enabled:'true', wallet_monitor_mode:'current'
   };
   const stmt=db.prepare('INSERT OR IGNORE INTO settings (key,value) VALUES (?,?)');
   for (const [k,v] of Object.entries(defaults)) stmt.run(k,v);

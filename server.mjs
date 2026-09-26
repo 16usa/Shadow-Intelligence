@@ -7,6 +7,7 @@ import { openDb, getAllSettings, getSetting } from './src/db.mjs';
 import { hashPassword, verifyPassword, createSession, deleteSession, getUserFromSession, setSessionCookie, clearSessionCookie } from './src/auth.mjs';
 import { clean, cleanEmail, isEmail, id, nowIso, json, parseCookies, readJson, maskWallet, isSafeHttpUrl, isSolanaAddress } from './src/utils.mjs';
 import { resolveWalletAvatar } from './src/adapters/pump-profile.mjs';
+import { resolveProfileAvatar, normalizeProfilePlatform, normalizeProfileHandle, isPublicProfileUrl } from './src/adapters/profile-avatar.mjs';
 import { syncCopyGroup, syncCopySubscription } from './src/adapters/copy-trading.mjs';
 import { providerHealth } from './src/adapters/intelligence.mjs';
 import { createLiveIntelligence } from './src/live-intelligence.mjs';
@@ -809,6 +810,9 @@ function entityRows(db,{solUsd=0}={}) {
       riskScore:e.risk_score,
       followerLosses:e.follower_losses,
       xHandle:e.x_handle,
+      profileHandle:e.profile_handle,
+      profilePlatform:e.profile_platform,
+      profileUrl:e.profile_url,
       walletCount:e.walletCount,
       createdAt:e.created_at,
       performanceTokens:perf.tokens,
@@ -1171,11 +1175,28 @@ async function api(req, res, db, url, live) {
   const parts = parseRoute(url.pathname);
   const route = '/' + parts.join('/');
 
+  /* SHADOW_REALTIME_HELIUS_V300_SERVER */
+  if (route === '/api/webhooks/helius' && method === 'POST') {
+    if(!live.webhookAuthorized(req.headers.authorization||''))return json(res,401,{error:'Unauthorized webhook'});
+    const payload=await readJson(req);
+    const accepted=live.enqueueWebhook(payload);
+    // Helius recommends acknowledging quickly and doing business logic asynchronously.
+    return json(res,200,{ok:true,...accepted});
+  }
+  if (route === '/api/live/realtime-refresh' && method === 'POST') {
+    if (!requireOwner(req,res,db)) return;
+    return json(res,200,await live.refreshRealtimeWebhook());
+  }
+
   if (route === '/api/health' && method === 'GET') {
     const [intel, liveStatus] = await Promise.all([providerHealth(), live.health()]);
     return json(res, 200, { ok:true, time:nowIso(), intelligence:intel, live:liveStatus, copyEngineConfigured:!!process.env.COPY_ENGINE_URL, pumpAvatarConfigured:!!process.env.PUMP_PROFILE_LOOKUP_URL });
   }
   if (route === '/api/live/status' && method === 'GET') return json(res,200,await live.health());
+  if (route === '/api/live/wallet-status' && method === 'GET') {
+    if (!requireOwner(req,res,db)) return;
+    return json(res,200,{walletMonitoring:live.walletMonitoringStatus?.()||null});
+  }
   if (route === '/api/live/sync-all' && method === 'POST') {
     if (!requireOwner(req,res,db)) return;
     return json(res,200,await live.syncAll());
@@ -1276,6 +1297,45 @@ async function api(req, res, db, url, live) {
     return json(res,200,{ stats:{trackedEntities:tracked,activeAlerts:alerts,estimatedFollowerLosses:losses,linkedWallets:wallets}, feed:feedRows(db,20), leaderboard:entities.slice(0,8), groups:groups(db), selected, selectedWallets, selectedTokens });
   }
   if (route === '/api/feed' && method === 'GET') return json(res,200,{items:feedRows(db,Math.min(Number(url.searchParams.get('limit'))||50,100))});
+  /* SHADOW_WALLET_DUPLICATE_CHECK_V270 */
+  if (route === '/api/wallets/check' && method === 'GET') {
+    if (!requireOwner(req,res,db)) return;
+    const address=clean(url.searchParams.get('address'),120);
+    if(!address)return json(res,200,{valid:false,exists:false,error:'Wallet address required'});
+    if(!isSolanaAddress(address))return json(res,200,{valid:false,exists:false,error:'Invalid Solana wallet address'});
+
+    const row=db.prepare(`
+      SELECT
+        w.id AS walletId,w.address,w.label,
+        e.id AS entityId,e.name,e.x_handle AS xHandle,
+        e.profile_handle AS profileHandle,e.profile_platform AS profilePlatform,
+        e.profile_url AS profileUrl,e.avatar
+      FROM wallets w
+      LEFT JOIN entities e ON e.id=w.entity_id
+      WHERE w.address=?
+      LIMIT 1
+    `).get(address);
+
+    if(!row)return json(res,200,{valid:true,exists:false,address});
+
+    return json(res,200,{
+      valid:true,
+      exists:true,
+      address,
+      wallet:{id:row.walletId,address:row.address,label:row.label||''},
+      entity:row.entityId?{
+        id:row.entityId,
+        name:row.name||'',
+        xHandle:row.xHandle||'',
+        profileHandle:row.profileHandle||'',
+        profilePlatform:row.profilePlatform||'auto',
+        profileUrl:row.profileUrl||'',
+        avatar:row.avatar||''
+      }:null
+    });
+  }
+  /* SHADOW_WALLET_DUPLICATE_CHECK_V270_END */
+
   /* SHADOW_ENTITIES_CARD_INFO_V2417_SERVER */
   if (route === '/api/entities' && method === 'GET') {
     const solUsd=await currentSolUsd();
@@ -1291,20 +1351,27 @@ async function api(req, res, db, url, live) {
         : []
     );
 
-    const mainWalletStmt=db.prepare(`
-      SELECT address
+    const linkedWalletsStmt=db.prepare(`
+      SELECT id,entity_id,address,label,avatar,avatar_source,chain,
+             sync_status,monitoring_enabled,last_scanned_at,created_at
       FROM wallets
       WHERE entity_id=?
       ORDER BY created_at ASC
-      LIMIT 1
     `);
 
     const items=entityRows(db,{solUsd}).map(entity=>{
-      const mainWallet=mainWalletStmt.get(entity.id);
+      const linkedWallets=linkedWalletsStmt.all(entity.id).map(wallet=>({
+        ...wallet,
+        syncStatus:wallet.sync_status||'pending',
+        monitoringEnabled:!!wallet.monitoring_enabled
+      }));
+      const mainWallet=linkedWallets[0];
       const copy=copyByEntity.get(entity.id);
       return {
         ...entity,
         mainWalletAddress:mainWallet?.address||'',
+        linkedWallets,
+        walletAddresses:linkedWallets.map(wallet=>wallet.address),
         copyTradingActive:!!copy?.enabled,
         copyTradingState:copy?.engineState||''
       };
@@ -1313,13 +1380,151 @@ async function api(req, res, db, url, live) {
     return json(res,200,{items});
   }
   /* SHADOW_ENTITIES_CARD_INFO_V2417_SERVER_END */
+  /* SHADOW_PROFILE_SOURCE_V270_CREATE */
   if (route === '/api/entities' && method === 'POST') {
     if (!requireOwner(req,res,db)) return;
-    const b=await readJson(req); const name=clean(b.name,80); if(!name)return json(res,400,{error:'Name required'});
-    const entityId=id('ent_'); let avatar=String(b.avatar||'').trim();
-    db.prepare(`INSERT INTO entities (id,name,x_handle,avatar,avatar_source,risk_score,confidence,incidents,follower_losses,status,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(entityId,name,clean(b.xHandle,50),avatar,avatar?'manual':'pending',Math.max(0,Math.min(100,Number.isFinite(Number(b.riskScore))?Number(b.riskScore):0)),Math.max(0,Math.min(100,Number.isFinite(Number(b.confidence))?Number(b.confidence):50)),0,0,clean(b.status,20)||'watch',clean(b.notes,500),nowIso());
-    return json(res,201,{id:entityId});
+
+    const b=await readJson(req);
+    const profilePlatform=normalizeProfilePlatform(b.profilePlatform||b.platform||'auto');
+    const profileHandle=normalizeProfileHandle(b.profileHandle||b.handle||'');
+    let profileUrl=clean(b.profileUrl,1000);
+    const name=clean(b.name,80)||(profileHandle?`@${profileHandle}`:'');
+    if(!name)return json(res,400,{error:'Name or username required'});
+
+    if(profileUrl&&!isPublicProfileUrl(profileUrl)){
+      return json(res,400,{error:'Profile URL must be a public HTTPS URL'});
+    }
+
+    const wallet=clean(b.wallet,120);
+    if(wallet&&!isSolanaAddress(wallet)){
+      return json(res,400,{error:'Invalid Solana wallet address'});
+    }
+
+    const duplicateWallet=wallet?db.prepare(`
+      SELECT w.id AS walletId,e.id AS entityId,e.name,e.x_handle AS xHandle,
+             e.profile_handle AS profileHandle,e.profile_platform AS profilePlatform,e.avatar
+      FROM wallets w LEFT JOIN entities e ON e.id=w.entity_id
+      WHERE w.address=? LIMIT 1
+    `).get(wallet):null;
+
+    if(duplicateWallet){
+      return json(res,409,{
+        error:'Wallet already tracked',
+        code:'wallet_exists',
+        entity:duplicateWallet.entityId?{
+          id:duplicateWallet.entityId,
+          name:duplicateWallet.name||'',
+          xHandle:duplicateWallet.xHandle||'',
+          profileHandle:duplicateWallet.profileHandle||'',
+          profilePlatform:duplicateWallet.profilePlatform||'auto',
+          avatar:duplicateWallet.avatar||''
+        }:null
+      });
+    }
+
+    let xHandle=clean(b.xHandle,50);
+    if(!xHandle&&profilePlatform==='x'&&profileHandle)xHandle=`@${profileHandle}`;
+
+    let avatar=String(b.avatar||'').trim();
+    if(avatar&&!(avatar.startsWith('data:image/')||isSafeHttpUrl(avatar))){
+      return json(res,400,{error:'Avatar must be an image upload or safe URL'});
+    }
+    if(avatar.length>1_400_000)return json(res,413,{error:'Avatar is too large'});
+
+    let avatarSource=avatar?'manual':'pending';
+
+    if(!avatar&&(profileHandle||profileUrl)){
+      const resolved=await resolveProfileAvatar({
+        platform:profilePlatform,
+        handle:profileHandle,
+        profileUrl
+      });
+      if(!profileUrl&&resolved.profileUrl)profileUrl=clean(resolved.profileUrl,1000);
+      if(resolved.avatar){
+        avatar=resolved.avatar;
+        avatarSource=resolved.source||'profile';
+      }
+    }
+
+    if(!avatar&&wallet){
+      const resolved=await resolveWalletAvatar(wallet);
+      avatar=resolved.avatar||'';
+      avatarSource=resolved.source||'generated';
+    }
+
+    const entityId=id('ent_');
+    let walletId='';
+
+    db.exec('BEGIN IMMEDIATE');
+    try{
+      if(wallet&&db.prepare('SELECT 1 FROM wallets WHERE address=?').get(wallet)){
+        db.exec('ROLLBACK');
+        return json(res,409,{error:'Wallet already tracked',code:'wallet_exists'});
+      }
+
+      db.prepare(`
+        INSERT INTO entities
+          (id,name,x_handle,profile_platform,profile_handle,profile_url,avatar,avatar_source,
+           risk_score,confidence,incidents,follower_losses,status,notes,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      `).run(
+        entityId,
+        name,
+        xHandle,
+        profilePlatform,
+        profileHandle,
+        profileUrl,
+        avatar,
+        avatarSource,
+        Math.max(0,Math.min(100,Number.isFinite(Number(b.riskScore))?Number(b.riskScore):0)),
+        Math.max(0,Math.min(100,Number.isFinite(Number(b.confidence))?Number(b.confidence):50)),
+        0,
+        0,
+        clean(b.status,20)||'watch',
+        clean(b.notes,500),
+        nowIso()
+      );
+
+      if(wallet){
+        walletId=id('wal_');
+        db.prepare(`
+          INSERT INTO wallets
+            (id,entity_id,address,label,avatar,avatar_source,sync_status,monitoring_enabled,created_at)
+          VALUES (?,?,?,?,?,?,?,?,?)
+        `).run(
+          walletId,
+          entityId,
+          wallet,
+          clean(b.walletLabel,80)||'Main wallet',
+          avatar,
+          avatarSource,
+          'pending',
+          1,
+          nowIso()
+        );
+      }
+
+      db.exec('COMMIT');
+    }catch(error){
+      try{db.exec('ROLLBACK')}catch{}
+      throw error;
+    }
+
+    if(walletId){
+      setTimeout(()=>live.syncWallet(walletId).catch(err=>console.warn('Initial wallet sync failed:',err.message)),0).unref?.();
+    }
+
+    return json(res,201,{
+      id:entityId,
+      walletId:walletId||null,
+      avatar,
+      avatarSource,
+      profilePlatform,
+      profileHandle,
+      profileUrl
+    });
   }
+  /* SHADOW_PROFILE_SOURCE_V270_CREATE_END */
   /* SHADOW_ADMIN_ENTITY_V213_START */
   // Admin entity mutations.
   // POST aliases are the canonical UI path because they are reliable through
@@ -1501,6 +1706,8 @@ async function api(req, res, db, url, live) {
     db.prepare('INSERT INTO wallets (id,entity_id,address,label,avatar,avatar_source,sync_status,monitoring_enabled,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(walletId,parts[2],address,clean(b.label,80),av.avatar,av.source,'pending',1,nowIso());
     if(!db.prepare('SELECT avatar FROM entities WHERE id=?').get(parts[2])?.avatar) db.prepare('UPDATE entities SET avatar=?,avatar_source=? WHERE id=?').run(av.avatar,av.source,parts[2]);
     setTimeout(()=>live.syncWallet(walletId).catch(err=>console.warn('Initial wallet sync failed:',err.message)),0).unref?.();
+    setTimeout(()=>live.refreshRealtimeWebhook().catch(err=>console.warn('Realtime webhook refresh failed:',err.message)),0).unref?.();
+    setTimeout(()=>live.refreshMonitoringMode?.(),50).unref?.();
     return json(res,201,{id:walletId,avatarSource:av.source,syncStatus:'pending'});
   }
   if (parts[0]==='api' && parts[1]==='wallets' && parts[2] && parts[3]==='sync-avatar' && method==='POST') {
@@ -2058,9 +2265,14 @@ async function api(req, res, db, url, live) {
   }
   if (route === '/api/settings' && method === 'PATCH') {
     if(!requireOwner(req,res,db))return; const b=await readJson(req);
-    const allowed=['platform_name','registration_enabled','community_chat_enabled','copy_trading_enabled','risk_high_threshold','demo_mode','live_monitor_enabled','live_poll_seconds','wallet_history_limit','x_monitor_enabled'];
+    const allowed=['platform_name','registration_enabled','community_chat_enabled','copy_trading_enabled','risk_high_threshold','demo_mode','live_monitor_enabled','live_poll_seconds','wallet_history_limit','x_monitor_enabled','wallet_monitor_mode'];
     const stmt=db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
-    for(const key of allowed) if(Object.hasOwn(b,key)) stmt.run(key,String(b[key]));
+    for(const key of allowed){
+      if(!Object.hasOwn(b,key))continue;
+      const value=key==='wallet_monitor_mode'?(String(b[key])==='solana_rpc'?'solana_rpc':'current'):String(b[key]);
+      stmt.run(key,value);
+    }
+    live.refreshMonitoringMode?.();
     return json(res,200,getAllSettings(db));
   }
   return json(res,404,{error:'API route not found'});

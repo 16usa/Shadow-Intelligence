@@ -2497,9 +2497,18 @@ function renderEntities(q=''){
     .sort(entityProfitSort)
     .map((e,index)=>({...e,entityRank:index+1}));
 
-  const a=ranked.filter(e=>
-    !query||[e.name,e.x_handle,e.notes,e.mainWalletAddress].join(' ').toLowerCase().includes(query)
-  );
+  const a=ranked.filter(e=>{
+    if(!query)return true;
+    const wallets=Array.isArray(e.linkedWallets)?e.linkedWallets:[];
+    const hay=[
+      e.name,
+      e.x_handle,
+      e.notes,
+      e.mainWalletAddress,
+      ...wallets.flatMap(w=>[w.address,w.label])
+    ].filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(query);
+  });
 
   $('#entitiesGrid').innerHTML=a.map(e=>`
     <article class="si-panel si-entity-card ${entityPodiumClass(e.entityRank)}" data-entity="${e.id}" style="position:relative">
@@ -2540,6 +2549,38 @@ function renderEntities(q=''){
 }
 /* SHADOW_ENTITIES_CARD_INFO_V2417_APP_END */
 /* SHADOW_WALLETS_IN_ADMIN_V233_APP */
+/* SHADOW_RPC_WALLET_STATUS_V312 */
+let adminWalletRealtimeStatusTimer=0;
+
+async function refreshAdminWalletRealtimeStatuses(){
+  const target=$('#walletsAdminTable');
+  if(!target)return;
+
+  let payload;
+  try{payload=await api('/api/live/wallet-status')}catch{return}
+  const monitor=payload?.walletMonitoring||{};
+  if(String(monitor.mode||'current')!=='solana_rpc')return;
+
+  const realtime=monitor.realtime||{};
+  const subscribed=new Set((Array.isArray(realtime.subscribedWalletIds)?realtime.subscribedWalletIds:[]).map(String));
+
+  target.querySelectorAll('[data-admin-wallet-status]').forEach(cell=>{
+    const walletId=String(cell.dataset.adminWalletStatus||'');
+    let status='error';
+    if(realtime.connected)status=subscribed.has(walletId)?'live':'subscribing';
+    else if(realtime.connecting||realtime.reconnecting)status='reconnecting';
+    cell.textContent=status;
+  });
+}
+
+function startAdminWalletRealtimeStatusPolling(){
+  if(adminWalletRealtimeStatusTimer)clearInterval(adminWalletRealtimeStatusTimer);
+  adminWalletRealtimeStatusTimer=setInterval(()=>{
+    if(currentPage!=='settings')return;
+    refreshAdminWalletRealtimeStatuses().catch(()=>{});
+  },3000);
+}
+
 async function renderWalletInventory(targetSelector='#walletsAdminTable'){
   if(!['owner','admin'].includes(state.user?.role))return;
 
@@ -2571,12 +2612,26 @@ async function renderWalletInventory(targetSelector='#walletsAdminTable'){
         ${ws.map(w=>`<tr>
           <td><strong>${short(w.address)}</strong><br><small>${esc(w.label||'Main wallet')}</small></td>
           <td>${esc(w.xHandle||w.entityName||'')}</td>
-          <td>${esc(w.sync_status||'pending')}</td>
+          <td>${esc(String(w.sync_status||'pending').replaceAll('_',' '))}${w.sync_error?`<br><small>${esc(w.sync_error)}</small>`:''}</td>
           <td>${w.last_scanned_at?ago(w.last_scanned_at)+' ago':'not scanned'}</td>
           <td><button class="si-button" data-admin-wallet-sync="${w.id}">Sync</button></td>
         </tr>`).join('')}
       </tbody>
     </table>`;
+
+    /* SHADOW_RPC_WALLET_STATUS_V312_TAG_ROWS */
+    target.querySelectorAll('tbody tr').forEach((row,index)=>{
+      const wallet=ws[index];
+      if(!wallet)return;
+      const cells=row.querySelectorAll('td');
+      const statusCell=cells[2];
+      if(!statusCell)return;
+      statusCell.dataset.adminWalletStatus=String(wallet.id||'');
+      statusCell.dataset.storedStatus=String(wallet.sync_status||'pending');
+    });
+
+    await refreshAdminWalletRealtimeStatuses();
+    startAdminWalletRealtimeStatusPolling();
 
     target.querySelectorAll('[data-admin-wallet-sync]').forEach(button=>{
       button.onclick=async()=>{
@@ -3391,6 +3446,36 @@ function entityTokenRows(tokens=[]){
   }</div>`;
 }
 
+/* SHADOW_LINKED_WALLET_3D_V15 */
+function entityDetailLinkedWallets(d,e){
+  const sources=[
+    ...(Array.isArray(e?.linkedWallets)?e.linkedWallets:[]),
+    ...(Array.isArray(d?.linkedWallets)?d.linkedWallets:[]),
+    ...(Array.isArray(d?.wallets)?d.wallets:[])
+  ];
+
+  const byKey=new Map();
+  const order=[];
+
+  for(const raw of sources){
+    if(!raw)continue;
+    const address=String(raw.address||'').trim();
+    const id=String(raw.id||'').trim();
+    const key=address||id;
+    if(!key)continue;
+
+    if(!byKey.has(key))order.push(key);
+    byKey.set(key,{
+      ...(byKey.get(key)||{}),
+      ...raw,
+      entity_id:raw.entity_id||e?.id||''
+    });
+  }
+
+  return order.map(key=>byKey.get(key));
+}
+/* SHADOW_LINKED_WALLET_3D_V15_END */
+
 function entityDetail(d){
   const liveEntity=state.entities.find(x=>x.id===d?.entity?.id)||{};
   const e={
@@ -3417,7 +3502,10 @@ function entityDetail(d){
       logoURI: src || t?.logoURI || live?.logoURI || ''
     };
   });
-  const wallets=Array.isArray(d?.wallets)?d.wallets:[];
+  // v1.5: detail response can be stale/main-wallet-only while /api/entities
+  // already contains every linked wallet from v1.4. Merge + dedupe both sources
+  // before rendering the profile, activity graph, and 3D network.
+  const wallets=entityDetailLinkedWallets(d,e);
   const incidents=Array.isArray(d?.incidents)?d.incidents:[];
 
   const model={
@@ -3523,7 +3611,170 @@ function entityDetail(d){
 
 function walletDetail(w,items){const model={entities:state.entities.filter(e=>e.id===w.entity_id),wallets:[w],tokens:state.tokens.filter(t=>items.some(a=>a.mint===t.mint)).map(t=>({...t,entity_id:w.entity_id})),activity:items};modal(`<div class="si-detail-layout"><aside class="si-detail-side"><div class="si-panel" style="box-shadow:none">${avatar(w,'xl')}<h2>Wallet</h2><p>${short(w.address)}</p><div class="si-metrics"><div class="si-metric"><strong>${esc(w.sync_status||'pending')}</strong><small>Status</small></div><div class="si-metric"><strong>${items.length}</strong><small>Events</small></div><div class="si-metric"><strong>${esc(w.chain||'solana')}</strong><small>Chain</small></div></div></div><div class="si-panel" style="box-shadow:none;margin-top:12px"><div class="si-panel-head"><span>ACTIVITY</span></div>${items.slice(0,18).map(a=>eventHtml({type:a.type,title:(a.type||'activity').toUpperCase(),detail:a.mint?short(a.mint):'',createdAt:a.block_time})).join('')||'<div class="guest-note">No activity.</div>'}</div></aside><section class="si-detail-map"><div id="detailGraph" class="si-graph"></div></section></div>`);state.detailGraph=new ShadowGraph($('#detailGraph'),model,{onSelect:openObject})}
 function tokenDetail(t){const related=state.overview?.feed?.filter(x=>x.symbol===t.symbol||x.tokenName===t.name)||[];modal(`<div class="si-detail-layout"><aside class="si-detail-side"><div class="si-panel" style="box-shadow:none">${avatar(t,'xl')}<h2>${esc(t.symbol||'Token')}</h2><p>${esc(t.name||'Unknown')}</p><p>${tokenAddressCopyHtml(t.mint)}</p><div class="si-metrics"><div class="si-metric"><strong>${money(t.market_cap||0)}</strong><small>Market cap</small></div><div class="si-metric"><strong class="${Number(t.price_change)>=0?'pos':'neg'}">${Number(t.price_change)>=0?'+':''}${Number(t.price_change||0).toFixed(1)}%</strong><small>Change</small></div><div class="si-metric"><strong>${money(t.liquidity_usd||0)}</strong><small>Liquidity</small></div></div></div><div class="si-panel" style="box-shadow:none;margin-top:12px"><div class="si-panel-head"><span>RECENT SIGNALS</span></div>${related.slice(0,12).map(eventHtml).join('')||'<div class="guest-note">No recent incident records.</div>'}</div></aside><section class="si-detail-map"><div id="detailGraph" class="si-graph"></div></section></div>`);const entities=state.entities.filter(e=>related.some(x=>x.entityId===e.id));state.detailGraph=new ShadowGraph($('#detailGraph'),{entities:entities.length?entities:[state.overview?.selected].filter(Boolean),wallets:[],tokens:[t]},{onSelect:openObject});bindTokenAddressCopy($('#modalBody')||document)}
-function entityModal(){modal(`<h2>Add entity</h2><form id="entityForm" class="si-modal-form"><label>Name<input name="name" required placeholder="Entity name"></label><label>X handle<input name="xHandle" placeholder="@handle"></label><label>Avatar URL<input name="avatar" placeholder="Optional — auto from Pump.fun wallet"></label><label>Initial wallet<input name="wallet" placeholder="Solana address"></label><label>Notes<textarea name="notes" rows="4"></textarea></label><button class="si-button primary">Create entity</button></form>`);$('#entityForm').onsubmit=async e=>{e.preventDefault();const b=Object.fromEntries(new FormData(e.target));try{const x=await api('/api/entities',{method:'POST',body:JSON.stringify(b)});if(b.wallet)await api(`/api/entities/${x.id}/wallets`,{method:'POST',body:JSON.stringify({address:b.wallet,label:'Main wallet'})});closeModal();toast('Entity created');await refresh();nav('entities')}catch(x){toast(x.message)}}}
+/* SHADOW_ENTITY_UNIVERSAL_SOURCE_V270 */
+let entityWalletCheckTimer=null;
+
+async function checkEntityWalletAvailability(form){
+  const wallet=form?.elements?.wallet;
+  const status=$('#entityWalletStatus');
+  const submit=$('#entityCreateButton');
+  if(!wallet||!status||!submit)return;
+
+  const address=String(wallet.value||'').trim();
+  form.dataset.walletDuplicate='0';
+
+  if(!address){
+    status.innerHTML='';
+    submit.disabled=false;
+    return;
+  }
+
+  if(!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)){
+    status.innerHTML='<span style="color:#9ca3af">Enter the complete Solana wallet address.</span>';
+    submit.disabled=true;
+    return;
+  }
+
+  status.innerHTML='<span style="color:#9ca3af">Checking wallet…</span>';
+  submit.disabled=true;
+
+  try{
+    const result=await api(`/api/wallets/check?address=${encodeURIComponent(address)}`);
+    if(String(wallet.value||'').trim()!==address)return;
+
+    if(!result.valid){
+      status.innerHTML=`<span style="color:#ff6b6b">${esc(result.error||'Invalid Solana wallet address')}</span>`;
+      submit.disabled=true;
+      return;
+    }
+
+    if(result.exists){
+      form.dataset.walletDuplicate='1';
+      const entity=result.entity||{};
+      const handle=entity.profileHandle
+        ? `@${String(entity.profileHandle).replace(/^@/,'')}`
+        : (entity.xHandle||'');
+      const source=entity.profilePlatform&&entity.profilePlatform!=='auto'
+        ? entity.profilePlatform
+        : '';
+      const subtitle=[handle,source].filter(Boolean).join(' · ');
+      status.innerHTML=`
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid rgba(255,90,90,.35);border-radius:12px;background:rgba(255,70,70,.06)">
+          ${entity.avatar?`<img src="${esc(entity.avatar)}" alt="" style="width:34px;height:34px;border-radius:50%;object-fit:cover;flex:0 0 auto">`:''}
+          <div style="min-width:0">
+            <strong style="display:block;color:#ff6b6b">Already in Shadow — cannot add again</strong>
+            <span style="display:block;color:#9ca3af;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(entity.name||'Existing account')}${subtitle?` · ${esc(subtitle)}`:''}</span>
+          </div>
+        </div>`;
+      submit.disabled=true;
+      return;
+    }
+
+    status.innerHTML='<span style="color:#34d399">Wallet is not in Shadow yet.</span>';
+    submit.disabled=false;
+  }catch(error){
+    status.innerHTML=`<span style="color:#ff9f0a">${esc(error.message||'Wallet check failed')}</span>`;
+    submit.disabled=false;
+  }
+}
+
+function entityModal(){
+  modal(`<h2>Add entity</h2>
+    <form id="entityForm" class="si-modal-form" novalidate>
+      <label>Name
+        <input name="name" placeholder="Display name (optional if username is set)">
+      </label>
+
+      <label>Platform
+        <select name="profilePlatform">
+          <option value="auto">Auto</option>
+          <option value="fomo">Fomo</option>
+          <option value="pump.fun">Pump.fun</option>
+          <option value="x">X</option>
+          <option value="other">Other site</option>
+        </select>
+      </label>
+
+      <label>Username / handle
+        <input name="profileHandle" placeholder="@handle" autocapitalize="off" autocomplete="off">
+      </label>
+
+      <label>Profile URL
+        <input name="profileUrl" placeholder="Optional — for any other site" inputmode="url" autocapitalize="off" autocomplete="off">
+      </label>
+
+      <label>X handle
+        <input name="xHandle" placeholder="Optional — only for X monitoring" autocapitalize="off" autocomplete="off">
+      </label>
+
+      <label>Avatar URL
+        <input name="avatar" placeholder="Optional — auto from profile / wallet" inputmode="url">
+      </label>
+
+      <label>Initial wallet
+        <input name="wallet" placeholder="Solana address" autocapitalize="off" autocomplete="off" spellcheck="false">
+      </label>
+      <div id="entityWalletStatus" style="min-height:20px;margin-top:-6px;font-size:13px"></div>
+
+      <label>Notes
+        <textarea name="notes" rows="4"></textarea>
+      </label>
+
+      <button id="entityCreateButton" class="si-button primary" type="submit">Create entity</button>
+    </form>`);
+
+  const form=$('#entityForm');
+  const wallet=form?.elements?.wallet;
+
+  if(wallet){
+    wallet.addEventListener('input',()=>{
+      clearTimeout(entityWalletCheckTimer);
+      entityWalletCheckTimer=setTimeout(()=>checkEntityWalletAvailability(form),350);
+    });
+    wallet.addEventListener('blur',()=>checkEntityWalletAvailability(form));
+  }
+
+  form.onsubmit=async event=>{
+    event.preventDefault();
+
+    if(form.dataset.walletDuplicate==='1'){
+      toast('This wallet is already tracked');
+      return;
+    }
+
+    const body=Object.fromEntries(new FormData(form));
+    const handle=String(body.profileHandle||'').trim().replace(/^@+/,'');
+    if(!String(body.name||'').trim()&&handle)body.name=`@${handle}`;
+
+    if(!String(body.name||'').trim()){
+      toast('Add a name or username');
+      form.elements.name?.focus();
+      return;
+    }
+
+    const submit=$('#entityCreateButton');
+    submit.disabled=true;
+    const previous=submit.textContent;
+    submit.textContent='Creating…';
+
+    try{
+      await api('/api/entities',{method:'POST',body:JSON.stringify(body)});
+      closeModal();
+      toast('Entity created');
+      await refresh();
+      nav('entities');
+    }catch(error){
+      if(String(error.message||'').toLowerCase().includes('wallet already tracked')){
+        form.dataset.walletDuplicate='1';
+        await checkEntityWalletAvailability(form);
+      }
+      toast(error.message);
+      submit.disabled=form.dataset.walletDuplicate==='1';
+      submit.textContent=previous;
+    }
+  };
+}
+/* SHADOW_ENTITY_UNIVERSAL_SOURCE_V270_END */
 /* SHADOW_ADMIN_ENTITY_UI_V213_START */
 async function reloadEntityDetail(id){
   const nd=await api(`/api/entities/${id}`);
@@ -3829,19 +4080,24 @@ async function loadSettings(){
     $('#setRiskThreshold').value=s.risk_high_threshold||80;
     $('#setDemo').checked=s.demo_mode==='true';
     $('#setLiveMonitor').checked=s.live_monitor_enabled==='true';
+    $('#setWalletMonitorMode').value=s.wallet_monitor_mode==='solana_rpc'?'solana_rpc':'current';
     $('#setPollSeconds').value=s.live_poll_seconds||60;
     $('#setHistoryLimit').value=s.wallet_history_limit||30;
     $('#setXMonitor').checked=s.x_monitor_enabled==='true';
 
     const h=await api('/api/live/status');
-    $('#providerStatus').textContent=`Solana: ${h.solana?.status||'unknown'} - ${h.solana?.provider||''} - X: ${h.x?.configured?'configured':'not configured'}`;
+    const monitorMode=h.walletMonitoring?.mode||s.wallet_monitor_mode||'current';
+    const rpcLive=h.walletMonitoring?.realtime||{};
+    $('#providerStatus').textContent=monitorMode==='solana_rpc'
+      ? `Mode: Solana RPC · WebSocket: ${rpcLive.connected?'live':(rpcLive.connecting||rpcLive.reconnecting)?'reconnecting':'offline'} · ${rpcLive.subscriptions||0} wallets`
+      : `Mode: Current · Solana: ${h.solana?.status||'unknown'} · ${h.solana?.provider||''}`;
 
     await renderWalletInventory('#walletsAdminTable');
   }catch(e){
     toast(e.message);
   }
 }
-async function saveSettings(e){e.preventDefault();try{const b={platform_name:$('#setPlatformName').value,registration_enabled:$('#setRegistration').checked,community_chat_enabled:$('#setChat').checked,copy_trading_enabled:$('#setCopy').checked,risk_high_threshold:$('#setRiskThreshold').value,demo_mode:$('#setDemo').checked,live_monitor_enabled:$('#setLiveMonitor').checked,live_poll_seconds:$('#setPollSeconds').value,wallet_history_limit:$('#setHistoryLimit').value,x_monitor_enabled:$('#setXMonitor').checked};const s=await api('/api/settings',{method:'PATCH',body:JSON.stringify(b)});document.querySelectorAll('[data-platform-name]').forEach(x=>x.textContent=s.platform_name);toast('Settings saved')}catch(e){toast(e.message)}}
+async function saveSettings(e){e.preventDefault();try{const b={platform_name:$('#setPlatformName').value,registration_enabled:$('#setRegistration').checked,community_chat_enabled:$('#setChat').checked,copy_trading_enabled:$('#setCopy').checked,risk_high_threshold:$('#setRiskThreshold').value,demo_mode:$('#setDemo').checked,live_monitor_enabled:$('#setLiveMonitor').checked,wallet_monitor_mode:$('#setWalletMonitorMode').value,live_poll_seconds:$('#setPollSeconds').value,wallet_history_limit:$('#setHistoryLimit').value,x_monitor_enabled:$('#setXMonitor').checked};const s=await api('/api/settings',{method:'PATCH',body:JSON.stringify(b)});document.querySelectorAll('[data-platform-name]').forEach(x=>x.textContent=s.platform_name);toast('Settings saved')}catch(e){toast(e.message)}}
 /* SHADOW_SEARCH_PAGE_V237_APP */
 function searchMatches(q){
   const query=String(q||'').trim().toLowerCase();
@@ -3879,6 +4135,27 @@ function searchMatches(q){
   }
 
   const seenWallets=new Set();
+
+  for(const entity of state.entities||[]){
+    for(const rawWallet of (Array.isArray(entity.linkedWallets)?entity.linkedWallets:[])){
+      const address=String(rawWallet?.address||'');
+      if(!address || seenWallets.has(address))continue;
+      const wallet={...rawWallet,entity_id:rawWallet.entity_id||entity.id};
+      seenWallets.add(address);
+      const hay=[address,wallet.label,entity.name,entity.x_handle,entity.xHandle].filter(Boolean).join(' ').toLowerCase();
+      if(hay.includes(query)){
+        rows.push({
+          kind:'wallet',
+          item:wallet,
+          title:short(address),
+          subtitle:entity.x_handle||entity.xHandle||entity.name||wallet.label||'Tracked wallet',
+          meta:wallet.label||'Wallet',
+          avatar:wallet.avatar?wallet:null
+        });
+      }
+    }
+  }
+
   for(const d of state.details.values()){
     for(const w of d?.wallets||[]){
       const address=String(w.address||'');
@@ -3892,7 +4169,8 @@ function searchMatches(q){
           item:w,
           title:short(address),
           subtitle:entity.x_handle||entity.name||w.label||'Tracked wallet',
-          meta:'Wallet'
+          meta:w.label||'Wallet',
+          avatar:w.avatar?w:null
         });
       }
     }
