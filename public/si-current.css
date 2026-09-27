@@ -1,6 +1,6 @@
 /* Shadow Intelligence — canonical full-page application stylesheet v1.9.1 */
 :root{--si-bg:#fff;--si-panel:#fff;--si-text:#0f1419;--si-muted:#536471;--si-line:#eff3f4;--si-blue:#1d9bf0;--si-green:#00ba7c;--si-pink:#f91880;--si-shadow:0 1px 3px rgba(15,20,25,.04)}
-html[data-theme=dark]{--si-bg:#000;--si-panel:#000;--si-text:#e7e9ea;--si-muted:#71767b;--si-line:#2f3336;--si-shadow:none}
+html[data-theme=dark]{--si-bg:#0A0A0A;--si-panel:#071018;--si-text:#e7e9ea;--si-muted:#71767b;--si-line:#1c2a38;--si-shadow:none}
 *{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--si-bg);color:var(--si-text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif}button,input,textarea,select{font:inherit}button{color:inherit}
 body{overflow-x:hidden}.si-app{min-height:100vh;background:var(--si-bg)}
 .si-topbar{height:64px;border-bottom:0.5px solid var(--si-line);display:grid;grid-template-columns:260px 1fr auto;align-items:center;gap:18px;padding:0 24px;position:sticky;top:0;background:color-mix(in srgb,var(--si-bg) 94%,transparent);backdrop-filter:blur(14px);z-index:20}
@@ -605,7 +605,7 @@ html[data-theme=dark] #page-overview #globalMap{
     radial-gradient(circle at 50% 44%,
       #0d141c 0%,
       #05080b 48%,
-      #000 82%)!important;
+      #071018 82%)!important;
 }
 
 #page-overview #globalMap>.si-dom-swarm{
