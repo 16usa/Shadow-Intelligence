@@ -2157,3 +2157,135 @@ html[data-theme=dark] .si-graph{
   background-image:none!important;
 }
 /* SHADOW_3D_BG_MATCH_V1_END */
+
+/* SHADOW_DOCK_OUTLINE_ONLY_V1_START */
+/* Bottom menu + detached Search: outline only, no surface fill. */
+.si-bottom-cluster .si-immersive-dock,
+.si-bottom-cluster .si-floating-search-button{
+  background:transparent!important;
+  background-color:transparent!important;
+  border-color:var(--si-line)!important;
+  box-shadow:none!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+}
+/* Keep item selection icon-only: no filled active/hover pill inside the dock. */
+.si-bottom-cluster .si-immersive-dock button,
+.si-bottom-cluster .si-immersive-dock button:hover,
+.si-bottom-cluster .si-immersive-dock button:focus-visible,
+.si-bottom-cluster .si-immersive-dock button.active,
+.si-bottom-cluster .si-immersive-dock button[aria-current="page"],
+.si-bottom-cluster .si-immersive-dock button.is-active,
+.si-bottom-cluster .si-immersive-dock button[data-active="true"]{
+  background:transparent!important;
+  box-shadow:none!important;
+}
+/* SHADOW_DOCK_OUTLINE_ONLY_V1_END */
+
+/* SHADOW_CASHAPP_SURFACES_V1_START */
+/*
+  Dark mode only.
+  Cash-App-like surface system requested for Shadow:
+  - page / 3D background: pure black
+  - content cards: #1A1A1A
+  - content cards: no outer border / no shadow
+  - bottom dock + detached Search remain outline-only / transparent
+  Light mode is intentionally untouched.
+*/
+html[data-theme=dark]{
+  --si-bg:#000000;
+  --si-panel:#1A1A1A;
+  --si-line:#252525;
+  --si-shadow:none;
+}
+
+/* Whole application + all 3D/map surfaces are one continuous black canvas. */
+html[data-theme=dark],
+html[data-theme=dark] body,
+html[data-theme=dark] .si-app,
+html[data-theme=dark] .si-main,
+html[data-theme=dark] #page-overview,
+html[data-theme=dark] #page-overview .si-map-card,
+html[data-theme=dark] #page-overview #globalMap,
+html[data-theme=dark] #page-overview #globalMap>.si-dom-swarm,
+html[data-theme=dark] .si-detail-map,
+html[data-theme=dark] .si-detail-map .si-graph,
+html[data-theme=dark] .si-graph{
+  background:#000000!important;
+  background-image:none!important;
+  box-shadow:none!important;
+}
+
+/* Main content modules use the screenshot's sampled #1A1A1A fill, with no outer frame. */
+html[data-theme=dark] .si-panel,
+html[data-theme=dark] .si-entity-card,
+html[data-theme=dark] .si-token-card,
+html[data-theme=dark] .si-entity-chip,
+html[data-theme=dark] .si-chat-bubble,
+html[data-theme=dark] .si-notification-setting-block,
+html[data-theme=dark] .si-wallet-summary,
+html[data-theme=dark] .si-entity-performance-breakdown{
+  background:#1A1A1A!important;
+  border-color:transparent!important;
+  border-width:0!important;
+  box-shadow:none!important;
+}
+
+/* Remove ranking-card gradients/frames while preserving rank text colors. */
+html[data-theme=dark] .si-entity-card.si-podium-gold,
+html[data-theme=dark] .si-entity-card.si-podium-silver,
+html[data-theme=dark] .si-entity-card.si-podium-bronze,
+html[data-theme=dark] .si-entity-profile-panel.si-podium-gold,
+html[data-theme=dark] .si-entity-profile-panel.si-podium-silver,
+html[data-theme=dark] .si-entity-profile-panel.si-podium-bronze{
+  background:#1A1A1A!important;
+  border:0!important;
+  box-shadow:none!important;
+}
+
+/* Inner stats stay clean instead of looking like framed cards inside cards. */
+html[data-theme=dark] .si-card-stat,
+html[data-theme=dark] .si-metric,
+html[data-theme=dark] .si-detail-token-row{
+  background:transparent!important;
+  border-color:transparent!important;
+  border-width:0!important;
+  box-shadow:none!important;
+}
+
+/* Small relationship chips use the same filled-card language, without outlines. */
+html[data-theme=dark] .si-connection{
+  background:#1A1A1A!important;
+  border:0!important;
+  box-shadow:none!important;
+}
+
+/* Keep dock + detached Search exactly as requested previously: outline only. */
+html[data-theme=dark] .si-immersive-dock,
+html[data-theme=dark] .si-bottom-cluster .si-floating-search-button{
+  background:transparent!important;
+  background-image:none!important;
+  border:0.5px solid #252525!important;
+  box-shadow:none!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+}
+html[data-theme=dark] .si-immersive-dock button,
+html[data-theme=dark] .si-immersive-dock button:hover,
+html[data-theme=dark] .si-immersive-dock button.active,
+html[data-theme=dark] .si-immersive-dock button[aria-current="page"],
+html[data-theme=dark] .si-immersive-dock button.is-active,
+html[data-theme=dark] .si-immersive-dock button[data-active="true"]{
+  background:transparent!important;
+  box-shadow:none!important;
+}
+
+/* Full-screen detail shell stays black; content panels inside remain #1A1A1A. */
+html[data-theme=dark] .si-modal:not(.hidden),
+html[data-theme=dark] .si-modal:not(.hidden) .si-modal-card,
+html[data-theme=dark] .si-modal:not(.hidden) #modalBody,
+html[data-theme=dark] .si-page:not(#page-overview).active-page{
+  background:#000000!important;
+  background-image:none!important;
+}
+/* SHADOW_CASHAPP_SURFACES_V1_END */
