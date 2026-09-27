@@ -1,6 +1,6 @@
 /* Shadow Intelligence — canonical full-page application stylesheet v1.9.1 */
 :root{--si-bg:#fff;--si-panel:#fff;--si-text:#0f1419;--si-muted:#536471;--si-line:#eff3f4;--si-blue:#1d9bf0;--si-green:#00ba7c;--si-pink:#f91880;--si-shadow:0 1px 3px rgba(15,20,25,.04)}
-html[data-theme=dark]{--si-bg:#0A0A0A;--si-panel:#071018;--si-text:#e7e9ea;--si-muted:#71767b;--si-line:#1c2a38;--si-shadow:none}
+html[data-theme=dark]{--si-bg:#0A0A0A;--si-panel:#111111;--si-text:#e7e9ea;--si-muted:#71767b;--si-line:#252525;--si-shadow:none}
 *{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--si-bg);color:var(--si-text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif}button,input,textarea,select{font:inherit}button{color:inherit}
 body{overflow-x:hidden}.si-app{min-height:100vh;background:var(--si-bg)}
 .si-topbar{height:64px;border-bottom:0.5px solid var(--si-line);display:grid;grid-template-columns:260px 1fr auto;align-items:center;gap:18px;padding:0 24px;position:sticky;top:0;background:color-mix(in srgb,var(--si-bg) 94%,transparent);backdrop-filter:blur(14px);z-index:20}
@@ -2127,3 +2127,33 @@ html[data-theme=dark]{
   .si-top-actions{right:18px!important;}
 }
 /* SHADOW_X_COMMUNITY_ICON_V295_CSS_END */
+
+/* SHADOW_FIZ_MODULES_DARK_V2_START */
+html[data-theme=dark] .si-map-card,
+html[data-theme=dark] .si-panel,
+html[data-theme=dark] .si-entity-card,
+html[data-theme=dark] .si-token-card,
+html[data-theme=dark] .si-card-stat,
+html[data-theme=dark] .si-entity-chip,
+html[data-theme=dark] .si-connection,
+html[data-theme=dark] .si-chat-bubble,
+html[data-theme=dark] .si-modal-card,
+html[data-theme=dark] .si-detail-map,
+html[data-theme=dark] .si-detail-token-row {
+  background:#111111!important;
+  border-color:#252525!important;
+  box-shadow:none!important;
+}
+/* SHADOW_FIZ_MODULES_DARK_V2_END */
+
+/* SHADOW_3D_BG_MATCH_V1_START */
+/* Keep 3D/map surfaces visually continuous with the dark site background. */
+html[data-theme=dark] #page-overview #globalMap,
+html[data-theme=dark] #page-overview #globalMap > .si-dom-swarm,
+html[data-theme=dark] .si-detail-map,
+html[data-theme=dark] .si-detail-map .si-graph,
+html[data-theme=dark] .si-graph{
+  background:#0A0A0A!important;
+  background-image:none!important;
+}
+/* SHADOW_3D_BG_MATCH_V1_END */
