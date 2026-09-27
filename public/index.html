@@ -6,7 +6,7 @@
 <meta http-equiv="Expires" content="0"/>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"/>
-<meta name="theme-color" content="#ffffff"/>
+<meta name="theme-color" content="#000000"/>
 <title>Shadow Intelligence</title>
 <script>(function(){try{var t=localStorage.getItem('si-theme');if(t==='dark'||(!t&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.dataset.theme='dark'}catch{}})()</script>
 <link rel="icon" href="/assets/logo.svg"/>
@@ -17,6 +17,10 @@
 <link rel="stylesheet" href="/si-token-sort.css?v=2.6.1-20260915"/>
 <link rel="stylesheet" href="/si-search-scope-fix.css?v=2.7.2-20260915"/>
 <link rel="stylesheet" href="/si-activity-ring-fix.css?v=2.7.3-20260915"/>
+<!-- SHADOW_CASH_STYLE_V1 -->
+<link rel="stylesheet" href="/si-cashapp-ui.css?v=1.0.0-20260926"/>
+<!-- SHADOW_CASH_STYLE_BOOT_V1 -->
+<script>(function(){try{var k='shadow-cash-style-v1';if(localStorage.getItem(k)!=='1'){localStorage.setItem('si-theme','dark');localStorage.setItem(k,'1');document.documentElement.dataset.theme='dark'}}catch{document.documentElement.dataset.theme='dark'}})()</script>
 </head>
 <body>
 <!-- SHADOW_USER_COPY_TRADING_V230 -->
@@ -83,7 +87,7 @@
     </div>
   </div>
 </section>
-<section id="page-settings" class="si-page"><div class="si-page-head"><div><div class="si-eyebrow">OWNER CONTROL</div><h1>Admin Command Center</h1><p>Control the platform without changing the intelligence model.</p></div></div><form id="settingsForm" class="si-settings"><section class="si-panel"><h3>Platform</h3><label>Platform name<input id="setPlatformName" class="si-input"/></label><label class="si-toggle"><span>Allow registration</span><input id="setRegistration" type="checkbox"/></label><label class="si-toggle"><span>Community chat</span><input id="setChat" type="checkbox"/></label></section><section class="si-panel"><h3>Live intelligence</h3><label class="si-toggle"><span>Wallet monitoring</span><input id="setLiveMonitor" type="checkbox"/></label><label>Poll interval<input id="setPollSeconds" class="si-input" type="number" min="30" max="3600"/></label><label>Initial history depth<input id="setHistoryLimit" class="si-input" type="number" min="5" max="100"/></label><label class="si-toggle"><span>X monitoring</span><input id="setXMonitor" type="checkbox"/></label><div id="providerStatus" class="si-status"></div></section><section class="si-panel"><h3>Trading shell</h3><label class="si-toggle"><span>Copy trading enabled</span><input id="setCopy" type="checkbox"/></label><label>High signal threshold<input id="setRiskThreshold" class="si-input" type="number" min="1" max="100"/></label><label class="si-toggle"><span>Demo data mode</span><input id="setDemo" type="checkbox"/></label></section><section class="si-panel"><h3>Appearance</h3><p>Theme follows your saved preference. Use the ◐ button for Light / Dark.</p><button type="button" id="adminTheme" class="si-button secondary">Toggle theme</button></section><!-- SHADOW_WALLETS_IN_ADMIN_V233 -->
+<section id="page-settings" class="si-page"><div class="si-page-head"><div><div class="si-eyebrow">OWNER CONTROL</div><h1>Admin Command Center</h1><p>Control the platform without changing the intelligence model.</p></div></div><form id="settingsForm" class="si-settings"><section class="si-panel"><h3>Platform</h3><label>Platform name<input id="setPlatformName" class="si-input"/></label><label class="si-toggle"><span>Allow registration</span><input id="setRegistration" type="checkbox"/></label><label class="si-toggle"><span>Community chat</span><input id="setChat" type="checkbox"/></label></section><section class="si-panel"><h3>Live intelligence</h3><label class="si-toggle"><span>Wallet monitoring</span><input id="setLiveMonitor" type="checkbox"/></label><label>Monitoring mode<select id="setWalletMonitorMode" class="si-input"><option value="current">Current</option><option value="solana_rpc">Solana RPC</option></select></label><label>Poll interval<input id="setPollSeconds" class="si-input" type="number" min="30" max="3600"/></label><label>Initial history depth<input id="setHistoryLimit" class="si-input" type="number" min="5" max="100"/></label><label class="si-toggle"><span>X monitoring</span><input id="setXMonitor" type="checkbox"/></label><div id="providerStatus" class="si-status"></div></section><section class="si-panel"><h3>Trading shell</h3><label class="si-toggle"><span>Copy trading enabled</span><input id="setCopy" type="checkbox"/></label><label>High signal threshold<input id="setRiskThreshold" class="si-input" type="number" min="1" max="100"/></label><label class="si-toggle"><span>Demo data mode</span><input id="setDemo" type="checkbox"/></label></section><section class="si-panel"><h3>Appearance</h3><p>Theme follows your saved preference. Use the ◐ button for Light / Dark.</p><button type="button" id="adminTheme" class="si-button secondary">Toggle theme</button></section><!-- SHADOW_WALLETS_IN_ADMIN_V233 -->
 <section class="si-panel si-admin-wallets-panel">
   <div class="si-admin-wallets-head">
     <div>
@@ -149,7 +153,7 @@
 <!-- SHADOW_IMMERSIVE_UI_V1_END -->
 <script src="/si-graph.js?v=watermark-removed-2.1.9-20260914"></script>
 <script type="module" src="/app.js?v=live-beacon-2.9.1-20260917"></script>
-<script src="/si-activity-ring-fix.js?v=2.7.3-20260915"></script>
-<script src="/si-search-scope-fix.js?v=2.7.2-20260915"></script>
-<script src="/si-remove-top-live-card.js?v=2.7.1-20260915"></script>
+<script src="/si-activity-ring-fix.js?v=2.9.7-perf-20260917"></script>
+<script src="/si-search-scope-fix.js?v=2.9.7-perf-20260917"></script>
+<script src="/si-remove-top-live-card.js?v=2.9.7-perf-20260917"></script>
 </body></html>
