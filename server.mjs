@@ -1,3 +1,4 @@
+/* SHADOW_INTERNAL_COPY_ENGINE_V330 */
 import http from 'node:http';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -10,6 +11,7 @@ import { resolveWalletAvatar } from './src/adapters/pump-profile.mjs';
 import { resolveProfileAvatar, normalizeProfilePlatform, normalizeProfileHandle, isPublicProfileUrl } from './src/adapters/profile-avatar.mjs';
 import { syncCopyGroup, syncCopySubscription } from './src/adapters/copy-trading.mjs';
 import { ensureExecutionWalletSchema, mainCopyWalletRows, engineExecutionSnapshot, executionAuthorizationRow, persistExecutionAuthorization, markExecutionAuthorizationError, clearExecutionAuthorization } from './src/execution-wallet-24x7.mjs'; // SHADOW_EXECUTION_WALLET_24X7_V320
+import { createInternalCopyEngine } from './src/internal-copy-engine.mjs'; // SHADOW_INTERNAL_COPY_ENGINE_V330
 import { providerHealth } from './src/adapters/intelligence.mjs';
 import { createLiveIntelligence } from './src/live-intelligence.mjs';
 import { getTokenMarket, getTokenMetadataBatch, getTokenMarketsBatch } from './src/adapters/token-market.mjs';
@@ -263,6 +265,10 @@ function numBetween(value,min,max,fallback){
   const n=Number(value);
   return Number.isFinite(n)?Math.max(min,Math.min(max,n)):fallback;
 }
+function shadowCopyEngineConfigured(){
+  return !!process.env.COPY_ENGINE_URL || typeof globalThis.__SHADOW_INTERNAL_COPY_ENGINE_SYNC==='function';
+}
+/* SHADOW_INTERNAL_COPY_ENGINE_V330_HELPERS */
 /* SHADOW_USER_COPY_TRADING_V230_SERVER_HELPERS_END */
 /* SHADOW_NOTIFICATIONS_V240_SERVER */
 function ensureNotificationPreferences(db,userId){
@@ -2125,7 +2131,7 @@ async function api(req, res, db, url, live) {
     return json(res,200,{
       subscription:copySubscriptionRow(db,user.id,parts[2]),
       wallets:userWalletRows(db,user.id),
-      engineConfigured:!!process.env.COPY_ENGINE_URL,
+      engineConfigured:shadowCopyEngineConfigured(),
       copyTradingEnabled:getSetting(db,'copy_trading_enabled','true')==='true'
     });
   }
@@ -2175,8 +2181,8 @@ async function api(req, res, db, url, live) {
     const entityWallets=mainCopyWalletRows(db,entity.id); // Main Wallet only · Linked Wallets are intelligence-only
 
     if(!requestedEnabled){
-      let engine={configured:!!process.env.COPY_ENGINE_URL,ok:true,active:false,mode:'local'};
-      if(process.env.COPY_ENGINE_URL){
+      let engine={configured:shadowCopyEngineConfigured(),ok:true,active:false,mode:'local'};
+      if(shadowCopyEngineConfigured()){
         try{
           engine=await syncCopySubscription({...sub,enabled:false,walletAddress:wallet.address},entityWallets,'disable');
         }catch(error){
@@ -2188,7 +2194,7 @@ async function api(req, res, db, url, live) {
       return json(res,200,{ok:true,subscription:copySubscriptionRow(db,user.id,entity.id),engine});
     }
 
-    if(!process.env.COPY_ENGINE_URL){
+    if(!shadowCopyEngineConfigured()){
       db.prepare("UPDATE copy_subscriptions SET enabled=0,engine_state='engine_required',last_error=?,updated_at=? WHERE id=?")
         .run('COPY_ENGINE_URL is not configured',nowIso(),subId);
       return json(res,409,{
@@ -2235,6 +2241,45 @@ async function api(req, res, db, url, live) {
       authorizationUrl:engine?.authorizationUrl||''
     });
   }
+  /* SHADOW_INTERNAL_COPY_ENGINE_V330_ROUTES */
+  if(route==='/api/copy-engine/status' && method==='GET'){
+    const user=requireUser(req,res,db); if(!user)return;
+    const engine=globalThis.__SHADOW_INTERNAL_COPY_ENGINE;
+    return json(res,200,engine?engine.status():{configured:false});
+  }
+  if(route==='/api/copy-engine/authorization' && method==='GET'){
+    const user=requireUser(req,res,db); if(!user)return;
+    const token=String(url.searchParams.get('token')||'');
+    const engine=globalThis.__SHADOW_INTERNAL_COPY_ENGINE;
+    const details=engine?.authorizationDetails(token,user.id);
+    if(!details)return json(res,410,{error:'Authorization link is invalid or expired'});
+    return json(res,200,details);
+  }
+  if(route==='/api/copy-engine/authorization/challenge' && method==='POST'){
+    const user=requireUser(req,res,db); if(!user)return;
+    const b=await readJson(req); const token=String(b.token||'');
+    try{return json(res,200,globalThis.__SHADOW_INTERNAL_COPY_ENGINE.authorizationChallenge(token,user.id));}
+    catch(error){return json(res,error.statusCode||400,{error:String(error.message||error)});}
+  }
+  if(route==='/api/copy-engine/authorization/verify' && method==='POST'){
+    const user=requireUser(req,res,db); if(!user)return;
+    const b=await readJson(req); const token=String(b.token||''); const address=clean(b.address,120); const signature=String(b.signature||'');
+    const engine=globalThis.__SHADOW_INTERNAL_COPY_ENGINE;
+    const record=engine?.challengeRecord(token,user.id);
+    if(!record)return json(res,410,{error:'Authorization challenge is invalid or expired'});
+    if(address!==record.fundingAddress)return json(res,409,{error:'Use the verified funding wallet for this copy subscription'});
+    if(!verifySolanaMessage(address,record.message,signature))return json(res,401,{error:'24/7 authorization signature verification failed'});
+    try{return json(res,200,{ok:true,...await engine.authorize(token,user.id)});}
+    catch(error){return json(res,error.statusCode||400,{error:String(error.message||error)});}
+  }
+  if(parts[0]==='api'&&parts[1]==='entities'&&parts[2]&&parts[3]==='copy'&&parts[4]==='execution'&&parts[5]==='withdraw-sol'&&parts.length===6&&method==='POST'){
+    const user=requireUser(req,res,db); if(!user)return;
+    const b=await readJson(req); if(b.confirm!==true)return json(res,400,{error:'Explicit withdraw confirmation is required'});
+    try{return json(res,200,await globalThis.__SHADOW_INTERNAL_COPY_ENGINE.withdrawSol(user.id,parts[2]));}
+    catch(error){return json(res,error.statusCode||502,{error:String(error.message||error)});}
+  }
+  /* SHADOW_INTERNAL_COPY_ENGINE_V330_ROUTES_END */
+
   /* SHADOW_EXECUTION_WALLET_24X7_V320_ROUTES */
   if (parts[0]==='api' && parts[1]==='entities' && parts[2] && parts[3]==='copy' && parts[4]==='execution' && parts.length===5 && method==='GET') {
     const user=requireUser(req,res,db); if(!user)return;
@@ -2252,7 +2297,7 @@ async function api(req, res, db, url, live) {
       mainWallet:mainWallet?{id:mainWallet.id,address:mainWallet.address,label:mainWallet.label||'Main Wallet'}:null,
       fundingWallet,
       executionWallet:executionAuthorizationRow(db,user.id,entity.id),
-      engineConfigured:!!process.env.COPY_ENGINE_URL,
+      engineConfigured:shadowCopyEngineConfigured(),
       mainWalletOnly:true,
       linkedWalletsTrading:false
     });
@@ -2269,7 +2314,7 @@ async function api(req, res, db, url, live) {
     if(!wallet)return json(res,409,{error:'Funding / identity wallet is not connected',code:'USER_WALLET_REQUIRED'});
     const entityWallets=mainCopyWalletRows(db,entity.id);
     if(!entityWallets.length)return json(res,409,{error:'Entity Main Wallet is missing',code:'MAIN_WALLET_REQUIRED'});
-    if(!process.env.COPY_ENGINE_URL)return json(res,409,{error:'COPY_ENGINE_URL is not configured',code:'COPY_ENGINE_REQUIRED'});
+    if(!shadowCopyEngineConfigured())return json(res,409,{error:'Copy execution engine is not configured',code:'COPY_ENGINE_REQUIRED'});
 
     let engine;
     try{
@@ -2324,7 +2369,7 @@ async function api(req, res, db, url, live) {
     const wallet=db.prepare('SELECT * FROM user_wallets WHERE id=? AND user_id=?').get(sub.user_wallet_id,user.id);
     if(!wallet)return json(res,409,{error:'Funding / identity wallet is missing'});
     const entityWallets=mainCopyWalletRows(db,entity.id);
-    if(!process.env.COPY_ENGINE_URL)return json(res,409,{error:'Cannot confirm revocation because COPY_ENGINE_URL is not configured'});
+    if(!shadowCopyEngineConfigured())return json(res,409,{error:'Cannot confirm revocation because the copy execution engine is not configured'});
 
     let engine;
     try{
@@ -2409,6 +2454,9 @@ function serveStatic(req,res,url){
 
 export function createServer({dbPath,fetchImpl=fetch,autoMonitor=false}={}) {
   const db=openDb(dbPath);
+  const internalCopyEngine=createInternalCopyEngine(db,{fetchImpl});
+  globalThis.__SHADOW_INTERNAL_COPY_ENGINE=internalCopyEngine;
+  globalThis.__SHADOW_INTERNAL_COPY_ENGINE_SYNC=payload=>internalCopyEngine.syncSubscription(payload);
   const live=createLiveIntelligence(db,{fetchImpl});
   let tokenImageBackfillTimer=null;
   // Startup repair belongs only to the real long-lived app server.
@@ -2432,8 +2480,8 @@ export function createServer({dbPath,fetchImpl=fetch,autoMonitor=false}={}) {
       if(url.pathname.startsWith('/api/')) await api(req,res,db,url,live); else serveStatic(req,res,url);
     }catch(err){ console.error(err); if(!res.headersSent)json(res,err.statusCode||500,{error:err.statusCode?err.message:'Internal server error'}); else res.end(); }
   });
-  if(autoMonitor) live.start();
-  server.on('close',()=>{ if(tokenImageBackfillTimer)clearTimeout(tokenImageBackfillTimer); try{live.stop();}catch{} try{db.close();}catch{} });
+  if(autoMonitor){ live.start(); if(!process.env.COPY_ENGINE_URL) internalCopyEngine.start(); }
+  server.on('close',()=>{ try{internalCopyEngine.stop();}catch{} if(tokenImageBackfillTimer)clearTimeout(tokenImageBackfillTimer); try{live.stop();}catch{} try{db.close();}catch{} });
   return server;
 }
 

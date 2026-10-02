@@ -11,5 +11,8 @@
   },
   "engines": {
     "node": ">=22.5"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.99.0"
   }
 }

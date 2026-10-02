@@ -1,3 +1,4 @@
+/* SHADOW_INTERNAL_COPY_ENGINE_V330 */
 import { isSafeHttpUrl } from '../utils.mjs';
 
 export async function syncCopyGroup(group, wallets) {
@@ -17,14 +18,18 @@ export async function syncCopyGroup(group, wallets) {
 /* SHADOW_USER_COPY_TRADING_V230_ADAPTER */
 export async function syncCopySubscription(subscription, entityWallets, action='upsert') {
   const endpoint=process.env.COPY_ENGINE_URL;
-  if(!endpoint || !isSafeHttpUrl(endpoint)){
+  const internal=globalThis.__SHADOW_INTERNAL_COPY_ENGINE_SYNC;
+  if((!endpoint || !isSafeHttpUrl(endpoint)) && typeof internal==='function'){
+    const data=await internal({action,subscription,entityWallets});
     return {
-      mode:'unconfigured',
-      configured:false,
-      ok:false,
-      active:false,
-      message:'COPY_ENGINE_URL is not configured'
+      mode:'internal',configured:true,ok:true,
+      active:data?.active===true,
+      authorizationUrl:String(data?.authorizationUrl||''),
+      data
     };
+  }
+  if(!endpoint || !isSafeHttpUrl(endpoint)){
+    return {mode:'unconfigured',configured:false,ok:false,active:false,message:'Copy execution engine is not configured'};
   }
 
   const headers={'content-type':'application/json',accept:'application/json'};
