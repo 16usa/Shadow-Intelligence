@@ -37,6 +37,11 @@
     const execution=payload?.executionWallet||null;
     const sub=payload?.subscription||null;
     const st=statusModel(payload);
+    // SHADOW_EXECUTION_WALLET_24X7_V321_ARMED_SCOPE_FIX
+    // Keep the render-time armed flag in the same scope where the button uses it.
+    const armed=String(execution?.authorizationState||'').toLowerCase()==='armed'
+      && !!execution?.address
+      && sub?.enabled===true;
     const main=payload?.mainWallet?.address||'';
     const funding=payload?.fundingWallet?.address||sub?.walletAddress||'';
     const authUrl=execution?.authorizationUrl||'';
