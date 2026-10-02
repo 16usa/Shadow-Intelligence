@@ -1,0 +1,13 @@
+[features]
+seeds = false
+skip-lint = false
+
+[programs.localnet]
+shadow_delegated_vault = "11111111111111111111111111111111"
+
+[provider]
+cluster = "Localnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "node tests/policy-model.mjs"

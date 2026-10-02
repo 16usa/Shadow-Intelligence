@@ -1,0 +1,3 @@
+[workspace]
+members = ["programs/shadow_delegated_vault"]
+resolver = "2"

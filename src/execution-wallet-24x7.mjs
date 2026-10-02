@@ -47,7 +47,9 @@ export function mainCopyWalletRows(db,entityId){
 }
 
 export function engineExecutionSnapshot(engine){
-  const data=engine?.data&&typeof engine.data==='object'?engine.data:{};
+  const data=engine?.data&&typeof engine.data==='object'
+    ? engine.data
+    : (engine&&typeof engine==='object'?engine:{});
   const wallet=data?.executionWallet&&typeof data.executionWallet==='object'
     ? data.executionWallet
     : {};
@@ -74,7 +76,7 @@ export function engineExecutionSnapshot(engine){
   const sessionId=text(wallet.sessionId || data.engineSessionId || data.sessionId);
   const engineActive=engine?.active===true;
   const dedicatedReady=engineActive&&!!address;
-  const reportedState=text(wallet.status || data.authorizationState || data.state).toLowerCase();
+  const reportedState=text(wallet.status || data.authorizationState || data.state || engine?.authorizationState).toLowerCase();
   let state='pending';
   if(dedicatedReady)state='armed';
   else if(authorizationUrl)state='authorization_required';
@@ -175,7 +177,7 @@ export function markExecutionAuthorizationError(db,{subscription,userId,entityId
       last_error=excluded.last_error,updated_at=excluded.updated_at
   `).run(
     subscription.id,userId,entityId,fundingWalletId,
-    prev?.address||'',prev?.kind||'dedicated_wallet','error',
+    prev?.address||'',prev?.kind||'noncustodial_delegated_vault','error',
     prev?.authorizationUrl||'',prev?.fundingUrl||'',prev?.authorizationExpiresAt||'',
     prev?.engineSessionId||'',prev?.armedAt||'',at,text(error).slice(0,500),at,at
   );
