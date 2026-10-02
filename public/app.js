@@ -1,3 +1,4 @@
+/* SHADOW_EXECUTION_WALLET_24X7_V320_APP */
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const ago=v=>{if(!v)return'—';const m=Math.max(0,Math.floor((Date.now()-new Date(v))/60000));if(m<1)return'now';if(m<60)return`${m}m`;if(m<1440)return`${Math.floor(m/60)}h`;return`${Math.floor(m/1440)}d`};
@@ -378,7 +379,7 @@ async function copyTradingModal(entityId,preloaded=null){
   const sub=data.subscription||{};
   const enabled=!!sub.enabled;
 
-  modal(`<div class="si-copy-modal">
+  modal(`<div class="si-copy-modal" data-execution-entity="${esc(entityId)}">
     <h2>${enabled?'Copy trading':'Copy trade'} ${esc(entity.xHandle||entity.x_handle||entity.name||'Entity')}</h2>
     <p class="guest-note">Configure how this Entity is copied to your verified Solana wallet.</p>
 

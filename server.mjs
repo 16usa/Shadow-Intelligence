@@ -9,6 +9,7 @@ import { clean, cleanEmail, isEmail, id, nowIso, json, parseCookies, readJson, m
 import { resolveWalletAvatar } from './src/adapters/pump-profile.mjs';
 import { resolveProfileAvatar, normalizeProfilePlatform, normalizeProfileHandle, isPublicProfileUrl } from './src/adapters/profile-avatar.mjs';
 import { syncCopyGroup, syncCopySubscription } from './src/adapters/copy-trading.mjs';
+import { ensureExecutionWalletSchema, mainCopyWalletRows, engineExecutionSnapshot, executionAuthorizationRow, persistExecutionAuthorization, markExecutionAuthorizationError, clearExecutionAuthorization } from './src/execution-wallet-24x7.mjs'; // SHADOW_EXECUTION_WALLET_24X7_V320
 import { providerHealth } from './src/adapters/intelligence.mjs';
 import { createLiveIntelligence } from './src/live-intelligence.mjs';
 import { getTokenMarket, getTokenMetadataBatch, getTokenMarketsBatch } from './src/adapters/token-market.mjs';
@@ -2171,11 +2172,7 @@ async function api(req, res, db, url, live) {
     }
 
     sub=db.prepare('SELECT * FROM copy_subscriptions WHERE id=?').get(subId);
-    const entityWallets=db.prepare(`
-      SELECT * FROM wallets
-      WHERE entity_id=? AND monitoring_enabled=1
-      ORDER BY created_at
-    `).all(entity.id);
+    const entityWallets=mainCopyWalletRows(db,entity.id); // Main Wallet only · Linked Wallets are intelligence-only
 
     if(!requestedEnabled){
       let engine={configured:!!process.env.COPY_ENGINE_URL,ok:true,active:false,mode:'local'};
@@ -2209,7 +2206,10 @@ async function api(req, res, db, url, live) {
         walletAddress:wallet.address,
         userId:user.id,
         entityId:entity.id,
-        entityName:entity.name
+        entityName:entity.name,
+        executionMode:'dedicated_wallet',
+        requireDedicatedExecutionWallet:true,
+        statusOnly:false
       },entityWallets,'upsert');
     }catch(error){
       db.prepare("UPDATE copy_subscriptions SET enabled=0,engine_state='error',last_error=?,updated_at=? WHERE id=?")
@@ -2217,8 +2217,13 @@ async function api(req, res, db, url, live) {
       return json(res,502,{error:`Copy engine: ${error.message||error}`,code:'COPY_ENGINE_ERROR'});
     }
 
-    const active=engine?.active===true;
-    const engineState=active?'active':engine?.authorizationUrl?'authorization_required':'pending';
+    const executionSnapshot=engineExecutionSnapshot(engine);
+    const active=executionSnapshot.dedicatedReady===true;
+    const engineState=active
+      ?'active'
+      :executionSnapshot.state==='execution_wallet_required'
+        ?'execution_wallet_required'
+        :engine?.authorizationUrl?'authorization_required':'pending';
     db.prepare('UPDATE copy_subscriptions SET enabled=?,engine_state=?,last_error=?,updated_at=? WHERE id=?')
       .run(active?1:0,engineState,active?'':'Execution engine has not activated this subscription yet',nowIso(),subId);
 
@@ -2230,6 +2235,120 @@ async function api(req, res, db, url, live) {
       authorizationUrl:engine?.authorizationUrl||''
     });
   }
+  /* SHADOW_EXECUTION_WALLET_24X7_V320_ROUTES */
+  if (parts[0]==='api' && parts[1]==='entities' && parts[2] && parts[3]==='copy' && parts[4]==='execution' && parts.length===5 && method==='GET') {
+    const user=requireUser(req,res,db); if(!user)return;
+    ensureExecutionWalletSchema(db);
+    const entity=db.prepare('SELECT * FROM entities WHERE id=?').get(parts[2]);
+    if(!entity)return json(res,404,{error:'Entity not found'});
+    const subscription=copySubscriptionRow(db,user.id,entity.id);
+    const mainWallet=mainCopyWalletRows(db,entity.id)[0]||null;
+    const fundingWallet=subscription
+      ? db.prepare('SELECT id,address,provider,verified_at AS verifiedAt FROM user_wallets WHERE id=? AND user_id=?').get(subscription.user_wallet_id,user.id)||null
+      : null;
+    return json(res,200,{
+      ok:true,
+      subscription,
+      mainWallet:mainWallet?{id:mainWallet.id,address:mainWallet.address,label:mainWallet.label||'Main Wallet'}:null,
+      fundingWallet,
+      executionWallet:executionAuthorizationRow(db,user.id,entity.id),
+      engineConfigured:!!process.env.COPY_ENGINE_URL,
+      mainWalletOnly:true,
+      linkedWalletsTrading:false
+    });
+  }
+
+  if (parts[0]==='api' && parts[1]==='entities' && parts[2] && parts[3]==='copy' && parts[4]==='execution' && parts[5]==='refresh' && parts.length===6 && method==='POST') {
+    const user=requireUser(req,res,db); if(!user)return;
+    ensureExecutionWalletSchema(db);
+    const entity=db.prepare('SELECT * FROM entities WHERE id=?').get(parts[2]);
+    if(!entity)return json(res,404,{error:'Entity not found'});
+    const sub=db.prepare('SELECT * FROM copy_subscriptions WHERE user_id=? AND entity_id=?').get(user.id,entity.id);
+    if(!sub)return json(res,409,{error:'Save Copy Trading settings first',code:'COPY_SUBSCRIPTION_REQUIRED'});
+    const wallet=db.prepare('SELECT * FROM user_wallets WHERE id=? AND user_id=?').get(sub.user_wallet_id,user.id);
+    if(!wallet)return json(res,409,{error:'Funding / identity wallet is not connected',code:'USER_WALLET_REQUIRED'});
+    const entityWallets=mainCopyWalletRows(db,entity.id);
+    if(!entityWallets.length)return json(res,409,{error:'Entity Main Wallet is missing',code:'MAIN_WALLET_REQUIRED'});
+    if(!process.env.COPY_ENGINE_URL)return json(res,409,{error:'COPY_ENGINE_URL is not configured',code:'COPY_ENGINE_REQUIRED'});
+
+    let engine;
+    try{
+      engine=await syncCopySubscription({
+        ...sub,
+        enabled:true,
+        walletAddress:wallet.address,
+        userId:user.id,
+        entityId:entity.id,
+        entityName:entity.name,
+        executionMode:'dedicated_wallet',
+        requireDedicatedExecutionWallet:true,
+        statusOnly:true
+      },entityWallets,'upsert');
+    }catch(error){
+      const executionWallet=markExecutionAuthorizationError(db,{subscription:sub,userId:user.id,entityId:entity.id,fundingWalletId:wallet.id,error});
+      db.prepare("UPDATE copy_subscriptions SET enabled=0,engine_state='error',last_error=?,updated_at=? WHERE id=?")
+        .run(String(error.message||error).slice(0,500),nowIso(),sub.id);
+      return json(res,502,{error:`Copy engine: ${error.message||error}`,code:'COPY_ENGINE_ERROR',executionWallet});
+    }
+
+    const snapshot=engineExecutionSnapshot(engine);
+    const executionWallet=persistExecutionAuthorization(db,{subscription:sub,userId:user.id,entityId:entity.id,fundingWalletId:wallet.id,engine});
+    const active=snapshot.dedicatedReady===true;
+    const state=active?'active':snapshot.state==='authorization_required'?'authorization_required':snapshot.state==='execution_wallet_required'?'execution_wallet_required':'pending';
+    const err=active?'':snapshot.state==='execution_wallet_required'
+      ?'Copy engine reported active but did not provide a dedicated Execution Wallet address'
+      :'Execution Wallet is not armed yet';
+    db.prepare('UPDATE copy_subscriptions SET enabled=?,engine_state=?,last_error=?,updated_at=? WHERE id=?')
+      .run(active?1:0,state,err,nowIso(),sub.id);
+
+    return json(res,200,{
+      ok:true,
+      subscription:copySubscriptionRow(db,user.id,entity.id),
+      mainWallet:{id:entityWallets[0].id,address:entityWallets[0].address,label:entityWallets[0].label||'Main Wallet'},
+      fundingWallet:{id:wallet.id,address:wallet.address,provider:wallet.provider},
+      executionWallet,
+      engineConfigured:true,
+      engine,
+      mainWalletOnly:true,
+      linkedWalletsTrading:false
+    });
+  }
+
+  if (parts[0]==='api' && parts[1]==='entities' && parts[2] && parts[3]==='copy' && parts[4]==='execution' && parts[5]==='revoke' && parts.length===6 && method==='POST') {
+    const user=requireUser(req,res,db); if(!user)return;
+    ensureExecutionWalletSchema(db);
+    const entity=db.prepare('SELECT * FROM entities WHERE id=?').get(parts[2]);
+    if(!entity)return json(res,404,{error:'Entity not found'});
+    const sub=db.prepare('SELECT * FROM copy_subscriptions WHERE user_id=? AND entity_id=?').get(user.id,entity.id);
+    if(!sub)return json(res,404,{error:'Copy subscription not found'});
+    const wallet=db.prepare('SELECT * FROM user_wallets WHERE id=? AND user_id=?').get(sub.user_wallet_id,user.id);
+    if(!wallet)return json(res,409,{error:'Funding / identity wallet is missing'});
+    const entityWallets=mainCopyWalletRows(db,entity.id);
+    if(!process.env.COPY_ENGINE_URL)return json(res,409,{error:'Cannot confirm revocation because COPY_ENGINE_URL is not configured'});
+
+    let engine;
+    try{
+      engine=await syncCopySubscription({
+        ...sub,enabled:false,walletAddress:wallet.address,userId:user.id,
+        entityId:entity.id,entityName:entity.name,
+        executionMode:'dedicated_wallet',requireDedicatedExecutionWallet:true
+      },entityWallets,'revoke');
+    }catch(error){
+      return json(res,502,{error:`Execution-wallet revoke failed: ${error.message||error}`,code:'EXECUTION_REVOKE_FAILED'});
+    }
+    const data=engine?.data||{};
+    const revoked=engine?.active!==true && (data.revoked===true || data.authorizationRevoked===true || String(data.authorizationState||'').toLowerCase()==='revoked');
+    if(!revoked){
+      return json(res,409,{error:'Execution engine did not confirm authorization revocation',code:'REVOCATION_NOT_CONFIRMED',engine});
+    }
+
+    clearExecutionAuthorization(db,user.id,entity.id);
+    db.prepare("UPDATE copy_subscriptions SET enabled=0,engine_state='stopped',last_error='',updated_at=? WHERE id=?")
+      .run(nowIso(),sub.id);
+    return json(res,200,{ok:true,revoked:true,subscription:copySubscriptionRow(db,user.id,entity.id)});
+  }
+  /* SHADOW_EXECUTION_WALLET_24X7_V320_ROUTES_END */
+
   /* SHADOW_USER_COPY_TRADING_V230_ROUTES_END */
 
   if (route === '/api/copy-groups' && method === 'GET') return json(res,200,{items:groups(db)});
