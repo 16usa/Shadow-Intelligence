@@ -35,7 +35,9 @@ pub mod shadow_delegated_vault {
     pub fn withdraw_sol(ctx: Context<WithdrawSol>, lamports: u64) -> Result<()> {
         require!(lamports>0,ErrorCode::InvalidLimit);
         let ix=anchor_lang::solana_program::system_instruction::transfer(&ctx.accounts.vault.key(),&ctx.accounts.owner.key(),lamports);
-        let seeds:&[&[u8]]=&[b"vault",ctx.accounts.policy.key().as_ref(),&[ctx.accounts.policy.vault_bump]];
+        let policy_key=ctx.accounts.policy.key();
+        let vault_bump=[ctx.accounts.policy.vault_bump];
+        let seeds:&[&[u8]]=&[b"vault",policy_key.as_ref(),&vault_bump];
         invoke_signed(&ix,&[ctx.accounts.vault.to_account_info(),ctx.accounts.owner.to_account_info(),ctx.accounts.system_program.to_account_info()],&[seeds])?;
         Ok(())
     }
@@ -45,6 +47,7 @@ pub mod shadow_delegated_vault {
     /// transfer authority. Source/destination token accounts must belong to the
     /// vault and no other vault-owned writable token account may be supplied.
     pub fn execute_swap(ctx: Context<ExecuteSwap>, side: u8, max_input_amount: u64, jupiter_ix_data: Vec<u8>) -> Result<()> {
+        let policy_key=ctx.accounts.policy.key();
         let p=&mut ctx.accounts.policy;let clock=Clock::get()?;
         require!(!p.revoked,ErrorCode::Revoked);require!(clock.unix_timestamp<=p.expires_at,ErrorCode::Expired);
         require_keys_eq!(p.session_key,ctx.accounts.session.key(),ErrorCode::WrongSession);
@@ -72,7 +75,8 @@ pub mod shadow_delegated_vault {
         let mut metas=Vec::with_capacity(ctx.remaining_accounts.len());
         for ai in ctx.remaining_accounts.iter(){let signer=ai.key()==ctx.accounts.vault.key();metas.push(if ai.is_writable{AccountMeta::new(ai.key(),signer)}else{AccountMeta::new_readonly(ai.key(),signer)})}
         let ix=Instruction{program_id:JUPITER_V6,accounts:metas,data:jupiter_ix_data};
-        let vault_seeds:&[&[u8]]=&[b"vault",ctx.accounts.policy.key().as_ref(),&[p.vault_bump]];
+        let vault_bump=[p.vault_bump];
+        let vault_seeds:&[&[u8]]=&[b"vault",policy_key.as_ref(),&vault_bump];
         let mut infos:Vec<AccountInfo>=ctx.remaining_accounts.iter().cloned().collect();infos.push(ctx.accounts.jupiter_program.to_account_info());
         invoke_signed(&ix,&infos,&[vault_seeds])?;
         ctx.accounts.source.reload()?;ctx.accounts.destination.reload()?;

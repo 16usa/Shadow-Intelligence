@@ -46,7 +46,7 @@ function clusterName(){
   return /devnet/i.test(rpcUrl())?'devnet':'mainnet-beta';
 }
 function parseSessionMasterKey(){
-  const raw=text(process.env.SHADOW_SESSION_MASTER_KEY)||text(process.env.SHADOW_EXECUTION_MASTER_KEY);
+  const raw=text(process.env.SHADOW_SESSION_MASTER_KEY);
   if(!raw)return null;
   let key=null;
   try{

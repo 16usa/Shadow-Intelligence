@@ -14,3 +14,5 @@ backups/
 solana/shadow-delegated-vault/target/
 .shadow-build-cache/
 .shadow-toolchain/
+.shadow-ci/
+.shadow-build-diagnostic-*.txt
