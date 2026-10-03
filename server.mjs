@@ -2,6 +2,7 @@
 /* SHADOW_INTERNAL_COPY_ENGINE_V330 */
 import http from 'node:http';
 import crypto from 'node:crypto';
+import webPush from 'web-push';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -19,7 +20,7 @@ import { getTokenMarket, getTokenMetadataBatch, getTokenMarketsBatch } from './s
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const MIME = { '.html':'text/html; charset=utf-8', '.css':'text/css; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.svg':'image/svg+xml', '.png':'image/png', '.ico':'image/x-icon' };
+const MIME = { '.html':'text/html; charset=utf-8', '.css':'text/css; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.webmanifest':'application/manifest+json; charset=utf-8', '.svg':'image/svg+xml', '.png':'image/png', '.ico':'image/x-icon' };
 
 // === TOKEN PNL V13 START ===
 /* SHADOW_TRADE_ONLY_V239_SERVER */
@@ -359,6 +360,145 @@ function notificationRows(db,userId,limit=60){
   return {items,unread:Number(countRow?.n||0)};
 }
 /* SHADOW_NOTIFICATIONS_V240_SERVER_END */
+
+/* SHADOW_WEB_PUSH_IOS_V100_SERVER */
+const SHADOW_PUSH_VAPID_SUBJECT='mailto:push@shadow-intelligence.app';
+let shadowPushConfiguredKey='';
+
+function shadowPushKeys(db){
+  let row=db.prepare(`SELECT public_key AS publicKey,private_key AS privateKey FROM web_push_config WHERE singleton=1`).get();
+  if(!row?.publicKey||!row?.privateKey){
+    const keys=webPush.generateVAPIDKeys();
+    db.prepare(`INSERT OR REPLACE INTO web_push_config (singleton,public_key,private_key,created_at) VALUES (1,?,?,?)`)
+      .run(keys.publicKey,keys.privateKey,nowIso());
+    row={publicKey:keys.publicKey,privateKey:keys.privateKey};
+  }
+  const publicKey=row.publicKey;
+  const privateKey=row.privateKey;
+  const configKey=`${publicKey}:${privateKey}`;
+  if(shadowPushConfiguredKey!==configKey){
+    webPush.setVapidDetails(SHADOW_PUSH_VAPID_SUBJECT,publicKey,privateKey);
+    shadowPushConfiguredKey=configKey;
+  }
+  return {publicKey,privateKey};
+}
+
+function shadowPushDeviceRows(db,userId){
+  return db.prepare(`
+    SELECT id,user_id AS userId,endpoint,p256dh,auth,user_agent AS userAgent,
+           last_activity_rowid AS lastActivityRowid,last_event_at AS lastEventAt,created_at AS createdAt,updated_at AS updatedAt
+    FROM web_push_subscriptions
+    WHERE user_id=?
+    ORDER BY updated_at DESC
+  `).all(userId);
+}
+
+function shadowPushPendingRows(db,userId,afterRowid,limit=12){
+  ensureNotificationPreferences(db,userId);
+  const safeLimit=Math.max(1,Math.min(Number(limit)||12,25));
+  return db.prepare(`
+    SELECT
+      a.rowid AS activityRowid,a.id,a.type,a.entity_id AS entityId,a.mint AS tokenMint,
+      ABS(COALESCE(a.token_amount,0)) AS tokenAmount,
+      ABS(COALESCE(a.sol_amount,0)) AS solAmount,
+      COALESCE(NULLIF(a.block_time,''),a.created_at) AS eventAt,
+      e.name AS entityName,e.x_handle AS xHandle,e.avatar AS entityAvatar,
+      t.symbol,t.name AS tokenName,t.image AS tokenImage
+    FROM wallet_activity a
+    JOIN user_notification_preferences p ON p.user_id=?
+    LEFT JOIN entities e ON e.id=a.entity_id
+    LEFT JOIN tokens t ON t.mint=a.mint
+    WHERE ${NOTIFICATION_MATCH_SQL}
+      AND a.rowid>?
+    ORDER BY a.rowid ASC
+    LIMIT ?
+  `).all(userId,Math.max(0,Number(afterRowid)||0),safeLimit);
+}
+
+function shadowPushEntityLabel(row){
+  const handle=String(row?.xHandle||'').trim();
+  if(handle)return handle.startsWith('@')?handle:`@${handle}`;
+  return String(row?.entityName||'Entity').trim()||'Entity';
+}
+function shadowPushTokenLabel(row){
+  const raw=String(row?.symbol||row?.tokenName||'Token').trim()||'Token';
+  return raw.startsWith('$')?raw:`$${raw}`;
+}
+function shadowPushAction(row){
+  const type=String(row?.type||'').toLowerCase();
+  return type==='sell'?'sold':type==='swap'?'swapped into':'bought';
+}
+function shadowPushPayload(row){
+  const amount=Number(row?.solAmount||0);
+  const body=`${shadowPushEntityLabel(row)} ${shadowPushAction(row)} ${shadowPushTokenLabel(row)}`;
+  const detail=amount>0?`${amount.toFixed(amount<1?3:2)} SOL`:'Confirmed on-chain trade';
+  return {
+    title:'Shadow Intelligence',
+    body:`${body} · ${detail}`,
+    tag:`shadow-trade-${String(row?.id||'event')}`,
+    url:'/',
+    eventId:String(row?.id||''),
+    entityId:String(row?.entityId||''),
+    tokenMint:String(row?.tokenMint||'')
+  };
+}
+function shadowPushSubscriptionObject(row){
+  return {endpoint:row.endpoint,keys:{p256dh:row.p256dh,auth:row.auth}};
+}
+
+async function shadowSendPush(row,payload){
+  return webPush.sendNotification(
+    shadowPushSubscriptionObject(row),
+    JSON.stringify(payload),
+    {TTL:120,urgency:'high'}
+  );
+}
+
+async function shadowPushDispatchOnce(db){
+  shadowPushKeys(db);
+  const subscriptions=db.prepare(`
+    SELECT id,user_id AS userId,endpoint,p256dh,auth,last_activity_rowid AS lastActivityRowid,last_event_at AS lastEventAt
+    FROM web_push_subscriptions
+    ORDER BY updated_at ASC
+  `).all();
+
+  for(const subscription of subscriptions){
+    const events=shadowPushPendingRows(db,subscription.userId,subscription.lastActivityRowid,12);
+    let cursor=Math.max(0,Number(subscription.lastActivityRowid)||0);
+    for(const event of events){
+      try{
+        await shadowSendPush(subscription,shadowPushPayload(event));
+        cursor=Math.max(cursor,Number(event.activityRowid)||0);
+        db.prepare(`UPDATE web_push_subscriptions SET last_activity_rowid=?,last_event_at=?,updated_at=? WHERE id=?`)
+          .run(cursor,String(event.eventAt||nowIso()),nowIso(),subscription.id);
+      }catch(error){
+        const status=Number(error?.statusCode||0);
+        if(status===404||status===410){
+          db.prepare('DELETE FROM web_push_subscriptions WHERE id=?').run(subscription.id);
+        }else{
+          console.warn('Web Push delivery failed:',error?.message||error);
+        }
+        break;
+      }
+    }
+  }
+}
+
+function startShadowPushDispatcher(db){
+  shadowPushKeys(db);
+  let busy=false;
+  const run=async()=>{
+    if(busy)return;
+    busy=true;
+    try{await shadowPushDispatchOnce(db);}catch(error){console.warn('Web Push dispatcher failed:',error?.message||error);}finally{busy=false;}
+  };
+  const timer=setInterval(run,2500);
+  timer.unref?.();
+  setTimeout(run,800).unref?.();
+  return ()=>clearInterval(timer);
+}
+/* SHADOW_WEB_PUSH_IOS_V100_SERVER_END */
+
 
 
 /* SHADOW_TOP_24H_MOVERS_V250_SERVER */
@@ -1256,6 +1396,71 @@ async function api(req, res, db, url, live) {
     db.prepare(`UPDATE user_notification_preferences SET last_seen_at=?,updated_at=? WHERE user_id=?`).run(at,at,user.id);
     return json(res,200,{ok:true,lastSeenAt:at});
   }
+
+  /* SHADOW_WEB_PUSH_IOS_V100_ROUTES */
+  if (route === '/api/push/status' && method === 'GET') {
+    const user=requireUser(req,res,db); if(!user)return;
+    const keys=shadowPushKeys(db);
+    return json(res,200,{
+      available:true,
+      publicKey:keys.publicKey,
+      deviceCount:shadowPushDeviceRows(db,user.id).length
+    });
+  }
+  if (route === '/api/push/subscribe' && method === 'POST') {
+    const user=requireUser(req,res,db); if(!user)return;
+    const body=await readJson(req);
+    const sub=body?.subscription||{};
+    const endpoint=String(sub?.endpoint||'').trim();
+    const p256dh=String(sub?.keys?.p256dh||'').trim();
+    const auth=String(sub?.keys?.auth||'').trim();
+    if(!endpoint.startsWith('https://')||!p256dh||!auth)return json(res,400,{error:'Invalid push subscription'});
+    if(endpoint.length>4096||p256dh.length>1024||auth.length>512)return json(res,413,{error:'Push subscription is too large'});
+    shadowPushKeys(db);
+    ensureNotificationPreferences(db,user.id);
+    const at=nowIso();
+    const activityCursor=Number(db.prepare('SELECT COALESCE(MAX(rowid),0) AS n FROM wallet_activity').get()?.n||0);
+    const existing=db.prepare('SELECT id,created_at AS createdAt FROM web_push_subscriptions WHERE endpoint=?').get(endpoint);
+    const subscriptionId=existing?.id||id('push_');
+    db.prepare(`
+      INSERT INTO web_push_subscriptions
+        (id,user_id,endpoint,p256dh,auth,user_agent,last_activity_rowid,last_event_at,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(endpoint) DO UPDATE SET
+        user_id=excluded.user_id,p256dh=excluded.p256dh,auth=excluded.auth,
+        user_agent=excluded.user_agent,last_activity_rowid=excluded.last_activity_rowid,last_event_at=excluded.last_event_at,updated_at=excluded.updated_at
+    `).run(subscriptionId,user.id,endpoint,p256dh,auth,String(req.headers['user-agent']||'').slice(0,500),activityCursor,at,existing?.createdAt||at,at);
+    return json(res,200,{ok:true,deviceCount:shadowPushDeviceRows(db,user.id).length});
+  }
+  if (route === '/api/push/subscribe' && method === 'DELETE') {
+    const user=requireUser(req,res,db); if(!user)return;
+    const body=await readJson(req);
+    const endpoint=String(body?.endpoint||'').trim();
+    if(endpoint)db.prepare('DELETE FROM web_push_subscriptions WHERE user_id=? AND endpoint=?').run(user.id,endpoint);
+    return json(res,200,{ok:true,deviceCount:shadowPushDeviceRows(db,user.id).length});
+  }
+  if (route === '/api/push/test' && method === 'POST') {
+    const user=requireUser(req,res,db); if(!user)return;
+    shadowPushKeys(db);
+    const devices=shadowPushDeviceRows(db,user.id);
+    let sent=0;
+    for(const device of devices){
+      try{
+        await shadowSendPush(device,{
+          title:'Shadow Intelligence',
+          body:'iPhone push notifications are connected.',
+          tag:`shadow-push-test-${Date.now()}`,
+          url:'/'
+        });
+        sent++;
+      }catch(error){
+        const status=Number(error?.statusCode||0);
+        if(status===404||status===410)db.prepare('DELETE FROM web_push_subscriptions WHERE id=?').run(device.id);
+      }
+    }
+    return json(res,200,{ok:sent>0,sent,deviceCount:shadowPushDeviceRows(db,user.id).length});
+  }
+  /* SHADOW_WEB_PUSH_IOS_V100_ROUTES_END */
   /* SHADOW_NOTIFICATIONS_V240_ROUTES_END */
   if (route === '/api/auth/register' && method === 'POST') {
     if (getSetting(db,'registration_enabled','true') !== 'true') return json(res,403,{error:'Registration is disabled'});
@@ -2364,6 +2569,7 @@ export function createServer({dbPath,fetchImpl=fetch,autoMonitor=false}={}) {
   globalThis.__SHADOW_INTERNAL_COPY_ENGINE_SYNC=payload=>internalCopyEngine.syncSubscription(payload);
   const live=createLiveIntelligence(db,{fetchImpl});
   let tokenImageBackfillTimer=null;
+  let shadowPushStop=()=>{};
   // Startup repair belongs only to the real long-lived app server.
   // Unit/smoke tests create short-lived servers with autoMonitor=false;
   // scheduling delayed DB work there races server.close() and produces
@@ -2378,6 +2584,7 @@ export function createServer({dbPath,fetchImpl=fetch,autoMonitor=false}={}) {
         .catch(error=>console.warn('Token image backfill failed:',error.message));
     },1200);
     tokenImageBackfillTimer.unref?.();
+    shadowPushStop=startShadowPushDispatcher(db);
   }
   const server=http.createServer(async(req,res)=>{
     try{
@@ -2386,7 +2593,7 @@ export function createServer({dbPath,fetchImpl=fetch,autoMonitor=false}={}) {
     }catch(err){ console.error(err); if(!res.headersSent)json(res,err.statusCode||500,{error:err.statusCode?err.message:'Internal server error'}); else res.end(); }
   });
   if(autoMonitor){ live.start(); if(!process.env.COPY_ENGINE_URL) internalCopyEngine.start(); }
-  server.on('close',()=>{ try{internalCopyEngine.stop();}catch{} if(tokenImageBackfillTimer)clearTimeout(tokenImageBackfillTimer); try{live.stop();}catch{} try{db.close();}catch{} });
+  server.on('close',()=>{ try{shadowPushStop();}catch{} try{internalCopyEngine.stop();}catch{} if(tokenImageBackfillTimer)clearTimeout(tokenImageBackfillTimer); try{live.stop();}catch{} try{db.close();}catch{} });
   return server;
 }
 

@@ -132,6 +132,30 @@ export function openDb(path = process.env.DB_PATH || './shadow-intelligence.db')
       ON user_notification_tokens(user_id,mint);
     /* SHADOW_NOTIFICATIONS_V240_DB_END */
 
+    /* SHADOW_WEB_PUSH_IOS_V100_DB */
+    CREATE TABLE IF NOT EXISTS web_push_subscriptions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      endpoint TEXT NOT NULL UNIQUE,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      user_agent TEXT DEFAULT '',
+      last_activity_rowid INTEGER NOT NULL DEFAULT 0,
+      last_event_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_web_push_subscriptions_user
+      ON web_push_subscriptions(user_id,updated_at DESC);
+    CREATE TABLE IF NOT EXISTS web_push_config (
+      singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+      public_key TEXT NOT NULL,
+      private_key TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    /* SHADOW_WEB_PUSH_IOS_V100_DB_END */
+
+
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY,value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS wallet_activity (
       id TEXT PRIMARY KEY,event_key TEXT UNIQUE NOT NULL,wallet_id TEXT NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,

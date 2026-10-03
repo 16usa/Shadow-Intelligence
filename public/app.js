@@ -652,6 +652,102 @@ function notificationGuestModal(){
   $('#notificationConnectWallet').onclick=()=>walletConnectionModal();
 }
 
+
+/* SHADOW_WEB_PUSH_IOS_V100_CLIENT */
+function shadowIsIos(){return /iPad|iPhone|iPod/.test(navigator.userAgent||'')||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1)}
+function shadowIsStandalone(){return window.matchMedia?.('(display-mode: standalone)')?.matches===true||navigator.standalone===true}
+function shadowPushSupported(){return 'serviceWorker' in navigator&&'PushManager' in window&&'Notification' in window}
+function shadowVapidKeyBytes(base64){
+  const padding='='.repeat((4-base64.length%4)%4);
+  const raw=(base64+padding).replace(/-/g,'+').replace(/_/g,'/');
+  const bytes=atob(raw);
+  return Uint8Array.from([...bytes].map(ch=>ch.charCodeAt(0)));
+}
+async function registerShadowPushWorker(){
+  if(!('serviceWorker' in navigator))return null;
+  try{return await navigator.serviceWorker.register('/sw.js',{scope:'/'});}catch(error){console.debug('Push service worker registration failed',error);return null;}
+}
+async function shadowCurrentPushSubscription(){
+  if(!shadowPushSupported())return null;
+  const registration=await navigator.serviceWorker.ready;
+  return registration.pushManager.getSubscription();
+}
+async function shadowEnablePush(){
+  if(!state.user)throw Error('Sign in first');
+  if(!shadowPushSupported())throw Error('Push notifications are not supported in this browser');
+  if(shadowIsIos()&&!shadowIsStandalone())throw Error('On iPhone: Share → Add to Home Screen, then open Shadow from the Home Screen icon');
+
+  const permission=await Notification.requestPermission();
+  if(permission!=='granted')throw Error(permission==='denied'?'Notifications are blocked in iPhone Settings':'Notification permission was not granted');
+
+  await registerShadowPushWorker();
+  const status=await api('/api/push/status',{cache:'no-store'});
+  const registration=await navigator.serviceWorker.ready;
+  let subscription=await registration.pushManager.getSubscription();
+  if(!subscription){
+    subscription=await registration.pushManager.subscribe({
+      userVisibleOnly:true,
+      applicationServerKey:shadowVapidKeyBytes(status.publicKey)
+    });
+  }
+  await api('/api/push/subscribe',{method:'POST',body:JSON.stringify({subscription:subscription.toJSON()})});
+  return subscription;
+}
+async function shadowDisablePush(){
+  if(!state.user)return;
+  const subscription=await shadowCurrentPushSubscription();
+  if(subscription){
+    await api('/api/push/subscribe',{method:'DELETE',body:JSON.stringify({endpoint:subscription.endpoint})}).catch(()=>{});
+    await subscription.unsubscribe().catch(()=>{});
+  }
+}
+function shadowPushHelpText(active){
+  if(!shadowPushSupported())return 'System push is not supported in this browser.';
+  if(shadowIsIos()&&!shadowIsStandalone())return 'On iPhone: Share → Add to Home Screen, then open Shadow from the Home Screen icon.';
+  if(Notification.permission==='denied')return 'Push is blocked. Enable notifications for Shadow Intelligence in iPhone Settings.';
+  return active?'System banners, Lock Screen and Notification Center are active on this device.':'Get Buy / Sell / Swap alerts as iPhone system notifications.';
+}
+async function syncShadowPushControls(){
+  const button=$('#shadowPushToggle');
+  const help=$('#shadowPushHelp');
+  const test=$('#shadowPushTest');
+  if(!button||!help)return;
+  let active=false;
+  try{active=!!(await shadowCurrentPushSubscription());}catch{}
+  button.textContent=active?'Disable push':'Enable iPhone Push';
+  button.dataset.pushActive=active?'1':'0';
+  help.textContent=shadowPushHelpText(active);
+  if(test)test.hidden=!active;
+}
+function bindShadowPushControls(){
+  const button=$('#shadowPushToggle');
+  const test=$('#shadowPushTest');
+  if(!button)return;
+  syncShadowPushControls().catch(()=>{});
+  button.onclick=async event=>{
+    event.preventDefault();
+    const active=button.dataset.pushActive==='1';
+    button.disabled=true;
+    button.textContent=active?'Disabling...':'Enabling...';
+    try{
+      if(active){await shadowDisablePush();toast('iPhone push disabled');}
+      else{await shadowEnablePush();toast('iPhone push enabled');}
+    }catch(error){toast(error.message||'Could not change push notifications');}
+    finally{button.disabled=false;await syncShadowPushControls();}
+  };
+  if(test)test.onclick=async event=>{
+    event.preventDefault();
+    test.disabled=true;test.textContent='Sending...';
+    try{
+      const result=await api('/api/push/test',{method:'POST',body:'{}'});
+      if(!result.sent)throw Error('No active push device found');
+      toast('Test notification sent');
+    }catch(error){toast(error.message||'Could not send test notification');}
+    finally{test.disabled=false;test.textContent='Send test notification';}
+  };
+}
+/* SHADOW_WEB_PUSH_IOS_V100_CLIENT_END */
+
 function notificationCenterModal(tab='notifications'){
   if(!state.user)return notificationGuestModal();
   const settings=state.notifications.settings||{entitiesEnabled:false,tokensEnabled:false,liveEnabled:false,entityIds:[],tokenMints:[]};
@@ -661,6 +757,10 @@ function notificationCenterModal(tab='notifications'){
   const body=notificationsActive
     ? `<div class="si-notification-list">${(state.notifications.items||[]).map(notificationEventHtml).join('')||'<div class="si-notification-empty">No matching trade alerts yet.</div>'}</div>`
     : `<form id="notificationSettingsForm" class="si-notification-settings">
+        <section class="si-notification-setting-block">
+          <div class="si-notification-master"><span><strong>iPhone Push</strong><small id="shadowPushHelp">System banners, Lock Screen and Notification Center.</small></span><button id="shadowPushToggle" class="si-button" type="button">Enable iPhone Push</button></div>
+          <button id="shadowPushTest" class="si-button" type="button" hidden style="margin-top:10px">Send test notification</button>
+        </section>
         <section class="si-notification-setting-block">
           <label class="si-notification-master"><span><strong>Entities</strong><small>Alert only for selected people.</small></span><input id="notifyEntitiesEnabled" type="checkbox" ${settings.entitiesEnabled?'checked':''}/></label>
           <input id="notifyEntitySearch" class="si-input" type="search" placeholder="Find an entity"/>
@@ -690,6 +790,7 @@ function notificationCenterModal(tab='notifications'){
     return;
   }
 
+  bindShadowPushControls();
   const entitySearch=$('#notifyEntitySearch');
   const tokenSearch=$('#notifyTokenSearch');
   if(entitySearch)entitySearch.oninput=()=>filterNotificationOptionRows(entitySearch,'[data-notify-entity-row]');
@@ -1028,6 +1129,7 @@ async function boot(){
    document.title=state.settings.platformName||'Shadow Intelligence';
  }catch{}
  setAuth();
+ registerShadowPushWorker().catch(()=>{});
  await loadUserWalletState();
  bind();
  bindWalletButton();
