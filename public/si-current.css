@@ -910,7 +910,7 @@ html[data-theme=dark] #page-overview #globalMap{
   font:inherit;
   font-weight:inherit;
   line-height:inherit;
-  text-decoration-line:underline!important;
+  text-decoration:none!important;
   text-decoration-thickness:1px!important;
   text-underline-offset:3px!important;
   text-decoration-color:currentColor!important;
@@ -932,7 +932,7 @@ html[data-theme=dark] #page-overview #globalMap{
   font:inherit;
   font-weight:inherit;
   line-height:inherit;
-  text-decoration-line:underline!important;
+  text-decoration:none!important;
   text-decoration-thickness:1px!important;
   text-underline-offset:3px!important;
   text-decoration-color:currentColor!important;
