@@ -407,6 +407,7 @@ function shadowPushDeviceRows(db,userId){
   `).all(userId);
 }
 
+/* SHADOW_PUSH_MC_FIX_V130 */
 function shadowPushPendingRows(db,userId,afterRowid,limit=12){
   ensureNotificationPreferences(db,userId);
   const safeLimit=Math.max(1,Math.min(Number(limit)||12,25));
@@ -415,9 +416,21 @@ function shadowPushPendingRows(db,userId,afterRowid,limit=12){
       a.rowid AS activityRowid,a.id,a.type,a.entity_id AS entityId,a.mint AS tokenMint,
       ABS(COALESCE(a.token_amount,0)) AS tokenAmount,
       ABS(COALESCE(a.sol_amount,0)) AS solAmount,
+      ABS(COALESCE(a.trade_usd,0)) AS tradeUsd,
+      ABS(COALESCE(a.price_usd,0)) AS eventTokenPriceUsd,
       COALESCE(NULLIF(a.block_time,''),a.created_at) AS eventAt,
       e.name AS entityName,e.x_handle AS xHandle,e.avatar AS entityAvatar,
-      t.symbol,t.name AS tokenName,t.image AS tokenImage
+      t.id AS tokenId,t.symbol,t.name AS tokenName,t.image AS tokenImage,
+      COALESCE(t.market_cap,0) AS marketCap,
+      COALESCE(t.price_usd,0) AS tokenPriceUsd,
+      COALESCE(t.last_market_at,'') AS lastMarketAt,
+      COALESCE((
+        SELECT ms.market_cap
+        FROM market_snapshots ms
+        WHERE ms.token_id=t.id AND COALESCE(ms.market_cap,0)>0
+        ORDER BY ms.created_at DESC
+        LIMIT 1
+      ),0) AS snapshotMarketCap
     FROM wallet_activity a
     JOIN user_notification_preferences p ON p.user_id=?
     LEFT JOIN entities e ON e.id=a.entity_id
@@ -428,6 +441,57 @@ function shadowPushPendingRows(db,userId,afterRowid,limit=12){
     LIMIT ?
   `).all(userId,Math.max(0,Number(afterRowid)||0),safeLimit);
 }
+
+const shadowPushMarketCache=new Map();
+
+async function shadowPushMarketData(row,db){
+  const mint=String(row?.tokenMint||'').trim();
+  let marketCap=Math.abs(Number(row?.marketCap||0));
+  if(!(marketCap>0))marketCap=Math.abs(Number(row?.snapshotMarketCap||0));
+
+  let priceUsd=Math.abs(Number(row?.tokenPriceUsd||0));
+  if(!(priceUsd>0))priceUsd=Math.abs(Number(row?.eventTokenPriceUsd||0));
+
+  if(!mint)return {marketCap,priceUsd};
+
+  const cached=shadowPushMarketCache.get(mint);
+  const now=Date.now();
+  if(cached && now-cached.at<15000){
+    return {
+      marketCap:Math.abs(Number(cached.marketCap||marketCap)),
+      priceUsd:Math.abs(Number(cached.priceUsd||priceUsd))
+    };
+  }
+
+  try{
+    const live=await getTokenMarket(mint);
+    const liveMc=Math.abs(Number(live?.marketCap||0));
+    const livePrice=Math.abs(Number(live?.priceUsd||0));
+    if(liveMc>0)marketCap=liveMc;
+    if(livePrice>0)priceUsd=livePrice;
+
+    if(live && row?.tokenId){
+      db.prepare(`
+        UPDATE tokens
+        SET market_cap=CASE WHEN ?>0 THEN ? ELSE market_cap END,
+            price_usd=CASE WHEN ?>0 THEN ? ELSE price_usd END,
+            last_market_at=?
+        WHERE id=?
+      `).run(
+        marketCap,marketCap,
+        priceUsd,priceUsd,
+        nowIso(),
+        row.tokenId
+      );
+    }
+  }catch(error){
+    console.debug('Push market refresh skipped:',String(error?.message||error));
+  }
+
+  shadowPushMarketCache.set(mint,{at:now,marketCap,priceUsd});
+  return {marketCap,priceUsd};
+}
+/* SHADOW_PUSH_MC_FIX_V130_QUERY_END */
 
 function shadowPushEntityLabel(row){
   const handle=String(row?.xHandle||'').trim();
@@ -474,14 +538,13 @@ function shadowPushMarketCap(value){
   return `MC $${Math.round(n).toLocaleString('en-US')}`;
 }
 
-async function shadowPushTradeUsd(row){
+async function shadowPushTradeUsd(row,market={}){
   let usd=Math.abs(Number(row?.tradeUsd||0));
   if(usd>0)return usd;
 
   const tokenAmount=Math.abs(Number(row?.tokenAmount||0));
   const eventTokenPrice=Math.abs(Number(row?.eventTokenPriceUsd||0));
-  const liveTokenPrice=Math.abs(Number(row?.tokenPriceUsd||0));
-  const tokenPrice=eventTokenPrice||liveTokenPrice;
+  const tokenPrice=eventTokenPrice||Math.abs(Number(market?.priceUsd||0));
   if(tokenAmount>0&&tokenPrice>0){
     usd=tokenAmount*tokenPrice;
     if(usd>0)return usd;
@@ -495,13 +558,15 @@ async function shadowPushTradeUsd(row){
   return 0;
 }
 
-async function shadowPushPayload(row){
-  const tradeUsd=await shadowPushTradeUsd(row);
+async function shadowPushPayload(row,db){
+  const market=await shadowPushMarketData(row,db);
+  const tradeUsd=await shadowPushTradeUsd(row,market);
   const entity=shadowPushEntityLabel(row);
   const action=shadowPushAction(row);
   const token=shadowPushTokenLabel(row);
   const amountText=shadowPushUsd(tradeUsd);
-  const mcText=shadowPushMarketCap(row?.marketCap);
+  const marketCap=Number(market?.marketCap||row?.marketCap||row?.snapshotMarketCap||0);
+  const mcText=marketCap>0?shadowPushMarketCap(marketCap):'';
   const detail=[amountText,mcText].filter(Boolean).join(' · ');
 
   return {
@@ -541,7 +606,7 @@ async function shadowPushDispatchOnce(db){
     let cursor=Math.max(0,Number(subscription.lastActivityRowid)||0);
     for(const event of events){
       try{
-        await shadowSendPush(subscription,await shadowPushPayload(event));
+        await shadowSendPush(subscription,await shadowPushPayload(event,db));
         cursor=Math.max(cursor,Number(event.activityRowid)||0);
         db.prepare(`UPDATE web_push_subscriptions SET last_activity_rowid=?,last_event_at=?,updated_at=? WHERE id=?`)
           .run(cursor,String(event.eventAt||nowIso()),nowIso(),subscription.id);

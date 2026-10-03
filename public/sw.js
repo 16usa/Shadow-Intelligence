@@ -12,6 +12,7 @@ self.addEventListener('push',event=>{
   const options={
     body:String(data.body||'New confirmed trade alert'),
     icon,
+    image:icon,
     badge:'/assets/shadow-push-192.png',
     tag:String(data.tag||'shadow-trade'),
     renotify:true,
