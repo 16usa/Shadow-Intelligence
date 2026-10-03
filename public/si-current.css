@@ -2011,6 +2011,35 @@ html[data-theme=dark]{
   outline-offset:2px;
 }
 /* SHADOW_ENTITY_NOTIFICATION_BELL_V100_CSS_END */
+
+/* SHADOW_ENTITY_CARD_BELLS_V110_CSS */
+.si-entity-card-notify{
+  position:absolute;
+  top:11px;
+  right:52px;
+  z-index:4;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+}
+.si-entity-card-notify:empty{display:none}
+.si-entity-card-notify .si-entity-notify-bell{
+  width:30px;
+  height:30px;
+  min-width:30px;
+}
+.si-entity-card-notify .si-entity-notify-bell svg{
+  width:18px;
+  height:18px;
+}
+@media(max-width:760px){
+  .si-entity-card-notify{
+    top:10px;
+    right:48px;
+  }
+}
+/* SHADOW_ENTITY_CARD_BELLS_V110_CSS_END */
+
 .si-entity-pump-link{
   width:28px;
   height:28px;

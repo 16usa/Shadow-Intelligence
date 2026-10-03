@@ -598,24 +598,14 @@ async function refreshEntityNotificationSettings(){
   return state.notifications.settings;
 }
 
-async function bindEntityNotificationBell(entityId){
+async function bindEntityNotificationBell(entityId,{refresh=true}={}){
   const id=String(entityId||'').trim();
   if(!id||!state.user)return;
   const buttons=[...document.querySelectorAll('[data-entity-notify-bell]')].filter(button=>String(button.dataset.entityNotifyBell||'')===id);
   if(!buttons.length)return;
 
-  try{
-    if(!state.notifications?.settings)await refreshEntityNotificationSettings();
-    else{
-      // Re-read once when a profile is opened so another tab/device cannot leave
-      // the visible bell stale.
-      await refreshEntityNotificationSettings();
-    }
-    applyEntityNotificationBell(id);
-  }catch(error){
-    console.debug('Could not refresh entity notification state',error);
-  }
-
+  // Bind immediately so a bell inside a clickable Entity card never opens
+  // the profile when the user only meant to toggle notifications.
   for(const button of buttons){
     button.onclick=async event=>{
       event.preventDefault();
@@ -640,6 +630,15 @@ async function bindEntityNotificationBell(entityId){
         buttons.forEach(x=>{x.disabled=false;x.classList.remove('is-busy')});
       }
     };
+  }
+
+  try{
+    // Profile pages refresh from the server. Card grids pass refresh:false,
+    // bind all bells instantly, then refresh the settings once for the grid.
+    if(refresh)await refreshEntityNotificationSettings();
+    applyEntityNotificationBell(id);
+  }catch(error){
+    console.debug('Could not refresh entity notification state',error);
   }
 }
 /* SHADOW_ENTITY_NOTIFICATION_BELL_V100_CLIENT_END */
@@ -2725,6 +2724,11 @@ function renderEntities(q=''){
         style="position:absolute;top:18px;right:18px;font-size:14px;font-weight:700;line-height:1;letter-spacing:.01em;opacity:.52;pointer-events:none"
       >#${e.entityRank}</span>
 
+      <!-- SHADOW_ENTITY_CARD_BELLS_V110 -->
+      <span class="si-entity-card-notify">
+        ${entityNotificationBellHtml(e)}
+      </span>
+
       <div class="si-card-top">
         ${avatar(e,'lg')}
         <div>
@@ -2752,6 +2756,20 @@ function renderEntities(q=''){
 
   $$('[data-entity]').forEach(x=>x.onclick=()=>openObject('entity',{id:x.dataset.entity}));
   bindWalletAddressCopy($('#entitiesGrid'));
+
+  /* SHADOW_ENTITY_CARD_BELLS_V110_BIND */
+  const renderedEntityIds=a.map(e=>String(e?.id||'')).filter(Boolean);
+  for(const entityId of renderedEntityIds){
+    bindEntityNotificationBell(entityId,{refresh:false}).catch(()=>{});
+  }
+  if(state.user&&renderedEntityIds.length){
+    // One settings request updates every bell in the grid. This avoids one
+    // network request per Entity card while keeping Settings/Profile/Card state synchronized.
+    refreshEntityNotificationSettings()
+      .then(()=>renderedEntityIds.forEach(applyEntityNotificationBell))
+      .catch(error=>console.debug('Could not refresh Entity card bells',error));
+  }
+  /* SHADOW_ENTITY_CARD_BELLS_V110_BIND_END */
 }
 /* SHADOW_ENTITIES_CARD_INFO_V2417_APP_END */
 /* SHADOW_WALLETS_IN_ADMIN_V233_APP */
