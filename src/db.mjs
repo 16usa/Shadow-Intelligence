@@ -122,6 +122,18 @@ export function openDb(path = process.env.DB_PATH || './shadow-intelligence.db')
     );
     CREATE INDEX IF NOT EXISTS idx_user_notification_entities_user
       ON user_notification_entities(user_id,entity_id);
+
+    /* SHADOW_ENTITY_NOTIFICATION_BELL_V100_DB */
+    CREATE TABLE IF NOT EXISTS user_notification_entity_mutes (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (user_id,entity_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_notification_entity_mutes_user
+      ON user_notification_entity_mutes(user_id,entity_id);
+    /* SHADOW_ENTITY_NOTIFICATION_BELL_V100_DB_END */
+
     CREATE TABLE IF NOT EXISTS user_notification_tokens (
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       mint TEXT NOT NULL,

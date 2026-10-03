@@ -1947,6 +1947,70 @@ html[data-theme=dark]{
   margin:0;
   min-width:0;
 }
+/* SHADOW_ENTITY_NOTIFICATION_BELL_V100_CSS */
+.si-entity-name-actions{
+  display:inline-flex;
+  align-items:center;
+  gap:3px;
+  flex:0 0 auto;
+}
+.si-entity-notify-bell{
+  position:relative;
+  width:28px;
+  height:28px;
+  min-width:28px;
+  padding:0;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border:0;
+  border-radius:999px;
+  background:transparent;
+  color:var(--si-muted);
+  cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+  transition:color .14s ease,background .14s ease,transform .14s ease,opacity .14s ease;
+}
+.si-entity-notify-bell svg{
+  width:18px;
+  height:18px;
+  fill:none;
+  stroke:currentColor;
+  stroke-width:1.7;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+}
+.si-entity-notify-bell.is-active{
+  color:var(--si-text);
+}
+.si-entity-notify-bell.is-active .si-entity-notify-bell-body{
+  fill:currentColor;
+  fill-opacity:.92;
+}
+.si-entity-notify-bell.is-live::after{
+  content:'';
+  position:absolute;
+  right:3px;
+  top:3px;
+  width:4px;
+  height:4px;
+  border-radius:50%;
+  background:currentColor;
+  box-shadow:0 0 0 1.5px var(--si-panel);
+}
+.si-entity-notify-bell:hover,
+.si-entity-notify-bell:focus-visible{
+  color:var(--si-text);
+  background:color-mix(in srgb,var(--si-text) 7%,transparent);
+}
+.si-entity-notify-bell:active{transform:scale(.96)}
+.si-entity-notify-bell.is-busy{opacity:.45}
+.si-entity-notify-bell:disabled{cursor:default}
+.si-entity-notify-bell:focus-visible{
+  outline:2px solid color-mix(in srgb,var(--si-text) 16%,transparent);
+  outline-offset:2px;
+}
+/* SHADOW_ENTITY_NOTIFICATION_BELL_V100_CSS_END */
 .si-entity-pump-link{
   width:28px;
   height:28px;

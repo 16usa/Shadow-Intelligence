@@ -541,6 +541,109 @@ function notificationAction(row){
   const type=String(row?.type||'').toLowerCase();
   return type==='sell'?'sold':type==='swap'?'swapped into':'bought';
 }
+/* SHADOW_ENTITY_NOTIFICATION_BELL_V100_CLIENT */
+function entityNotificationState(entityId,settings=state.notifications?.settings){
+  const id=String(entityId||'');
+  const selected=new Set(Array.isArray(settings?.entityIds)?settings.entityIds.map(String):[]);
+  const muted=new Set(Array.isArray(settings?.mutedEntityIds)?settings.mutedEntityIds.map(String):[]);
+  const explicit=!!settings?.entitiesEnabled && selected.has(id);
+  const live=!!settings?.liveEnabled && !muted.has(id);
+  return {active:explicit||live,explicit,live,muted:muted.has(id)};
+}
+
+function entityNotificationBellLabel(status){
+  if(status.explicit)return 'Entity notifications on';
+  if(status.live)return 'Notifications on via Live alerts';
+  return 'Entity notifications off';
+}
+
+function entityNotificationBellHtml(entity){
+  if(!state.user)return '';
+  const entityId=String(entity?.id||'').trim();
+  if(!entityId)return '';
+  const status=entityNotificationState(entityId);
+  const label=entityNotificationBellLabel(status);
+  return `<button
+    type="button"
+    class="si-entity-notify-bell ${status.active?'is-active':''} ${status.live&&!status.explicit?'is-live':''}"
+    data-entity-notify-bell="${esc(entityId)}"
+    aria-pressed="${status.active?'true':'false'}"
+    aria-label="${esc(label)}"
+    title="${esc(label)}"
+  ><svg viewBox="0 0 24 24" aria-hidden="true">
+      <path class="si-entity-notify-bell-body" d="M6.5 10.2a5.5 5.5 0 0 1 11 0v3.1l1.7 2.5H4.8l1.7-2.5v-3.1Z"/>
+      <path d="M9.8 18.3a2.4 2.4 0 0 0 4.4 0"/>
+    </svg></button>`;
+}
+
+function applyEntityNotificationBell(entityId){
+  const id=String(entityId||'');
+  if(!id)return;
+  const status=entityNotificationState(id);
+  const label=entityNotificationBellLabel(status);
+  document.querySelectorAll('[data-entity-notify-bell]').forEach(button=>{
+    if(String(button.dataset.entityNotifyBell||'')!==id)return;
+    button.classList.toggle('is-active',status.active);
+    button.classList.toggle('is-live',status.live&&!status.explicit);
+    button.setAttribute('aria-pressed',status.active?'true':'false');
+    button.setAttribute('aria-label',label);
+    button.title=label;
+  });
+}
+
+async function refreshEntityNotificationSettings(){
+  if(!state.user)return null;
+  const data=await api('/api/notification-settings',{cache:'no-store'});
+  state.notifications.settings=data.settings||null;
+  return state.notifications.settings;
+}
+
+async function bindEntityNotificationBell(entityId){
+  const id=String(entityId||'').trim();
+  if(!id||!state.user)return;
+  const buttons=[...document.querySelectorAll('[data-entity-notify-bell]')].filter(button=>String(button.dataset.entityNotifyBell||'')===id);
+  if(!buttons.length)return;
+
+  try{
+    if(!state.notifications?.settings)await refreshEntityNotificationSettings();
+    else{
+      // Re-read once when a profile is opened so another tab/device cannot leave
+      // the visible bell stale.
+      await refreshEntityNotificationSettings();
+    }
+    applyEntityNotificationBell(id);
+  }catch(error){
+    console.debug('Could not refresh entity notification state',error);
+  }
+
+  for(const button of buttons){
+    button.onclick=async event=>{
+      event.preventDefault();
+      event.stopPropagation();
+      const current=entityNotificationState(id);
+      const enabled=!current.active;
+      buttons.forEach(x=>{x.disabled=true;x.classList.add('is-busy')});
+      try{
+        const result=await api(`/api/notification-entities/${encodeURIComponent(id)}`,{
+          method:'PUT',
+          body:JSON.stringify({enabled}),
+          cache:'no-store'
+        });
+        state.notifications.settings=result.settings||state.notifications.settings;
+        applyEntityNotificationBell(id);
+        const entity=(state.entities||[]).find(x=>String(x?.id||'')===id);
+        const name=entity?.xHandle||entity?.x_handle||entity?.name||'entity';
+        toast(`${enabled?'Notifications on':'Notifications off'} · ${name}`);
+      }catch(error){
+        toast(error.message||'Could not change entity notifications');
+      }finally{
+        buttons.forEach(x=>{x.disabled=false;x.classList.remove('is-busy')});
+      }
+    };
+  }
+}
+/* SHADOW_ENTITY_NOTIFICATION_BELL_V100_CLIENT_END */
+
 function notificationEventHtml(row,index){
   const entity=notificationEntityLabel(row);
   const token=notificationTokenLabel(row);
@@ -750,7 +853,7 @@ function bindShadowPushControls(){
 
 function notificationCenterModal(tab='notifications'){
   if(!state.user)return notificationGuestModal();
-  const settings=state.notifications.settings||{entitiesEnabled:false,tokensEnabled:false,liveEnabled:false,entityIds:[],tokenMints:[]};
+  const settings=state.notifications.settings||{entitiesEnabled:false,tokensEnabled:false,liveEnabled:false,entityIds:[],tokenMints:[],mutedEntityIds:[]};
   const selectedEntities=new Set(settings.entityIds||[]);
   const selectedTokens=new Set(settings.tokenMints||[]);
   const notificationsActive=tab==='notifications';
@@ -776,7 +879,7 @@ function notificationCenterModal(tab='notifications'){
           </div>
         </section>
         <section class="si-notification-setting-block">
-          <label class="si-notification-master"><span><strong>Live</strong><small>Alert for every confirmed Buy / Sell / Swap across the tracked system.</small></span><input id="notifyLiveEnabled" type="checkbox" ${settings.liveEnabled?'checked':''}/></label>
+          <label class="si-notification-master"><span><strong>Live</strong><small>Alert for every confirmed Buy / Sell / Swap. Individual Entity profile bells can mute specific people.</small></span><input id="notifyLiveEnabled" type="checkbox" ${settings.liveEnabled?'checked':''}/></label>
         </section>
         <button class="si-button primary si-notification-save" type="submit">Save notifications</button>
       </form>`;
@@ -3367,7 +3470,10 @@ function entityPumpProfileLinkHtml(e,wallets=[]){
 function entityDetailNameHtml(e,wallets=[]){
   return `<div class="si-entity-name-row">
     <h2>${esc(e?.name||'Entity')}</h2>
-    ${entityPumpProfileLinkHtml(e,wallets)}
+    <span class="si-entity-name-actions">
+      ${entityNotificationBellHtml(e)}
+      ${entityPumpProfileLinkHtml(e,wallets)}
+    </span>
   </div>`;
 }
 /* SHADOW_ENTITY_PUMP_LINK_V2425_APP_END */
@@ -3427,6 +3533,7 @@ function entityDetailLoading(e){
     </section>
   </div>`);
 
+  bindEntityNotificationBell(e?.id).catch(()=>{});
   const body=$('#modalBody');
   if(body)body.dataset.detailLoadingId=String(e?.id||'');
 }
@@ -3673,6 +3780,7 @@ function entityDetail(d){
   state.detailGraph=new ShadowGraph($('#detailGraph'),model,{onSelect:openObject});
   bindWalletAddressCopy($('#modalBody')||document);
   hydrateEntityCopyControl(e.id);
+  bindEntityNotificationBell(e.id).catch(()=>{});
 
   $$('[data-entity-token]').forEach(row=>{
     row.onclick=(event)=>{
