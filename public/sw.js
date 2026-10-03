@@ -1,14 +1,17 @@
 /* SHADOW_WEB_PUSH_IOS_V100_SW */
+/* SHADOW_PUSH_TRADE_CARD_V120_SW */
 self.addEventListener('install',()=>self.skipWaiting());
 self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));
 
 self.addEventListener('push',event=>{
   let data={};
   try{data=event.data?.json?.()||{};}catch{data={body:event.data?.text?.()||'New Shadow Intelligence alert'};}
-  const title=String(data.title||'Shadow Intelligence');
+  const title=String(data.title||'Trade alert');
+  const avatar=String(data.avatar||'').trim();
+  const icon=/^https:\/\//i.test(avatar)?avatar:'/assets/shadow-push-192.png';
   const options={
     body:String(data.body||'New confirmed trade alert'),
-    icon:'/assets/shadow-push-192.png',
+    icon,
     badge:'/assets/shadow-push-192.png',
     tag:String(data.tag||'shadow-trade'),
     renotify:true,

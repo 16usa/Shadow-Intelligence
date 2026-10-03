@@ -348,9 +348,13 @@ function notificationRows(db,userId,limit=60){
       a.id,a.type,a.entity_id AS entityId,a.mint AS tokenMint,
       ABS(COALESCE(a.token_amount,0)) AS tokenAmount,
       ABS(COALESCE(a.sol_amount,0)) AS solAmount,
+      ABS(COALESCE(a.trade_usd,0)) AS tradeUsd,
+      ABS(COALESCE(a.price_usd,0)) AS eventTokenPriceUsd,
       COALESCE(NULLIF(a.block_time,''),a.created_at) AS eventAt,
       e.name AS entityName,e.x_handle AS xHandle,e.avatar AS entityAvatar,
-      t.symbol,t.name AS tokenName,t.image AS tokenImage
+      t.symbol,t.name AS tokenName,t.image AS tokenImage,
+      COALESCE(t.market_cap,0) AS marketCap,
+      COALESCE(t.price_usd,0) AS tokenPriceUsd
     FROM wallet_activity a
     JOIN user_notification_preferences p ON p.user_id=?
     LEFT JOIN entities e ON e.id=a.entity_id
@@ -438,20 +442,80 @@ function shadowPushAction(row){
   const type=String(row?.type||'').toLowerCase();
   return type==='sell'?'sold':type==='swap'?'swapped into':'bought';
 }
-function shadowPushPayload(row){
-  const amount=Number(row?.solAmount||0);
-  const body=`${shadowPushEntityLabel(row)} ${shadowPushAction(row)} ${shadowPushTokenLabel(row)}`;
-  const detail=amount>0?`${amount.toFixed(amount<1?3:2)} SOL`:'Confirmed on-chain trade';
+/* SHADOW_PUSH_TRADE_CARD_V120 */
+function shadowPushUsd(value){
+  const n=Math.abs(Number(value||0));
+  if(!(n>0))return '';
+  const maximumFractionDigits=n<1?2:n<100?2:0;
+  return new Intl.NumberFormat('en-US',{
+    style:'currency',
+    currency:'USD',
+    minimumFractionDigits:0,
+    maximumFractionDigits
+  }).format(n);
+}
+
+function shadowPushMarketCap(value){
+  const n=Math.abs(Number(value||0));
+  if(!(n>0))return 'MC —';
+  const units=[
+    [1e12,'T'],
+    [1e9,'B'],
+    [1e6,'M'],
+    [1e3,'K']
+  ];
+  for(const [size,suffix] of units){
+    if(n>=size){
+      const scaled=n/size;
+      const digits=scaled>=100?0:scaled>=10?1:2;
+      return `MC $${scaled.toFixed(digits).replace(/\.0+$|(\.\d*[1-9])0+$/,'$1')}${suffix}`;
+    }
+  }
+  return `MC $${Math.round(n).toLocaleString('en-US')}`;
+}
+
+async function shadowPushTradeUsd(row){
+  let usd=Math.abs(Number(row?.tradeUsd||0));
+  if(usd>0)return usd;
+
+  const tokenAmount=Math.abs(Number(row?.tokenAmount||0));
+  const eventTokenPrice=Math.abs(Number(row?.eventTokenPriceUsd||0));
+  const liveTokenPrice=Math.abs(Number(row?.tokenPriceUsd||0));
+  const tokenPrice=eventTokenPrice||liveTokenPrice;
+  if(tokenAmount>0&&tokenPrice>0){
+    usd=tokenAmount*tokenPrice;
+    if(usd>0)return usd;
+  }
+
+  const solAmount=Math.abs(Number(row?.solAmount||0));
+  if(solAmount>0){
+    const solUsd=await currentSolUsd();
+    if(solUsd>0)return solAmount*solUsd;
+  }
+  return 0;
+}
+
+async function shadowPushPayload(row){
+  const tradeUsd=await shadowPushTradeUsd(row);
+  const entity=shadowPushEntityLabel(row);
+  const action=shadowPushAction(row);
+  const token=shadowPushTokenLabel(row);
+  const amountText=shadowPushUsd(tradeUsd);
+  const mcText=shadowPushMarketCap(row?.marketCap);
+  const detail=[amountText,mcText].filter(Boolean).join(' · ');
+
   return {
-    title:'Shadow Intelligence',
-    body:`${body} · ${detail}`,
+    title:`${entity} ${action} ${token}`,
+    body:detail||'Confirmed on-chain trade',
     tag:`shadow-trade-${String(row?.id||'event')}`,
     url:'/',
+    avatar:String(row?.entityAvatar||'').trim(),
     eventId:String(row?.id||''),
     entityId:String(row?.entityId||''),
     tokenMint:String(row?.tokenMint||'')
   };
 }
+/* SHADOW_PUSH_TRADE_CARD_V120_END */
 function shadowPushSubscriptionObject(row){
   return {endpoint:row.endpoint,keys:{p256dh:row.p256dh,auth:row.auth}};
 }
@@ -477,7 +541,7 @@ async function shadowPushDispatchOnce(db){
     let cursor=Math.max(0,Number(subscription.lastActivityRowid)||0);
     for(const event of events){
       try{
-        await shadowSendPush(subscription,shadowPushPayload(event));
+        await shadowSendPush(subscription,await shadowPushPayload(event));
         cursor=Math.max(cursor,Number(event.activityRowid)||0);
         db.prepare(`UPDATE web_push_subscriptions SET last_activity_rowid=?,last_event_at=?,updated_at=? WHERE id=?`)
           .run(cursor,String(event.eventAt||nowIso()),nowIso(),subscription.id);
@@ -1497,8 +1561,8 @@ async function api(req, res, db, url, live) {
     for(const device of devices){
       try{
         await shadowSendPush(device,{
-          title:'Shadow Intelligence',
-          body:'iPhone push notifications are connected.',
+          title:'Push connected',
+          body:'Shadow notifications are ready.',
           tag:`shadow-push-test-${Date.now()}`,
           url:'/'
         });
