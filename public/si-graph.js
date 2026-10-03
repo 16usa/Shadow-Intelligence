@@ -345,7 +345,7 @@
         if(n.kind==='token'){
           const known=n.raw.pnlKnown,pct=Number(n.raw.pnlPercent),usd=Number(n.raw.pnlUsd);
           c.font='700 8px Inter,system-ui';
-          c.fillStyle=known?(usd>=0?'#00ba7c':'#f91880'):(dark?'#71767b':'#536471');
+          c.fillStyle=known?(usd>=0?(dark?'#30d158':'#34c759'):(dark?'#ff453a':'#ff3b30')):(dark?'#71767b':'#536471');
           c.fillText(known?`${pct>=0?'+':''}${pct.toFixed(2)}%`:'P&L —',p.x,p.y+r+24);
           if(known){
             c.font='650 8px Inter,system-ui';
@@ -654,7 +654,7 @@
       const sell=['sell','send'].includes(String(ev.type));
       this.pulses.push({
         a:sell?b:a,b:sell?a:b,start:performance.now(),
-        color:sell?'#f91880':'#00ba7c'
+        color:sell?(document.documentElement.dataset.theme==='dark'?'#ff453a':'#ff3b30'):(document.documentElement.dataset.theme==='dark'?'#30d158':'#34c759')
       });
       this.schedule();
     }

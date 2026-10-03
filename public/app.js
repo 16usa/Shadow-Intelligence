@@ -252,7 +252,7 @@ function walletConnectionModal(){
       </div>
       <div class="si-copy-actions">
         <button id="walletModalClose" type="button" class="si-button">Close</button>
-        <button id="walletDisconnect" type="button" class="si-button" style="color:#ff5c5c;border-color:rgba(255,75,75,.5)">Disconnect</button>
+        <button id="walletDisconnect" type="button" class="si-button" style="color:var(--si-red);border-color:color-mix(in srgb,var(--si-red) 50%,transparent)">Disconnect</button>
       </div>
       <p class="si-copy-note">Shadow Intelligence stores the public address and verification proof only. Seed phrases and private keys are never requested.</p>
     </div>`);
@@ -411,7 +411,7 @@ async function copyTradingModal(entityId,preloaded=null){
         <button id="copyCancel" class="si-button" type="button">Cancel</button>
         <button id="copySave" class="si-button primary" type="button">${enabled?'Update':'Start copying'}</button>
       </div>
-      ${enabled?'<button id="copyStop" class="si-button" type="button" style="width:100%;color:#ff5c5c;border-color:rgba(255,75,75,.5)">Stop copying</button>':''}
+      ${enabled?'<button id="copyStop" class="si-button" type="button" style="width:100%;color:var(--si-red);border-color:color-mix(in srgb,var(--si-red) 50%,transparent)">Stop copying</button>':''}
     </form>
 
     <p class="si-copy-note">Wallet connection only proves ownership. Automatic unattended execution requires the configured copy engine to have an explicit execution authorization from the user. Shadow Intelligence never stores seed phrases or private keys.</p>
@@ -3766,7 +3766,7 @@ function entityDetail(d){
           ? `<div class="si-entity-admin-actions" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">
                <button id="syncEntity" class="si-button primary" style="grid-column:1/-1;width:100%">Sync now</button>
                <button id="editEntity" class="si-button" type="button">Edit</button>
-               <button id="deleteEntity" class="si-button" type="button" style="border-color:rgba(255,75,75,.5);color:#ff5c5c">Delete</button>
+               <button id="deleteEntity" class="si-button" type="button" style="border-color:color-mix(in srgb,var(--si-red) 50%,transparent);color:var(--si-red)">Delete</button>
              </div>`
           : ''
         }
@@ -3872,7 +3872,7 @@ async function checkEntityWalletAvailability(form){
     if(String(wallet.value||'').trim()!==address)return;
 
     if(!result.valid){
-      status.innerHTML=`<span style="color:#ff6b6b">${esc(result.error||'Invalid Solana wallet address')}</span>`;
+      status.innerHTML=`<span style="color:var(--si-red)">${esc(result.error||'Invalid Solana wallet address')}</span>`;
       submit.disabled=true;
       return;
     }
@@ -3888,10 +3888,10 @@ async function checkEntityWalletAvailability(form){
         : '';
       const subtitle=[handle,source].filter(Boolean).join(' · ');
       status.innerHTML=`
-        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid rgba(255,90,90,.35);border-radius:12px;background:rgba(255,70,70,.06)">
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid color-mix(in srgb,var(--si-red) 35%,transparent);border-radius:12px;background:color-mix(in srgb,var(--si-red) 6%,transparent)">
           ${entity.avatar?`<img src="${esc(entity.avatar)}" alt="" style="width:34px;height:34px;border-radius:50%;object-fit:cover;flex:0 0 auto">`:''}
           <div style="min-width:0">
-            <strong style="display:block;color:#ff6b6b">Already in Shadow — cannot add again</strong>
+            <strong style="display:block;color:var(--si-red)">Already in Shadow — cannot add again</strong>
             <span style="display:block;color:#9ca3af;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(entity.name||'Existing account')}${subtitle?` · ${esc(subtitle)}`:''}</span>
           </div>
         </div>`;
@@ -3899,7 +3899,7 @@ async function checkEntityWalletAvailability(form){
       return;
     }
 
-    status.innerHTML='<span style="color:#34d399">Wallet is not in Shadow yet.</span>';
+    status.innerHTML='<span style="color:var(--si-green)">Wallet is not in Shadow yet.</span>';
     submit.disabled=false;
   }catch(error){
     status.innerHTML=`<span style="color:#ff9f0a">${esc(error.message||'Wallet check failed')}</span>`;
@@ -4143,7 +4143,7 @@ function entityDeleteModal(e){
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <button id="entityDeleteCancel" class="si-button" type="button">Cancel</button>
-        <button id="entityDeletePermanent" class="si-button" type="button" style="border-color:rgba(255,75,75,.55);color:#ff5c5c">Delete permanently</button>
+        <button id="entityDeletePermanent" class="si-button" type="button" style="border-color:color-mix(in srgb,var(--si-red) 55%,transparent);color:var(--si-red)">Delete permanently</button>
       </div>
     </form>
   </div>`);
@@ -4285,7 +4285,7 @@ async function sendChat(e){
     // Keep failed bubble visible and restore draft for retry.
     if(time){
       time.textContent='not sent';
-      time.style.color='var(--si-pink)';
+      time.style.color='var(--si-red)';
     }
     optimistic?.setAttribute('data-chat-failed','true');
 
