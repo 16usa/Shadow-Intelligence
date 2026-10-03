@@ -3,7 +3,10 @@ seeds = false
 skip-lint = false
 
 [programs.localnet]
-shadow_delegated_vault = "11111111111111111111111111111111"
+shadow_delegated_vault = "H2LRaXnCHp5qc2MECPFLuAVWcFwYqQTi1TgJZJT3tDQc"
+
+[programs.devnet]
+shadow_delegated_vault = "H2LRaXnCHp5qc2MECPFLuAVWcFwYqQTi1TgJZJT3tDQc"
 
 [provider]
 cluster = "Localnet"

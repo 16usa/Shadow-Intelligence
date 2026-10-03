@@ -20,6 +20,29 @@ function stableSymbol(mint) {
 /* SHADOW_STABLE_QUOTE_V2413_RPC_END */
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+/* SHADOW_REALTIME_HELIUS_V300_RPC */
+let heliusRequestTail=Promise.resolve();
+let heliusLastRequestAt=0;
+
+function isHeliusUrl(value){
+  return /helius/i.test(String(value||''));
+}
+
+async function heliusGate(task){
+  const previous=heliusRequestTail;
+  let release;
+  heliusRequestTail=new Promise(resolve=>{release=resolve});
+  await previous.catch(()=>{});
+  const wait=Math.max(0,180-(Date.now()-heliusLastRequestAt));
+  if(wait)await sleep(wait);
+  try{
+    return await task();
+  }finally{
+    heliusLastRequestAt=Date.now();
+    release();
+  }
+}
+
 function rpcEndpoint() {
   if (process.env.SOLANA_RPC_URL && isSafeHttpUrl(process.env.SOLANA_RPC_URL)) return process.env.SOLANA_RPC_URL;
   if (process.env.HELIUS_API_KEY) return `https://mainnet.helius-rpc.com/?api-key=${encodeURIComponent(process.env.HELIUS_API_KEY)}`;
@@ -48,10 +71,12 @@ async function fetchWithRetry(url, init, { fetchImpl = fetch, label = 'request',
 }
 
 async function rpc(method, params, { fetchImpl = fetch } = {}) {
-  const response = await fetchWithRetry(rpcEndpoint(), {
+  const endpoint=rpcEndpoint();
+  const request=()=>fetchWithRetry(endpoint, {
     method: 'POST', headers: { 'content-type':'application/json', accept:'application/json' },
     body: JSON.stringify({ jsonrpc:'2.0', id:1, method, params }), signal:AbortSignal.timeout(12000)
   }, { fetchImpl, label:'Solana RPC' });
+  const response=isHeliusUrl(endpoint)?await heliusGate(request):await request();
   const body = await response.json();
   if (body?.error) throw new Error(body.error.message || `Solana RPC ${method} failed`);
   return body?.result;
@@ -300,7 +325,7 @@ function collapseFallbackChanges(changes) {
   return [];
 }
 
-function normalizeHeliusTransaction(tx, wallet) {
+export function normalizeHeliusTransaction(tx, wallet) {
   if (!tx?.signature || tx?.transactionError) return [];
   if (String(tx.type || '').toUpperCase() === 'SWAP') {
     const decoded = normalizeEnhancedSwap(tx,wallet);
@@ -360,7 +385,7 @@ async function heliusRecent(address, { limit = 20, before = '', fetchImpl = fetc
   url.searchParams.set('api-key', process.env.HELIUS_API_KEY);
   url.searchParams.set('limit', String(Math.max(1, Math.min(limit, 100))));
   if (before) url.searchParams.set('before', before);
-  const response = await fetchWithRetry(url, { headers:{accept:'application/json'}, signal:AbortSignal.timeout(12000) }, { fetchImpl, label:'Helius' });
+  const response = await heliusGate(()=>fetchWithRetry(url, { headers:{accept:'application/json'}, signal:AbortSignal.timeout(12000) }, { fetchImpl, label:'Helius' }));
   const rows = await response.json();
   return Array.isArray(rows) ? rows : [];
 }
@@ -464,6 +489,105 @@ export async function getRecentWalletActivity(address, { limit = 20, untilSignat
   }
   return { provider:'solana-rpc', signatures:good.map(x=>x.signature), activity:txRows.flatMap(x=>normalizeRpcTransaction(x.tx,address,x.signature)) };
 }
+
+/* SHADOW_RPC_REALTIME_V310_DIRECT_RPC */
+function directRpcEndpoints() {
+  const out=[];
+  const add=value=>{
+    const v=String(value||'').trim();
+    if(v&&isSafeHttpUrl(v)&&!out.includes(v))out.push(v);
+  };
+  add(process.env.SOLANA_RPC_URL);
+  add(process.env.SOLANA_BACKUP_RPC_URL);
+  if(!out.length)out.push('https://api.mainnet-beta.solana.com');
+  return out;
+}
+
+async function rpcDirect(method, params, { fetchImpl = fetch } = {}) {
+  let lastError;
+  for(const endpoint of directRpcEndpoints()){
+    try{
+      const response=await fetchWithRetry(endpoint,{
+        method:'POST',
+        headers:{'content-type':'application/json',accept:'application/json'},
+        body:JSON.stringify({jsonrpc:'2.0',id:1,method,params}),
+        signal:AbortSignal.timeout(12000)
+      },{fetchImpl,label:'Solana RPC direct',attempts:2});
+      const body=await response.json();
+      if(body?.error)throw new Error(body.error.message||`Solana RPC ${method} failed`);
+      return body?.result;
+    }catch(error){
+      lastError=error;
+    }
+  }
+  throw lastError||new Error(`Solana RPC ${method} failed`);
+}
+
+export async function getRpcTransactionActivity(address,signature,{fetchImpl=fetch}={}){
+  if(!isSolanaAddress(address))throw new Error('Invalid Solana wallet address');
+  if(!signature)return {provider:'solana-rpc',found:false,signature:'',activity:[]};
+  const delays=[0,250,750,1500,3000];
+  let lastError=null;
+  for(const delay of delays){
+    if(delay)await sleep(delay);
+    try{
+      const tx=await rpcDirect('getTransaction',[signature,{commitment:'confirmed',maxSupportedTransactionVersion:0,encoding:'jsonParsed'}],{fetchImpl});
+      if(!tx)continue;
+      const activity=normalizeRpcTransaction(tx,address,signature).filter(row=>row?.isPump);
+      return {provider:'solana-rpc',found:true,signature,activity};
+    }catch(error){
+      lastError=error;
+      if(/not supported|version/i.test(String(error?.message||error)))break;
+      if(!/429|5\d\d|timeout|fetch failed|network/i.test(String(error?.message||error)))throw error;
+    }
+  }
+  if(lastError && !/429|5\d\d|timeout|fetch failed|network|not supported|version/i.test(String(lastError?.message||lastError)))throw lastError;
+  return {provider:'solana-rpc',found:false,signature,activity:[]};
+}
+
+export async function getRpcRecentWalletActivity(address,{limit=20,untilSignature='',fetchImpl=fetch}={}){
+  if(!isSolanaAddress(address))throw new Error('Invalid Solana wallet address');
+  const options={commitment:'confirmed',limit:Math.max(1,Math.min(limit,100))};
+  if(untilSignature)options.until=untilSignature;
+  const sigRows=await rpcDirect('getSignaturesForAddress',[address,options],{fetchImpl})||[];
+  const good=sigRows.filter(row=>!row.err);
+  const txRows=[];
+  for(const row of good.slice().reverse()){
+    try{
+      const tx=await rpcDirect('getTransaction',[row.signature,{commitment:'confirmed',maxSupportedTransactionVersion:0,encoding:'jsonParsed'}],{fetchImpl});
+      if(tx)txRows.push({signature:row.signature,tx});
+    }catch(error){
+      if(!/not supported|version/i.test(String(error?.message||error)))throw error;
+    }
+    await sleep(35);
+  }
+  return {
+    provider:'solana-rpc',
+    signatures:good.map(row=>row.signature),
+    activity:txRows.flatMap(row=>normalizeRpcTransaction(row.tx,address,row.signature).filter(item=>item?.isPump))
+  };
+}
+
+export async function solanaRpcHealth({fetchImpl=fetch}={}){
+  try{
+    const result=await rpcDirect('getHealth',[],{fetchImpl});
+    return {
+      configured:true,
+      provider:process.env.SOLANA_RPC_URL?'custom-rpc':'public-rpc',
+      backupConfigured:!!process.env.SOLANA_BACKUP_RPC_URL,
+      status:result==='ok'?'online':String(result||'online')
+    };
+  }catch(error){
+    return {
+      configured:true,
+      provider:process.env.SOLANA_RPC_URL?'custom-rpc':'public-rpc',
+      backupConfigured:!!process.env.SOLANA_BACKUP_RPC_URL,
+      status:'offline',
+      error:String(error?.message||error)
+    };
+  }
+}
+/* SHADOW_RPC_REALTIME_V310_DIRECT_RPC_END */
 
 export async function solanaHealth({ fetchImpl = fetch } = {}) {
   try {

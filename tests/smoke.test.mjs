@@ -65,6 +65,40 @@ test('health and clean live overview work without demo entities',async()=>withSe
 
 test('first registered user becomes owner',async()=>withServer(async base=>{await registerOwner(base)}));
 
+test('entity list exposes every linked wallet for global search',async()=>{
+  const { openDb } = await import('../src/db.mjs');
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'si-linked-wallet-search-'));
+  const dbPath=path.join(dir,'test.db');
+  const created='2026-01-01T00:00:00.000Z';
+
+  const seed=openDb(dbPath);
+  seed.prepare(`INSERT INTO entities (id,name,x_handle,created_at) VALUES (?,?,?,?)`)
+    .run('ent_search_wallets','Search Wallet Test','@searchwallet',created);
+  seed.prepare(`INSERT INTO wallets (id,entity_id,address,label,created_at) VALUES (?,?,?,?,?)`)
+    .run('wal_search_main','ent_search_wallets',WALLET,'Main wallet',created);
+  seed.prepare(`INSERT INTO wallets (id,entity_id,address,label,created_at) VALUES (?,?,?,?,?)`)
+    .run('wal_search_linked','ent_search_wallets',PUMP,'Linked wallet',created);
+  seed.close();
+
+  const server=createServer({dbPath,fetchImpl:fakeFetch,autoMonitor:false});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const base=`http://127.0.0.1:${server.address().port}`;
+
+  try{
+    const list=await fetch(base+'/api/entities').then(x=>x.json());
+    const row=list.items.find(x=>x.id==='ent_search_wallets');
+    assert.ok(row);
+    assert.equal(row.mainWalletAddress,WALLET);
+    assert.equal(row.linkedWallets.length,2);
+    assert.deepEqual(row.linkedWallets.map(x=>x.address),[WALLET,PUMP]);
+    assert.deepEqual(row.walletAddresses,[WALLET,PUMP]);
+    assert.equal(row.linkedWallets[1].label,'Linked wallet');
+  }finally{
+    await new Promise(resolve=>server.close(resolve));
+    fs.rmSync(dir,{recursive:true,force:true});
+  }
+});
+
 test('tracked wallet sync produces a real on-chain activity row, token, and live-feed incident',async()=>withServer(async base=>{
   const cookie=await registerOwner(base);
   let r=await authed(base,'/api/entities',cookie,{method:'POST',body:JSON.stringify({name:'sling',xHandle:'@slingoorio',riskScore:0,confidence:100,notes:'Wallet ownership confirmed.'})});

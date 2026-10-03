@@ -1,6 +1,8 @@
+import crypto from 'node:crypto';
 import { id, nowIso, isSolanaAddress } from './utils.mjs';
-import { getRecentWalletActivity, solanaHealth, WSOL_MINT } from './adapters/solana-rpc.mjs';
+import { getRecentWalletActivity, solanaHealth, WSOL_MINT, normalizeHeliusTransaction, getRpcTransactionActivity, getRpcRecentWalletActivity, solanaRpcHealth } from './adapters/solana-rpc.mjs';
 import { getTokenMarket } from './adapters/token-market.mjs';
+import { createRpcRealtimeMonitor } from './rpc-realtime.mjs';
 import { getXProfile, getXPosts, xConfigured } from './adapters/x-api.mjs';
 import { getSetting } from './db.mjs';
 
@@ -32,7 +34,256 @@ function isTrackedTradeActivity(activity){
 /* SHADOW_TRADE_ONLY_V239_LIVE_END */
 
 export function createLiveIntelligence(db,{fetchImpl=fetch}={}) {
-  let timer=null, running=false, lastCycleAt='', lastError='', cycleCount=0;
+  /* SHADOW_RPC_REALTIME_V310 */
+  const walletMonitorMode=()=>String(getSetting(db,'wallet_monitor_mode','current')||'current')==='solana_rpc'?'solana_rpc':'current';
+  let rpcRealtime=null;
+  /* SHADOW_REALTIME_HELIUS_V300 */
+  let timer=null, realtimeTimer=null, running=false, lastCycleAt='', lastError='', cycleCount=0;
+  let webhookQueue=[];
+  let webhookProcessing=false;
+  let realtime={
+    configured:!!process.env.HELIUS_API_KEY,
+    active:false,
+    webhookId:String(getSetting(db,'helius_webhook_id','')||''),
+    url:'',
+    addressCount:0,
+    lastConfigAt:'',
+    lastDeliveryAt:'',
+    lastProcessedAt:'',
+    lastError:'',
+    queueDepth:0
+  };
+  let solanaHealthSnapshot={at:0,value:null};
+
+  function setInternalSetting(key,value){
+    db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,String(value??''));
+  }
+
+  function normalizeBaseUrl(value){
+    let v=String(value||'').trim();
+    if(!v)return '';
+    if(!/^https?:\/\//i.test(v))v=`https://${v}`;
+    return v.replace(/\/+$/,'');
+  }
+
+  function publicBaseUrl(){
+    const explicit=normalizeBaseUrl(process.env.PUBLIC_BASE_URL);
+    if(explicit)return explicit;
+    const dev=normalizeBaseUrl(process.env.REPLIT_DEV_DOMAIN);
+    if(dev)return dev;
+    const domains=String(process.env.REPLIT_DOMAINS||'').split(',').map(x=>normalizeBaseUrl(x)).filter(Boolean);
+    return domains[0]||'';
+  }
+
+  function webhookAuthValue(){
+    let secret=String(getSetting(db,'helius_webhook_secret','')||'').trim();
+    if(!secret){
+      secret=crypto.randomBytes(32).toString('hex');
+      setInternalSetting('helius_webhook_secret',secret);
+    }
+    return `Bearer ${secret}`;
+  }
+
+  function webhookAuthorized(value){
+    const expected=Buffer.from(webhookAuthValue());
+    const actual=Buffer.from(String(value||''));
+    return expected.length===actual.length && crypto.timingSafeEqual(expected,actual);
+  }
+
+  function isRateLimitedError(error){
+    const text=String(error?.message||error||'');
+    return error?.status===429 || error?.code==='RATE_LIMITED' || /\b429\b|rate.?limit/i.test(text);
+  }
+
+  async function heliusWebhookRequest(method,suffix='',body=null){
+    const key=String(process.env.HELIUS_API_KEY||'').trim();
+    if(!key)throw new Error('HELIUS_API_KEY not configured');
+    const url=`https://api-mainnet.helius-rpc.com/v0/webhooks${suffix}?api-key=${encodeURIComponent(key)}`;
+    let lastError;
+    for(let attempt=0;attempt<3;attempt++){
+      try{
+        const response=await fetchImpl(url,{
+          method,
+          headers:{'content-type':'application/json',accept:'application/json'},
+          body:body==null?undefined:JSON.stringify(body),
+          signal:AbortSignal.timeout(12000)
+        });
+        if(response.ok){
+          if(response.status===204)return {};
+          const text=await response.text();
+          return text?JSON.parse(text):{};
+        }
+        const error=new Error(`Helius webhook HTTP ${response.status}`);
+        error.status=response.status;
+        if(response.status===429)error.code='RATE_LIMITED';
+        if(response.status!==429 || attempt===2)throw error;
+        const retryAfter=Number(response.headers?.get?.('retry-after'));
+        await sleep(Number.isFinite(retryAfter)&&retryAfter>0?Math.min(retryAfter*1000,10000):1500*(attempt+1));
+      }catch(error){
+        lastError=error;
+        if(!isRateLimitedError(error) || attempt===2)throw error;
+        await sleep(1500*(attempt+1));
+      }
+    }
+    throw lastError||new Error('Helius webhook request failed');
+  }
+
+  async function refreshRealtimeWebhook(){
+    if(walletMonitorMode()==='solana_rpc'){
+      realtime.active=false;
+      realtime.lastError='Paused while Solana RPC mode is selected';
+      return {...realtime};
+    }
+    realtime.configured=!!process.env.HELIUS_API_KEY;
+    const base=publicBaseUrl();
+    const addresses=db.prepare('SELECT address FROM wallets WHERE monitoring_enabled=1 ORDER BY created_at').all().map(x=>String(x.address||'')).filter(isSolanaAddress);
+    realtime.addressCount=addresses.length;
+    realtime.url=base?`${base}/api/webhooks/helius`:'';
+
+    if(!realtime.configured){
+      realtime.active=false;
+      realtime.lastError='HELIUS_API_KEY not configured';
+      return {...realtime};
+    }
+    if(!base){
+      realtime.active=false;
+      realtime.lastError='Public base URL unavailable';
+      return {...realtime};
+    }
+    if(!addresses.length){
+      realtime.active=false;
+      realtime.lastError='No monitored wallets';
+      return {...realtime};
+    }
+
+    const payload={
+      webhookURL:realtime.url,
+      transactionTypes:['ANY'],
+      accountAddresses:addresses,
+      webhookType:'enhanced',
+      authHeader:webhookAuthValue(),
+      encoding:'jsonParsed'
+    };
+
+    let webhookId=String(getSetting(db,'helius_webhook_id','')||'').trim();
+    try{
+      let result=null;
+      if(webhookId){
+        try{
+          result=await heliusWebhookRequest('PUT',`/${encodeURIComponent(webhookId)}`,payload);
+        }catch(error){
+          if(error?.status!==404)throw error;
+          webhookId='';
+          setInternalSetting('helius_webhook_id','');
+        }
+      }
+      if(!webhookId){
+        result=await heliusWebhookRequest('POST','',payload);
+        webhookId=String(result?.webhookID||'').trim();
+        if(!webhookId)throw new Error('Helius webhook did not return webhookID');
+        setInternalSetting('helius_webhook_id',webhookId);
+      }
+
+      realtime={...realtime,active:true,webhookId,lastConfigAt:nowIso(),lastError:''};
+      db.prepare("UPDATE wallets SET sync_status='watching',sync_error='' WHERE monitoring_enabled=1 AND sync_error LIKE '%429%'").run();
+      scheduleNext();
+      return {...realtime};
+    }catch(error){
+      // If a previously-created webhook exists, keep treating it as active during a
+      // temporary management API rate-limit. This avoids falling back to aggressive polling.
+      const keepActive=!!webhookId && isRateLimitedError(error);
+      realtime={...realtime,active:keepActive,webhookId,lastConfigAt:nowIso(),lastError:String(error?.message||error)};
+      scheduleNext();
+      return {...realtime};
+    }
+  }
+
+  async function ingestWebhookBatch(events){
+    const rows=(Array.isArray(events)?events:[]).filter(x=>x&&typeof x==='object');
+    if(!rows.length)return {events:0,matched:0,inserted:0};
+    const wallets=db.prepare('SELECT * FROM wallets WHERE monitoring_enabled=1').all();
+    let matched=0,inserted=0;
+    let solUsd=0;
+
+    for(const event of rows){
+      for(const wallet of wallets){
+        const activities=normalizeHeliusTransaction(event,wallet.address);
+        if(!activities.length)continue;
+        matched++;
+        let walletInserted=0;
+
+        for(const activity of activities){
+          if(!isTrackedTradeActivity(activity))continue;
+          if(Math.abs(Number(activity?.solAmount||0))>1e-12 && !(Number(activity?.tradeUsd||0)>0)){
+            if(!(solUsd>0))solUsd=await currentSolUsdForTrade();
+            if(solUsd>0){
+              const sol=Math.abs(Number(activity.solAmount||0));
+              activity.quoteAsset=activity.quoteAsset||'SOL';
+              activity.quoteAmount=Number(activity.quoteAmount||0)||sol;
+              activity.tradeUsd=sol*solUsd;
+              activity.tradeUsdSource='sol-live-webhook';
+            }
+          }
+          let token=null;
+          try{token=await ensureToken(activity.mint)}catch(error){
+            console.warn('Webhook token hydration failed:',String(error?.message||error));
+            token=db.prepare('SELECT * FROM tokens WHERE mint=?').get(activity.mint)||null;
+          }
+          if(insertActivity(wallet,activity,token)){
+            inserted++;
+            walletInserted++;
+          }
+        }
+
+        if(walletInserted){
+          rebuildTradeHoldingsSnapshot(wallet);
+          recomputeEntity(wallet.entity_id);
+          db.prepare("UPDATE wallets SET last_scanned_at=?,sync_status='live',sync_error='' WHERE id=?").run(nowIso(),wallet.id);
+        }
+      }
+    }
+
+    realtime.lastDeliveryAt=nowIso();
+    realtime.lastProcessedAt=nowIso();
+    return {events:rows.length,matched,inserted};
+  }
+
+  async function drainWebhookQueue(){
+    if(webhookProcessing)return;
+    webhookProcessing=true;
+    try{
+      while(webhookQueue.length){
+        const batch=webhookQueue.splice(0,25);
+        realtime.queueDepth=webhookQueue.length;
+        try{await ingestWebhookBatch(batch)}catch(error){
+          realtime.lastError=String(error?.message||error);
+          console.error('Helius webhook processing failed:',error);
+        }
+      }
+    }finally{
+      webhookProcessing=false;
+      realtime.queueDepth=webhookQueue.length;
+    }
+  }
+
+  function enqueueWebhook(payload){
+    const items=(Array.isArray(payload)?payload:[payload]).filter(x=>x&&typeof x==='object');
+    realtime.lastDeliveryAt=nowIso();
+    if(!items.length)return {accepted:0,queueDepth:webhookQueue.length};
+    webhookQueue.push(...items.slice(0,500));
+    if(webhookQueue.length>2000)webhookQueue=webhookQueue.slice(-2000);
+    realtime.queueDepth=webhookQueue.length;
+    setImmediate(()=>drainWebhookQueue());
+    return {accepted:items.length,queueDepth:webhookQueue.length};
+  }
+
+  async function cachedSolanaHealth(){
+    const now=Date.now();
+    if(solanaHealthSnapshot.value && now-solanaHealthSnapshot.at<30000)return solanaHealthSnapshot.value;
+    const value=await solanaHealth({fetchImpl});
+    solanaHealthSnapshot={at:now,value};
+    return value;
+  }
   /* SHADOW_STABLE_QUOTE_V2413_LIVE */
   let solUsdSnapshot={value:0,at:0};
   async function currentSolUsdForTrade(){
@@ -218,7 +469,9 @@ export function createLiveIntelligence(db,{fetchImpl=fetch}={}) {
 
       const configuredLimit=Math.max(5,Math.min(Number(getSetting(db,'wallet_history_limit','30'))||30,100));
       const limit=wallet.last_signature?configuredLimit:100;
-      const result=await getRecentWalletActivity(wallet.address,{limit,untilSignature:wallet.last_signature||'',fetchImpl});
+      const result=walletMonitorMode()==='solana_rpc'
+        ? await getRpcRecentWalletActivity(wallet.address,{limit,untilSignature:wallet.last_signature||'',fetchImpl})
+        : await getRecentWalletActivity(wallet.address,{limit,untilSignature:wallet.last_signature||'',fetchImpl});
 
       const needsSolUsd=result.activity.some(a=>
         Math.abs(Number(a?.solAmount||0))>1e-12 && !(Number(a?.tradeUsd||0)>0)
@@ -261,7 +514,9 @@ export function createLiveIntelligence(db,{fetchImpl=fetch}={}) {
       recomputeEntity(wallet.entity_id);
       return {ok:true,provider:result.provider,newTransactions:result.signatures?.length||0,newActivity:inserted,lastSignature:newest,holdings:holdingsSnapshot};
     }catch(error){
-      db.prepare("UPDATE wallets SET last_scanned_at=?,sync_status='error',sync_error=? WHERE id=?").run(nowIso(),String(error.message||error).slice(0,300),wallet.id);
+      const message=String(error?.message||error).slice(0,300);
+      const status=isRateLimitedError(error)?'rate_limited':'error';
+      db.prepare("UPDATE wallets SET last_scanned_at=?,sync_status=?,sync_error=? WHERE id=?").run(nowIso(),status,message,wallet.id);
       throw error;
     }
   }
@@ -337,6 +592,56 @@ export function createLiveIntelligence(db,{fetchImpl=fetch}={}) {
     }
   }
 
+  async function processRpcRealtimeSignature({walletId,address,signature}){
+    const wallet=db.prepare('SELECT * FROM wallets WHERE id=? AND monitoring_enabled=1').get(walletId);
+    if(!wallet||walletMonitorMode()!=='solana_rpc')return {ok:false,skipped:true};
+    const decoded=await getRpcTransactionActivity(address||wallet.address,signature,{fetchImpl});
+    if(!decoded?.found)return {ok:false,pending:true};
+
+    let inserted=0;
+    const tokenByMint=new Map();
+    for(const activity of decoded.activity||[]){
+      if(!activity?.isPump||!isTrackedTradeActivity(activity))continue;
+      let token=tokenByMint.get(activity.mint);
+      if(!token){
+        token=await ensureToken(activity.mint);
+        tokenByMint.set(activity.mint,token);
+      }
+      if(insertActivity(wallet,activity,token))inserted++;
+    }
+
+    if(inserted){
+      rebuildTradeHoldingsSnapshot(wallet);
+      recomputeEntity(wallet.entity_id);
+    }
+    db.prepare("UPDATE wallets SET last_scanned_at=?,sync_status='live',sync_error='' WHERE id=?").run(nowIso(),wallet.id);
+    return {ok:true,inserted,signature};
+  }
+
+  function ensureRpcRealtime(){
+    if(!rpcRealtime){
+      rpcRealtime=createRpcRealtimeMonitor({
+        db,
+        getSetting,
+        onSignature:processRpcRealtimeSignature
+      });
+    }
+    return rpcRealtime;
+  }
+
+  function refreshMonitoringMode(){
+    const monitor=ensureRpcRealtime();
+    monitor.refresh();
+    scheduleNext();
+
+    if(walletMonitorMode()==='current'){
+      setTimeout(()=>refreshRealtimeWebhook().catch(error=>{realtime.lastError=String(error?.message||error)}),0).unref?.();
+    }else{
+      realtime.active=false;
+    }
+    return {mode:walletMonitorMode(),realtime:monitor.status()};
+  }
+
   async function syncEntity(entityId){
     const wallets=db.prepare('SELECT id FROM wallets WHERE entity_id=? AND monitoring_enabled=1 ORDER BY created_at').all(entityId);
     const walletResults=[];
@@ -349,28 +654,94 @@ export function createLiveIntelligence(db,{fetchImpl=fetch}={}) {
 
   async function syncAll(){
     if(running)return {ok:false,busy:true}; running=true; lastError='';
-    const started=Date.now(); let wallets=0,failures=0,xEntities=0;
+    const started=Date.now(); let wallets=0,failures=0,xEntities=0,rateLimited=false;
     try{
       const rows=db.prepare('SELECT id FROM wallets WHERE monitoring_enabled=1 ORDER BY COALESCE(last_scanned_at,\'\'),created_at LIMIT 200').all();
-      for(const w of rows){try{await syncWallet(w.id);wallets++;}catch{failures++;} await sleep(60);}
-      if(getSetting(db,'x_monitor_enabled','true')==='true'&&xConfigured()){
+      for(const w of rows){
+        try{await syncWallet(w.id);wallets++;}
+        catch(error){
+          failures++;
+          if(isRateLimitedError(error)){
+            rateLimited=true;
+            lastError=String(error?.message||error);
+            break;
+          }
+        }
+        await sleep(350);
+      }
+      if(!rateLimited && getSetting(db,'x_monitor_enabled','true')==='true'&&xConfigured()){
         const entities=db.prepare("SELECT id FROM entities WHERE x_handle<>'' ORDER BY COALESCE(x_last_synced_at,''),created_at LIMIT 100").all();
-        for(const e of entities){try{await syncXEntity(e.id);xEntities++;}catch{failures++;} await sleep(60);}
+        for(const e of entities){try{await syncXEntity(e.id);xEntities++;}catch{failures++;} await sleep(150);}
       }
       lastCycleAt=nowIso(); cycleCount++;
-      return {ok:true,wallets,xEntities,failures,durationMs:Date.now()-started};
+      return {ok:true,wallets,xEntities,failures,rateLimited,durationMs:Date.now()-started};
     }catch(error){lastError=error.message;throw error;}finally{running=false;}
+  }
+
+  function reconciliationSeconds(){
+    const configured=Math.max(30,Math.min(Number(getSetting(db,'live_poll_seconds','60'))||60,3600));
+    if(walletMonitorMode()==='solana_rpc')return Math.max(300,Math.min(configured*5,3600));
+    if(realtime.active)return 3600; // Current Helius webhook is primary.
+    return Math.max(300,configured);
   }
 
   function scheduleNext(){
     if(timer)clearTimeout(timer);
-    const seconds=Math.max(30,Math.min(Number(getSetting(db,'live_poll_seconds','60'))||60,3600));
-    timer=setTimeout(async()=>{if(getSetting(db,'live_monitor_enabled','true')==='true')try{await syncAll();}catch(error){lastError=error.message;}scheduleNext();},seconds*1000);
+    const seconds=reconciliationSeconds();
+    timer=setTimeout(async()=>{
+      if(getSetting(db,'live_monitor_enabled','true')==='true'){
+        try{await syncAll()}catch(error){lastError=error.message}
+      }
+      scheduleNext();
+    },seconds*1000);
     timer.unref?.();
   }
-  function start(){scheduleNext();setTimeout(()=>{if(getSetting(db,'live_monitor_enabled','true')==='true')syncAll().catch(e=>{lastError=e.message;});},1500).unref?.();}
-  function stop(){if(timer)clearTimeout(timer);timer=null;}
-  async function health(){return {worker:{running,lastCycleAt,lastError,cycleCount,enabled:getSetting(db,'live_monitor_enabled','true')==='true'},solana:await solanaHealth({fetchImpl}),x:{configured:xConfigured(),enabled:getSetting(db,'x_monitor_enabled','true')==='true'}};}
 
-  return {start,stop,syncWallet,syncEntity,syncXEntity,syncAll,ensureToken,recomputeEntity,health};
+  function scheduleRealtimeRefresh(delayMs=null){
+    if(realtimeTimer)clearTimeout(realtimeTimer);
+    const wait=delayMs==null?(realtime.active?300000:60000):delayMs;
+    realtimeTimer=setTimeout(async()=>{
+      try{await refreshRealtimeWebhook()}catch(error){realtime.lastError=String(error?.message||error)}
+      scheduleRealtimeRefresh();
+    },wait);
+    realtimeTimer.unref?.();
+  }
+
+  function start(){
+    ensureRpcRealtime().start();
+    // Existing webhook ID is treated as provisionally active only in Current mode.
+    if(walletMonitorMode()==='current' && process.env.HELIUS_API_KEY && realtime.webhookId && publicBaseUrl())realtime.active=true;
+    scheduleNext();
+    scheduleRealtimeRefresh(1200);
+    setTimeout(()=>{
+      if(getSetting(db,'live_monitor_enabled','true')!=='true')return;
+      // Reconciliation is intentionally delayed. Realtime webhook delivery does not wait for it.
+      syncAll().catch(e=>{lastError=e.message});
+    },realtime.active?90000:300000).unref?.();
+  }
+
+  function stop(){
+    rpcRealtime?.stop();
+    if(timer)clearTimeout(timer);
+    if(realtimeTimer)clearTimeout(realtimeTimer);
+    timer=null;
+    realtimeTimer=null;
+  }
+
+  function walletMonitoringStatus(){
+    return {mode:walletMonitorMode(),realtime:ensureRpcRealtime().status()};
+  }
+
+  async function health(){
+    const mode=walletMonitorMode();
+    return {
+      worker:{running,lastCycleAt,lastError,cycleCount,enabled:getSetting(db,'live_monitor_enabled','true')==='true',reconciliationSeconds:reconciliationSeconds()},
+      walletMonitoring:{mode,realtime:ensureRpcRealtime().status()},
+      realtime:{...realtime,queueDepth:webhookQueue.length,processing:webhookProcessing},
+      solana:mode==='solana_rpc'?await solanaRpcHealth({fetchImpl}):await cachedSolanaHealth(),
+      x:{configured:xConfigured(),enabled:getSetting(db,'x_monitor_enabled','true')==='true'}
+    };
+  }
+
+  return {start,stop,syncWallet,syncEntity,syncXEntity,syncAll,ensureToken,recomputeEntity,health,refreshRealtimeWebhook,enqueueWebhook,webhookAuthorized,walletMonitoringStatus,refreshMonitoringMode};
 }

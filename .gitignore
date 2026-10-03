@@ -11,3 +11,6 @@ backups/
 
 .shadow-backups/
 *.zip
+solana/shadow-delegated-vault/target/
+.shadow-build-cache/
+.shadow-toolchain/
