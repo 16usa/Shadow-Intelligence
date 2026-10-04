@@ -3056,6 +3056,14 @@ function tokenCreatedTimestamp(token){
   return Number.isFinite(value)?value:0;
 }
 
+/* SHADOW_TOKEN_AGE_ARROW_FIX_V392 */
+function tokenAgeSortValue(token){
+  const created=tokenCreatedTimestamp(token);
+  if(!created)return 0;
+  return Math.max(0,Date.now()-created);
+}
+/* SHADOW_TOKEN_AGE_ARROW_FIX_V392_END */
+
 function tokenAgeLabel(token){
   const created=tokenCreatedTimestamp(token);
   if(!created)return '—';
@@ -3163,8 +3171,8 @@ function sortedTokenRows(rows){
 
   const ageRanks=buildPercentileRanks(
     out,
-    token=>tokenCreatedTimestamp(token),
-    tokenAgeDirection==='youngest'?'desc':'asc',
+    token=>tokenAgeSortValue(token),
+    tokenAgeDirection==='oldest'?'desc':'asc',
     value=>Number.isFinite(value)&&value>0
   );
 
@@ -3264,7 +3272,7 @@ function ensureTokenSortControls(){
       </div>
 
       <button type="button" data-token-age class="is-active">
-        Age ${tokenAgeDirection==='youngest'?'↓':'↑'}
+        Age ${tokenAgeDirection==='oldest'?'↓':'↑'}
       </button>
 
       <button type="button" data-token-mc class="is-active">
