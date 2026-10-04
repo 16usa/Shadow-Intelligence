@@ -2441,3 +2441,70 @@ html[data-theme=dark]{
   font-size:11px;
 }
 /* SHADOW_COPY_LATENCY_METER_V380_CSS_END */
+
+
+/* SHADOW_TOKEN_HOLDER_ENTITIES_V390_CSS */
+.si-token-title-row{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  min-width:0;
+  max-width:100%;
+}
+.si-token-title-row>.si-token-symbol{
+  flex:0 1 auto;
+  min-width:0;
+}
+.si-token-holder-stack{
+  display:inline-flex;
+  align-items:center;
+  flex:0 0 auto;
+  min-width:0;
+  height:24px;
+}
+.si-token-holder{
+  appearance:none;
+  -webkit-appearance:none;
+  position:relative;
+  width:22px;
+  height:22px;
+  min-width:22px;
+  padding:0;
+  margin:0 0 0 -5px;
+  border:1.5px solid var(--si-panel);
+  border-radius:50%;
+  overflow:hidden;
+  background:var(--si-panel);
+  cursor:pointer;
+  box-shadow:none;
+  -webkit-tap-highlight-color:transparent;
+}
+.si-token-holder:first-child{margin-left:0}
+.si-token-holder .avatar{
+  width:100%!important;
+  height:100%!important;
+  min-width:100%!important;
+  display:block!important;
+  border:0!important;
+  border-radius:50%!important;
+  box-shadow:none!important;
+  background-size:cover!important;
+  background-position:center!important;
+}
+.si-token-holder-more{
+  display:inline-grid;
+  place-items:center;
+  height:22px;
+  min-width:22px;
+  padding:0 5px;
+  margin-left:-4px;
+  border:1.5px solid var(--si-panel);
+  border-radius:999px;
+  background:var(--si-line);
+  color:var(--si-muted);
+  font-size:9px;
+  font-weight:800;
+  line-height:1;
+}
+.si-token-holder:active{transform:scale(.94)}
+/* SHADOW_TOKEN_HOLDER_ENTITIES_V390_CSS_END */

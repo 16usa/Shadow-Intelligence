@@ -2391,7 +2391,71 @@ async function api(req, res, db, url, live) {
       ORDER BY COALESCE(t.last_market_at,t.created_at) DESC
     `).all();
 
-    const strict1hItems=await tokensWithMarketPeriods(db,items);
+    /* SHADOW_TOKEN_HOLDER_ENTITIES_V390_API */
+    const holderRows=db.prepare(`
+      WITH current_positions AS (
+        SELECT
+          h.wallet_id,
+          COALESCE(h.entity_id,w.entity_id) AS entity_id,
+          h.mint,
+          h.amount
+        FROM wallet_holdings h
+        JOIN wallets w ON w.id=h.wallet_id
+        JOIN wallet_holdings_state s ON s.wallet_id=h.wallet_id
+        WHERE w.entity_id IS NOT NULL
+          AND COALESCE(s.last_success_at,'')<>''
+          AND h.amount>1e-12
+
+        UNION ALL
+
+        SELECT
+          a.wallet_id,
+          COALESCE(a.entity_id,w.entity_id) AS entity_id,
+          a.mint,
+          SUM(COALESCE(a.token_amount,0)) AS amount
+        FROM wallet_activity a
+        JOIN wallets w ON w.id=a.wallet_id
+        LEFT JOIN wallet_holdings_state s ON s.wallet_id=a.wallet_id
+        WHERE w.entity_id IS NOT NULL
+          AND COALESCE(s.last_success_at,'')=''
+          AND COALESCE(a.mint,'')<>''
+        GROUP BY a.wallet_id,COALESCE(a.entity_id,w.entity_id),a.mint
+        HAVING SUM(COALESCE(a.token_amount,0))>1e-12
+      )
+      SELECT
+        cp.mint,
+        e.id,
+        e.name,
+        e.avatar,
+        e.x_handle,
+        SUM(cp.amount) AS amount
+      FROM current_positions cp
+      JOIN entities e ON e.id=cp.entity_id
+      WHERE cp.entity_id IS NOT NULL
+      GROUP BY cp.mint,e.id,e.name,e.avatar,e.x_handle
+      HAVING SUM(cp.amount)>1e-12
+      ORDER BY cp.mint,LOWER(COALESCE(e.name,'')),e.created_at
+    `).all();
+
+    const holdersByMint=new Map();
+    for(const row of holderRows){
+      const mint=String(row.mint||'');
+      if(!holdersByMint.has(mint))holdersByMint.set(mint,[]);
+      holdersByMint.get(mint).push({
+        id:row.id,
+        name:row.name,
+        avatar:row.avatar||'',
+        xHandle:row.x_handle||'',
+        amount:Number(row.amount||0)
+      });
+    }
+
+    const strict1hItems=(await tokensWithMarketPeriods(db,items)).map(token=>({
+      ...token,
+      holderEntities:holdersByMint.get(String(token.mint||''))||[]
+    }));
+    /* SHADOW_TOKEN_HOLDER_ENTITIES_V390_API_END */
+
     return json(res,200,{
       items:strict1hItems,
       mode:'current-entity-holdings',

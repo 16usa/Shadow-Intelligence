@@ -3260,6 +3260,44 @@ function ensureTokenSortControls(){
   }
 }
 
+/* SHADOW_TOKEN_HOLDER_ENTITIES_V390_APP */
+function tokenHolderEntities(token){
+  const rows=Array.isArray(token?.holderEntities)?token.holderEntities:[];
+  const seen=new Set();
+  return rows.filter(entity=>{
+    const id=String(entity?.id||'').trim();
+    if(!id||seen.has(id))return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+function tokenHolderStackHtml(token){
+  const holders=tokenHolderEntities(token);
+  if(!holders.length)return '';
+
+  const visible=holders.slice(0,3);
+  const more=holders.length-visible.length;
+
+  const avatars=visible.map(entity=>{
+    const label=String(entity?.name||entity?.xHandle||'Entity').trim()||'Entity';
+    return `<button
+      type="button"
+      class="si-token-holder"
+      data-token-holder-entity="${esc(entity.id)}"
+      aria-label="Open ${esc(label)}"
+      title="${esc(label)}"
+    >${avatar(entity,'sm')}</button>`;
+  }).join('');
+
+  const extra=more>0
+    ? `<span class="si-token-holder-more" title="${holders.length} Entities holding this token">+${more}</span>`
+    : '';
+
+  return `<span class="si-token-holder-stack" aria-label="${holders.length} Entities currently holding this token">${avatars}${extra}</span>`;
+}
+/* SHADOW_TOKEN_HOLDER_ENTITIES_V390_APP_END */
+
 function renderTokens(){
   ensureTokenSortControls();
 
@@ -3277,7 +3315,10 @@ function renderTokens(){
     return `<article class="si-panel si-token-card" data-token="${esc(t.mint)}">
       ${siTokenAvatarHtml(t)}
       <div>
-        <span class="si-token-symbol">${pumpTokenLink(t,t.symbol||'TOKEN')}</span>
+        <div class="si-token-title-row">
+          <span class="si-token-symbol">${pumpTokenLink(t,t.symbol||'TOKEN')}</span>
+          ${tokenHolderStackHtml(t)}
+        </div>
         <p>${esc(t.name||'Unknown')}<br><small>${short(t.mint)}</small></p>
         <small>${t.is_pump?'Pump.fun / PumpSwap':esc(t.dex_id||'Solana')} · Age ${tokenAgeLabel(t)} · MC ${money(t.market_cap||0)}</small>
       </div>
@@ -3287,6 +3328,15 @@ function renderTokens(){
 
   $$('[data-token]').forEach(x=>x.onclick=event=>{
     if(event.target.closest('[data-pump-token-link]'))return;
+
+    const holder=event.target.closest('[data-token-holder-entity]');
+    if(holder){
+      event.preventDefault();
+      event.stopPropagation();
+      openObject('entity',{id:holder.dataset.tokenHolderEntity});
+      return;
+    }
+
     openObject('token',{mint:x.dataset.token});
   });
 
