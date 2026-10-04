@@ -218,7 +218,6 @@ export function openDb(path = process.env.DB_PATH || './shadow-intelligence.db')
   migrateTradeOnlyActivityV10(db);
   migrateStableQuoteV2413(db);
   seedOwner(db);
-  if (getSetting(db,'demo_mode','false') === 'true') seedDemo(db);
   return db;
 }
 
@@ -265,7 +264,7 @@ function migrateColumns(db) {
 function seedSettings(db) {
   const defaults = {
     platform_name:'Shadow Intelligence', registration_enabled:'true', community_chat_enabled:'true', copy_trading_enabled:'true',
-    demo_mode:'false', live_monitor_enabled:'true', live_poll_seconds:'60', wallet_history_limit:'30', x_monitor_enabled:'true', wallet_monitor_mode:'current'
+    live_monitor_enabled:'true', live_poll_seconds:'60', wallet_history_limit:'30', x_monitor_enabled:'true', wallet_monitor_mode:'current'
   };
   const stmt=db.prepare('INSERT OR IGNORE INTO settings (key,value) VALUES (?,?)');
   for (const [k,v] of Object.entries(defaults)) stmt.run(k,v);
