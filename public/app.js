@@ -3839,7 +3839,58 @@ function entityDetail(d){
 /* SHADOW_ENTITY_TOKENS_V210_END */
 
 function walletDetail(w,items){const model={entities:state.entities.filter(e=>e.id===w.entity_id),wallets:[w],tokens:state.tokens.filter(t=>items.some(a=>a.mint===t.mint)).map(t=>({...t,entity_id:w.entity_id})),activity:items};modal(`<div class="si-detail-layout"><aside class="si-detail-side"><div class="si-panel" style="box-shadow:none">${avatar(w,'xl')}<h2>Wallet</h2><p>${short(w.address)}</p><div class="si-metrics"><div class="si-metric"><strong>${esc(w.sync_status||'pending')}</strong><small>Status</small></div><div class="si-metric"><strong>${items.length}</strong><small>Events</small></div><div class="si-metric"><strong>${esc(w.chain||'solana')}</strong><small>Chain</small></div></div></div><div class="si-panel" style="box-shadow:none;margin-top:12px"><div class="si-panel-head"><span>ACTIVITY</span></div>${items.slice(0,18).map(a=>eventHtml({type:a.type,title:(a.type||'activity').toUpperCase(),detail:a.mint?short(a.mint):'',createdAt:a.block_time})).join('')||'<div class="guest-note">No activity.</div>'}</div></aside><section class="si-detail-map"><div id="detailGraph" class="si-graph"></div></section></div>`);state.detailGraph=new ShadowGraph($('#detailGraph'),model,{onSelect:openObject})}
-function tokenDetail(t){const related=state.overview?.feed?.filter(x=>x.symbol===t.symbol||x.tokenName===t.name)||[];modal(`<div class="si-detail-layout"><aside class="si-detail-side"><div class="si-panel" style="box-shadow:none">${avatar(t,'xl')}<h2>${esc(t.symbol||'Token')}</h2><p>${esc(t.name||'Unknown')}</p><p>${tokenAddressCopyHtml(t.mint)}</p><div class="si-metrics"><div class="si-metric"><strong>${money(t.market_cap||0)}</strong><small>Market cap</small></div><div class="si-metric"><strong class="${Number(t.price_change)>=0?'pos':'neg'}">${Number(t.price_change)>=0?'+':''}${Number(t.price_change||0).toFixed(1)}%</strong><small>Change</small></div><div class="si-metric"><strong>${money(t.liquidity_usd||0)}</strong><small>Liquidity</small></div></div></div><div class="si-panel" style="box-shadow:none;margin-top:12px"><div class="si-panel-head"><span>RECENT SIGNALS</span></div>${related.slice(0,12).map(eventHtml).join('')||'<div class="guest-note">No recent incident records.</div>'}</div></aside><section class="si-detail-map"><div id="detailGraph" class="si-graph"></div></section></div>`);const entities=state.entities.filter(e=>related.some(x=>x.entityId===e.id));state.detailGraph=new ShadowGraph($('#detailGraph'),{entities:entities.length?entities:[state.overview?.selected].filter(Boolean),wallets:[],tokens:[t]},{onSelect:openObject});bindTokenAddressCopy($('#modalBody')||document)}
+/* SHADOW_TOKEN_ENTITY_GRAPH_V350_CLIENT */
+async function tokenDetail(t){
+  const related=state.overview?.feed?.filter(x=>
+    x?.tokenMint===t.mint ||
+    x?.mint===t.mint ||
+    x?.symbol===t.symbol ||
+    x?.tokenName===t.name
+  )||[];
+
+  modal(`<div class="si-detail-layout"><aside class="si-detail-side"><div class="si-panel" style="box-shadow:none">${avatar(t,'xl')}<h2>${esc(t.symbol||'Token')}</h2><p>${esc(t.name||'Unknown')}</p><p>${tokenAddressCopyHtml(t.mint)}</p><div class="si-metrics"><div class="si-metric"><strong>${money(t.market_cap||0)}</strong><small>Market cap</small></div><div class="si-metric"><strong class="${Number(t.price_change)>=0?'pos':'neg'}">${Number(t.price_change)>=0?'+':''}${Number(t.price_change||0).toFixed(1)}%</strong><small>Change</small></div><div class="si-metric"><strong>${money(t.liquidity_usd||0)}</strong><small>Liquidity</small></div></div></div><div class="si-panel" style="box-shadow:none;margin-top:12px"><div class="si-panel-head"><span>RECENT SIGNALS</span></div>${related.slice(0,12).map(eventHtml).join('')||'<div class="guest-note">No recent incident records.</div>'}</div></aside><section class="si-detail-map"><div id="detailGraph" class="si-graph"></div></section></div>`);
+
+  const graph=new ShadowGraph(
+    $('#detailGraph'),
+    {focus:'token',entities:[],wallets:[],tokens:[t],activity:[]},
+    {onSelect:openObject}
+  );
+
+  state.detailGraph=graph;
+  bindTokenAddressCopy($('#modalBody')||document);
+
+  try{
+    const data=await api(`/api/tokens/${encodeURIComponent(t.mint)}/entities`);
+    if(state.detailGraph!==graph)return;
+
+    const entities=Array.isArray(data?.items)?data.items:[];
+    graph.setModel({
+      focus:'token',
+      entities,
+      wallets:[],
+      tokens:[t],
+      activity:[]
+    });
+  }catch(error){
+    console.warn('Token entity graph hydration failed:',error);
+
+    if(state.detailGraph!==graph)return;
+
+    const fallback=state.entities.filter(e=>
+      related.some(x=>String(x?.entityId||x?.entity_id||'')===String(e?.id||''))
+    );
+
+    graph.setModel({
+      focus:'token',
+      entities:fallback,
+      wallets:[],
+      tokens:[t],
+      activity:[]
+    });
+  }
+}
+/* SHADOW_TOKEN_ENTITY_GRAPH_V350_CLIENT_END */
+
 /* SHADOW_ENTITY_UNIVERSAL_SOURCE_V270 */
 let entityWalletCheckTimer=null;
 

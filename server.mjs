@@ -2135,6 +2135,85 @@ async function api(req, res, db, url, live) {
   }
   /* SHADOW_TOP_24H_MOVERS_V250_API_END */
 
+  /* SHADOW_TOKEN_ENTITY_GRAPH_V350_API */
+  if (
+    parts[0]==='api' &&
+    parts[1]==='tokens' &&
+    parts[2] &&
+    parts[3]==='entities' &&
+    parts.length===4 &&
+    method==='GET'
+  ) {
+    const mint=clean(parts[2],120);
+    if(!mint || !isSolanaAddress(mint)){
+      return json(res,400,{error:'Invalid Solana token mint'});
+    }
+
+    const token=db.prepare('SELECT id,mint FROM tokens WHERE mint=?').get(mint);
+    if(!token)return json(res,404,{error:'Token not found'});
+
+    const items=db.prepare(`
+      WITH linked_entity_ids(entity_id) AS (
+        SELECT COALESCE(h.entity_id,w.entity_id)
+        FROM wallet_holdings h
+        LEFT JOIN wallets w ON w.id=h.wallet_id
+        WHERE h.mint=?
+          AND COALESCE(h.amount,0)>1e-12
+          AND COALESCE(h.entity_id,w.entity_id) IS NOT NULL
+
+        UNION
+
+        SELECT COALESCE(a.entity_id,w.entity_id)
+        FROM wallet_activity a
+        LEFT JOIN wallets w ON w.id=a.wallet_id
+        WHERE a.mint=?
+          AND COALESCE(a.entity_id,w.entity_id) IS NOT NULL
+
+        UNION
+
+        SELECT i.entity_id
+        FROM incidents i
+        WHERE i.token_id=?
+          AND i.entity_id IS NOT NULL
+
+        UNION
+
+        SELECT ev.entity_id
+        FROM evidence ev
+        WHERE ev.token_mint=?
+          AND ev.entity_id IS NOT NULL
+
+        UNION
+
+        SELECT sp.entity_id
+        FROM social_posts sp
+        WHERE sp.token_mint=?
+          AND sp.entity_id IS NOT NULL
+      )
+      SELECT
+        e.*,
+        (SELECT COUNT(*) FROM wallets w WHERE w.entity_id=e.id) AS walletCount
+      FROM entities e
+      JOIN linked_entity_ids linked ON linked.entity_id=e.id
+      ORDER BY LOWER(COALESCE(e.name,'')),e.created_at
+    `).all(mint,mint,token.id,mint,mint).map(e=>({
+      ...e,
+      riskScore:e.risk_score,
+      followerLosses:e.follower_losses,
+      xHandle:e.x_handle,
+      walletCount:Number(e.walletCount||0)
+    }));
+
+    return json(res,200,{
+      mint,
+      items,
+      count:items.length,
+      relationship:'all-known-token-links',
+      authoritative:true
+    });
+  }
+  /* SHADOW_TOKEN_ENTITY_GRAPH_V350_API_END */
+
   /* SHADOW_CURRENT_HOLDINGS_V219_API */
   if (route === '/api/tokens' && method === 'GET') {
     const items=db.prepare(`

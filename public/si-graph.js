@@ -1,4 +1,4 @@
-/* Shadow Intelligence — canonical interactive graph engine v1.8.0
+/* Shadow Intelligence — canonical interactive graph engine v1.9.0
    Single source of truth for every 3D/network area.
 
    Behavior:
@@ -86,8 +86,13 @@
     setModel(model){
       this.model=model||{};
       this.mode=this.root.id==='globalMap'?'global':'detail';
-      const anchor=this.model.entities?.[0]?.id||this.model.tokens?.[0]?.mint||this.model.wallets?.[0]?.id||'network';
-      this.scope=this.mode==='global'?'global':`detail:${anchor}`;
+      this.focus=this.mode==='detail'&&this.model.focus==='token'?'token':'entity';
+
+      const anchor=this.focus==='token'
+        ? (this.model.tokens?.[0]?.mint||this.model.tokens?.[0]?.id||'token')
+        : (this.model.entities?.[0]?.id||this.model.tokens?.[0]?.mint||this.model.wallets?.[0]?.id||'network');
+
+      this.scope=this.mode==='global'?'global':`detail:${this.focus}:${anchor}`;
       this.build();
       this.fit();
       this.schedule();
@@ -108,6 +113,7 @@
       this.empty.style.display='none';
 
       if(this.mode==='global') this.buildGlobal(es);
+      else if(this.focus==='token') this.buildTokenDetail(ts[0],es,this.model.activity||[]);
       else this.buildDetail(es[0],ws,ts,this.model.activity||[]);
 
       this.seedPositions();
@@ -132,6 +138,7 @@
     buildDetail(entity,wallets,tokens,activity){
       const center={
         kind:'entity',raw:entity||{},seed:hash((entity?.id||entity?.name||'entity')+':detail'),
+        anchor:true,
         x:0,y:0,z:0,vx:0,vy:0,vz:0
       };
       this.nodes.push(center);
@@ -159,6 +166,37 @@
         const t=this.nodes.find(n=>n.kind==='token'&&(n.raw.mint===a.mint||n.raw.id===a.token_id));
         if(w&&t)this.edges.push({a:w,b:t,weight:1.6,activity:a});
       }
+    }
+
+
+    buildTokenDetail(token,entities,activity){
+      const center={
+        kind:'token',
+        raw:token||{},
+        seed:hash((token?.mint||token?.id||token?.symbol||'token')+':token-detail'),
+        anchor:true,
+        x:0,y:0,z:0,vx:0,vy:0,vz:0
+      };
+      this.nodes.push(center);
+
+      const list=Array.isArray(entities)?entities:[];
+      list.forEach((entity,i)=>{
+        const seed=hash((entity?.id||entity?.name||entity?.x_handle||'entity')+':token-entity');
+        const n={
+          kind:'entity',
+          raw:entity||{},
+          seed,
+          idx:i,
+          total:list.length,
+          x:0,y:0,z:0,vx:0,vy:0,vz:0,
+          phase1:(seed%6283)/1000,
+          phase2:((seed>>>8)%6283)/1000,
+          freq1:.00024+((seed>>>16)%100)*.0000015,
+          freq2:.00018+((seed>>>23)%80)*.0000013
+        };
+        this.nodes.push(n);
+        this.edges.push({a:center,b:n,weight:1.25});
+      });
     }
 
     memoryKey(n){return `${this.scope}:${n.kind}:${this.nodeKey(n)}`;}
@@ -189,8 +227,8 @@
         const j2=(((seed>>>10)&1023)/1023)-.5;
 
         let radius;
-        if(this.mode==='detail'&&n.kind==='entity'){
-          radius=.08;
+        if(this.mode==='detail'&&n.anchor){
+          radius=this.focus==='token'?0:.08;
         }else{
           const f=Math.sqrt((i+.65)/Math.max(1,total));
           radius=.24+f*(spread-.24)+j2*.13;
@@ -257,11 +295,34 @@
     radius(n,p=this.project(n)){
       const zoomSize=clamp(this.zoom,.50,1.45);
       let base;
-      if(this.mode==='global') base=31;
-      else if(n.kind==='entity') base=34;
-      else if(n.kind==='wallet') base=18;
-      else base=19;
-      return clamp(base*p.depth*zoomSize,10,this.mode==='global'?34:n.kind==='entity'?38:24);
+      let maxRadius;
+
+      if(this.mode==='global'){
+        base=31;
+        maxRadius=34;
+      }else if(this.focus==='token'){
+        if(n.kind==='token'){
+          base=50;
+          maxRadius=56;
+        }else if(n.kind==='entity'){
+          base=17;
+          maxRadius=22;
+        }else{
+          base=16;
+          maxRadius=21;
+        }
+      }else if(n.kind==='entity'){
+        base=34;
+        maxRadius=38;
+      }else if(n.kind==='wallet'){
+        base=18;
+        maxRadius=24;
+      }else{
+        base=19;
+        maxRadius=24;
+      }
+
+      return clamp(base*p.depth*zoomSize,10,maxRadius);
     }
 
     label(n){
@@ -337,12 +398,15 @@
       c.restore();
 
       if(this.mode==='detail'){
+        const primary=this.focus==='token'?n.kind==='token':n.kind==='entity';
+
         c.fillStyle=dark?'#e7e9ea':'#0f1419';
-        c.font=`${n.kind==='entity'?700:600} ${n.kind==='entity'?11:9}px Inter,system-ui`;
+        c.font=`${primary?700:600} ${primary?11:9}px Inter,system-ui`;
         c.textAlign='center';
         c.textBaseline='middle';
         c.fillText(this.label(n).slice(0,22),p.x,p.y+r+13);
-        if(n.kind==='token'){
+
+        if(n.kind==='token'&&this.focus!=='token'){
           const known=n.raw.pnlKnown,pct=Number(n.raw.pnlPercent),usd=Number(n.raw.pnlUsd);
           c.font='700 8px Inter,system-ui';
           c.fillStyle=known?(usd>=0?(dark?'#30d158':'#34c759'):(dark?'#ff453a':'#ff3b30')):(dark?'#71767b':'#536471');
