@@ -16,6 +16,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getPumpTokenMarketCap } from './adapters/token-market.mjs';
 import {
   Connection,
   Keypair,
@@ -189,7 +190,7 @@ function buyMarketCapFilter(subscription={}) {
     minMarketCapUsd:min,
     maxMarketCapUsd:max,
     appliesTo:'buy',
-    marketCapSource:'current_at_execution',
+    marketCapSource:'pump.fun_live',
     unknownMarketCap:'skip',
     sellsBypass:true
   };
@@ -239,7 +240,7 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
   }
   /* SHADOW_COPY_LATENCY_METER_V380_ENGINE_END */
 
-  function handleTradeEvent(event={}){
+  async function handleTradeEvent(event={}){
     const started=Date.now();
     const entityId=String(event.entityId||'');
     const side=String(event.side||'').toLowerCase()==='sell'?'sell':'buy';
@@ -263,6 +264,40 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
       ORDER BY updated_at DESC
     `).all(entityId);
 
+    const marketCapRequired=
+      side==='buy' &&
+      subscriptions.some(sub=>{
+        if(!sub.copy_buys)return false;
+        const min=Math.max(0,Number(sub.min_market_cap_usd||0));
+        const max=Math.max(0,Number(sub.max_market_cap_usd||0));
+        return min>0||max>0;
+      });
+
+    let pumpMarketCapUsd=null;
+
+    if(marketCapRequired){
+      pumpMarketCapUsd=await getPumpTokenMarketCap(
+        String(event.mint||''),
+        {
+          fetchImpl,
+          maxAgeMs:750,
+          timeoutMs:1800
+        }
+      );
+
+      if(Number.isFinite(Number(pumpMarketCapUsd))&&Number(pumpMarketCapUsd)>0){
+        db.prepare(`
+          UPDATE tokens
+          SET market_cap=?,last_market_at=?
+          WHERE mint=?
+        `).run(
+          Number(pumpMarketCapUsd),
+          now(),
+          String(event.mint||'')
+        );
+      }
+    }
+
     let candidates=0;
     let blockedByMarketCap=0;
 
@@ -276,10 +311,11 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
         const rangeEnabled=min>0||max>0;
 
         if(rangeEnabled){
-          const mc=Number(event.cachedMarketCapUsd||0);
-          const age=Number(event.cachedMarketAgeMs);
-          const fresh=mc>0 && Number.isFinite(age) && age<=5000;
+          const mc=Number(pumpMarketCapUsd||0);
+          const fresh=mc>0;
 
+          // Pump.fun is the sole MC authority for this policy.
+          // If it cannot provide current MC, BUY fails closed.
           if(!fresh || (min>0&&mc<min) || (max>0&&mc>max)){
             blockedByMarketCap++;
             continue;

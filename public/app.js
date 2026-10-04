@@ -3494,7 +3494,7 @@ function renderTokens(){
           ${tokenHolderStackHtml(t)}
         </div>
         <p>${esc(t.name||'Unknown')}<br><small>${short(t.mint)}</small></p>
-        <small>${t.is_pump?'Pump.fun / PumpSwap':esc(t.dex_id||'Solana')} · Age ${tokenAgeLabel(t)} · MC ${money(t.market_cap||0)}</small>
+        <small>${t.is_pump?'Pump.fun / PumpSwap':esc(t.dex_id||'Solana')} · Age ${tokenAgeLabel(t)} · MC ${Number(t.market_cap)>0?money(t.market_cap):'—'}</small>
       </div>
       <strong class="${changeClass}">${changeText}</strong>
     </article>`;
@@ -3681,6 +3681,7 @@ function modal(html){
 
 function closeModal(){
   if(typeof closeEntityMetricInfo==='function' && closeEntityMetricInfo())return;
+  if(typeof stopTokenDetailMarketTimer==='function')stopTokenDetailMarketTimer();
   state.detailGraph?.destroy();
   state.detailGraph=null;
   $('#modal').classList.add('hidden');
@@ -4082,6 +4083,45 @@ function entityDetail(d){
 /* SHADOW_ENTITY_TOKENS_V210_END */
 
 function walletDetail(w,items){const model={entities:state.entities.filter(e=>e.id===w.entity_id),wallets:[w],tokens:state.tokens.filter(t=>items.some(a=>a.mint===t.mint)).map(t=>({...t,entity_id:w.entity_id})),activity:items};modal(`<div class="si-detail-layout"><aside class="si-detail-side"><div class="si-panel" style="box-shadow:none">${avatar(w,'xl')}<h2>Wallet</h2><p>${short(w.address)}</p><div class="si-metrics"><div class="si-metric"><strong>${esc(w.sync_status||'pending')}</strong><small>Status</small></div><div class="si-metric"><strong>${items.length}</strong><small>Events</small></div><div class="si-metric"><strong>${esc(w.chain||'solana')}</strong><small>Chain</small></div></div></div><div class="si-panel" style="box-shadow:none;margin-top:12px"><div class="si-panel-head"><span>ACTIVITY</span></div>${items.slice(0,18).map(a=>eventHtml({type:a.type,title:(a.type||'activity').toUpperCase(),detail:a.mint?short(a.mint):'',createdAt:a.block_time})).join('')||'<div class="guest-note">No activity.</div>'}</div></aside><section class="si-detail-map"><div id="detailGraph" class="si-graph"></div></section></div>`);state.detailGraph=new ShadowGraph($('#detailGraph'),model,{onSelect:openObject})}
+/* SHADOW_PUMP_LIVE_MC_V394_CLIENT */
+let tokenDetailMarketTimer=null;
+
+function stopTokenDetailMarketTimer(){
+  if(tokenDetailMarketTimer){
+    clearInterval(tokenDetailMarketTimer);
+    tokenDetailMarketTimer=null;
+  }
+}
+
+async function refreshTokenDetailPumpMarket(mint,graph){
+  const el=$('#tokenDetailMarketCap');
+  if(!el || state.detailGraph!==graph){
+    stopTokenDetailMarketTimer();
+    return;
+  }
+
+  try{
+    const data=await api(`/api/tokens/${encodeURIComponent(mint)}/pump-market`);
+    if(state.detailGraph!==graph)return;
+
+    const mc=Number(data?.marketCap);
+    if(!(Number.isFinite(mc)&&mc>0))return;
+
+    el.textContent=money(mc);
+    el.dataset.source='pump.fun';
+
+    const token=state.tokens.find(row=>String(row?.mint||'')===String(mint||''));
+    if(token){
+      token.market_cap=mc;
+      token.market_cap_source='pump.fun';
+      token.market_cap_live_at=data?.asOf||new Date().toISOString();
+    }
+  }catch(error){
+    console.debug('Live Pump.fun MC unavailable',error);
+  }
+}
+/* SHADOW_PUMP_LIVE_MC_V394_CLIENT_END */
+
 /* SHADOW_TOKEN_ENTITY_GRAPH_V350_CLIENT */
 async function tokenDetail(t){
   const related=state.overview?.feed?.filter(x=>
@@ -4091,7 +4131,9 @@ async function tokenDetail(t){
     x?.tokenName===t.name
   )||[];
 
-  modal(`<div class="si-detail-layout"><aside class="si-detail-side"><div class="si-panel" style="box-shadow:none">${avatar(t,'xl')}<h2>${esc(t.symbol||'Token')}</h2><p>${esc(t.name||'Unknown')}</p><p>${tokenAddressCopyHtml(t.mint)}</p><div class="si-metrics"><div class="si-metric"><strong>${money(t.market_cap||0)}</strong><small>Market cap</small></div><div class="si-metric"><strong class="${Number(t.price_change)>=0?'pos':'neg'}">${Number(t.price_change)>=0?'+':''}${Number(t.price_change||0).toFixed(1)}%</strong><small>Change</small></div><div class="si-metric"><strong>${money(t.liquidity_usd||0)}</strong><small>Liquidity</small></div></div></div><div class="si-panel" style="box-shadow:none;margin-top:12px"><div class="si-panel-head"><span>RECENT SIGNALS</span></div>${related.slice(0,12).map(eventHtml).join('')||'<div class="guest-note">No recent incident records.</div>'}</div></aside><section class="si-detail-map"><div id="detailGraph" class="si-graph"></div></section></div>`);
+  stopTokenDetailMarketTimer();
+
+  modal(`<div class="si-detail-layout"><aside class="si-detail-side"><div class="si-panel" style="box-shadow:none">${avatar(t,'xl')}<h2>${esc(t.symbol||'Token')}</h2><p>${esc(t.name||'Unknown')}</p><p>${tokenAddressCopyHtml(t.mint)}</p><div class="si-metrics"><div class="si-metric"><strong id="tokenDetailMarketCap">—</strong><small>Market cap</small></div><div class="si-metric"><strong class="${Number(t.price_change)>=0?'pos':'neg'}">${Number(t.price_change)>=0?'+':''}${Number(t.price_change||0).toFixed(1)}%</strong><small>Change</small></div><div class="si-metric"><strong>${money(t.liquidity_usd||0)}</strong><small>Liquidity</small></div></div></div><div class="si-panel" style="box-shadow:none;margin-top:12px"><div class="si-panel-head"><span>RECENT SIGNALS</span></div>${related.slice(0,12).map(eventHtml).join('')||'<div class="guest-note">No recent incident records.</div>'}</div></aside><section class="si-detail-map"><div id="detailGraph" class="si-graph"></div></section></div>`);
 
   const graph=new ShadowGraph(
     $('#detailGraph'),
@@ -4101,6 +4143,11 @@ async function tokenDetail(t){
 
   state.detailGraph=graph;
   bindTokenAddressCopy($('#modalBody')||document);
+
+  refreshTokenDetailPumpMarket(t.mint,graph);
+  tokenDetailMarketTimer=setInterval(()=>{
+    refreshTokenDetailPumpMarket(t.mint,graph);
+  },3000);
 
   try{
     const data=await api(`/api/tokens/${encodeURIComponent(t.mint)}/entities`);

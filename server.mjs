@@ -16,7 +16,7 @@ import { ensureExecutionWalletSchema, mainCopyWalletRows, engineExecutionSnapsho
 import { createInternalCopyEngine } from './src/internal-copy-engine.mjs'; // SHADOW_INTERNAL_COPY_ENGINE_V330
 import { providerHealth } from './src/adapters/intelligence.mjs';
 import { createLiveIntelligence } from './src/live-intelligence.mjs';
-import { getTokenMarket, getTokenMetadataBatch, getTokenMarketsBatch } from './src/adapters/token-market.mjs';
+import { getTokenMarket, getTokenMetadataBatch, getTokenMarketsBatch, getPumpTokenMarket } from './src/adapters/token-market.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -1124,7 +1124,7 @@ function entityRows(db,{solUsd=0}={}) {
 /* SHADOW_ENTITY_PROFIT_V2413_SERVER_END */
 
 /* SHADOW_TOKENS_REAL_AGE_V265 */
-const TOKENS_PERIOD_CACHE_MS=60000;
+const TOKENS_PERIOD_CACHE_MS=20000;
 let tokensPeriodCache={at:0,key:'',byMint:new Map()};
 
 function pctFromPrices(nowPrice,oldPrice){
@@ -1171,41 +1171,11 @@ function sleep(ms){
 }
 
 async function pumpTokenCreatedAt(mint){
-  const url=`https://frontend-api-v3.pump.fun/coins-v2/${encodeURIComponent(mint)}`;
-
-  for(let attempt=0;attempt<3;attempt++){
-    try{
-      const response=await fetch(url,{
-        headers:{
-          accept:'application/json',
-          'user-agent':'ShadowIntelligence/0.6'
-        },
-        signal:AbortSignal.timeout(6500)
-      });
-
-      if(response.ok){
-        const body=await response.json();
-        const data=Array.isArray(body)
-          ? body[0]
-          : (body?.data&&typeof body.data==='object' ? body.data : body);
-
-        const createdMs=normalizeCreationMs(
-          data?.created_timestamp ??
-          data?.createdTimestamp ??
-          data?.created_at ??
-          data?.createdAt
-        );
-
-        if(createdMs)return createdMs;
-      }
-
-      if(response.status!==429 && response.status<500)return null;
-    }catch{}
-
-    if(attempt<2)await sleep(attempt===0?300:800);
-  }
-
-  return null;
+  const market=await getPumpTokenMarket(mint,{
+    maxAgeMs:2000,
+    timeoutMs:3500
+  });
+  return normalizeCreationMs(market?.createdAtMs);
 }
 
 async function mapLimit(items,limit,worker){
@@ -1350,6 +1320,11 @@ async function tokensWithMarketPeriods(db,items){
     `);
 
     const nowIsoValue=new Date(nowMs).toISOString();
+    const updatePumpMarketCap=db.prepare(`
+      UPDATE tokens
+      SET market_cap=?,last_market_at=?
+      WHERE id=?
+    `);
 
     for(const row of rows){
       const mint=String(row?.mint||'').trim();
@@ -1361,7 +1336,8 @@ async function tokensWithMarketPeriods(db,items){
       if(!market){
         byMint.set(mint,{
           m1:null,m5:null,h1:null,h6:null,h24:null,
-          marketCap:Number(row.market_cap||0),
+          marketCap:null,
+          marketCapSource:'',
           createdAt:created.createdAt,
           ageSource:created.source
         });
@@ -1373,6 +1349,16 @@ async function tokensWithMarketPeriods(db,items){
         const n=Number(value);
         return Number.isFinite(n)?n:null;
       };
+
+      const pumpMarketCap=Number(market.marketCap);
+      if(
+        row.id &&
+        Number.isFinite(pumpMarketCap) &&
+        pumpMarketCap>0 &&
+        market.marketCapSource==='pump.fun'
+      ){
+        updatePumpMarketCap.run(pumpMarketCap,nowIsoValue,row.id);
+      }
 
       const price=Number(market.priceUsd||0);
       let m1=null;
@@ -1402,9 +1388,12 @@ async function tokensWithMarketPeriods(db,items){
         h1:strict(market.priceChange1h),
         h6:strict(market.priceChange6h),
         h24:strict(market.priceChange24h),
-        marketCap:Number.isFinite(Number(market.marketCap))
+        marketCap:Number.isFinite(Number(market.marketCap)) && Number(market.marketCap)>0
           ? Number(market.marketCap)
-          : Number(row.market_cap||0),
+          : null,
+        marketCapSource:Number.isFinite(Number(market.marketCap)) && Number(market.marketCap)>0
+          ? 'pump.fun'
+          : '',
         createdAt:created.createdAt,
         ageSource:created.source
       });
@@ -1425,7 +1414,13 @@ async function tokensWithMarketPeriods(db,items){
       price_change_6h:p.h6??null,
       price_change_24h:p.h24??null,
       price_change:p.h1??row.price_change??null,
-      market_cap:p.marketCap??row.market_cap,
+      market_cap:Object.prototype.hasOwnProperty.call(p,'marketCap')
+        ? p.marketCap
+        : null,
+      market_cap_source:p.marketCapSource||'',
+      market_cap_live_at:p.marketCapSource==='pump.fun'
+        ? new Date(tokensPeriodCache.at).toISOString()
+        : null,
 
       // If Pump lookup failed, return null instead of reviving an old
       // incorrect pair/migration timestamp from the DB row.
@@ -2252,6 +2247,55 @@ async function api(req, res, db, url, live) {
     }
   }
   /* SHADOW_TOP_24H_MOVERS_V250_API_END */
+
+  /* SHADOW_PUMP_LIVE_MC_V394_API */
+  if (
+    parts[0]==='api' &&
+    parts[1]==='tokens' &&
+    parts[2] &&
+    parts[3]==='pump-market' &&
+    parts.length===4 &&
+    method==='GET'
+  ) {
+    const mint=clean(parts[2],120);
+
+    if(!mint || !isSolanaAddress(mint)){
+      return json(res,400,{error:'Invalid Solana token mint'});
+    }
+
+    const pump=await getPumpTokenMarket(mint,{
+      fetchImpl:fetch,
+      maxAgeMs:1000,
+      timeoutMs:2500
+    });
+
+    const marketCap=Number(pump?.marketCap);
+
+    if(!(Number.isFinite(marketCap)&&marketCap>0)){
+      return json(res,503,{
+        mint,
+        marketCap:null,
+        source:'pump.fun',
+        error:'Live Pump.fun market cap unavailable'
+      });
+    }
+
+    const asOf=nowIso();
+
+    db.prepare(`
+      UPDATE tokens
+      SET market_cap=?,last_market_at=?
+      WHERE mint=?
+    `).run(marketCap,asOf,mint);
+
+    return json(res,200,{
+      mint,
+      marketCap,
+      source:'pump.fun',
+      asOf
+    });
+  }
+  /* SHADOW_PUMP_LIVE_MC_V394_API_END */
 
   /* SHADOW_TOKEN_ENTITY_GRAPH_V350_API */
   if (
