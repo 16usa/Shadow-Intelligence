@@ -3032,6 +3032,18 @@ let tokenEntityDirection=(()=>{
   }
 })();
 
+/* SHADOW_TOKEN_VOLATILITY_SORT_V393_STATE */
+let tokenVolatilityDirection=(()=>{
+  try{
+    return localStorage.getItem('si-token-volatility-direction')==='asc'
+      ? 'asc'
+      : 'desc';
+  }catch{
+    return 'desc';
+  }
+})();
+/* SHADOW_TOKEN_VOLATILITY_SORT_V393_STATE_END */
+
 let tokenPeriodMenuOpen=false;
 
 function tokenPeriodLabel(period=tokenPeriod){
@@ -3092,6 +3104,13 @@ function tokenChangeForPeriod(token,period=tokenPeriod){
   if(period==='h24')return token?.price_change_24h;
   return token?.price_change_1h ?? token?.price_change;
 }
+
+/* SHADOW_TOKEN_VOLATILITY_SORT_V393_VALUE */
+function tokenVolatilityForPeriod(token,period=tokenPeriod){
+  const change=tokenSortNumber(tokenChangeForPeriod(token,period),null);
+  return Number.isFinite(change)?Math.abs(change):null;
+}
+/* SHADOW_TOKEN_VOLATILITY_SORT_V393_VALUE_END */
 
 function tokenRankKey(token,index){
   return String(token?.mint||token?.id||`row-${index}`);
@@ -3157,8 +3176,9 @@ function sortedTokenRows(rows){
       2) Age rank
       3) MC rank
       4) current holding-Entity count rank
+      5) selected-period volatility rank (absolute % move)
 
-    All four are active at the same time with equal weight.
+    All five are active at the same time with equal weight.
     This is intentionally NOT a tie-break chain.
   */
 
@@ -3193,6 +3213,13 @@ function sortedTokenRows(rows){
     value=>Number.isFinite(value)&&value>0
   );
 
+  const volatilityRanks=buildPercentileRanks(
+    out,
+    token=>tokenVolatilityForPeriod(token),
+    tokenVolatilityDirection==='desc'?'desc':'asc',
+    value=>Number.isFinite(value)
+  );
+
   const scored=out.map((token,index)=>{
     const key=tokenRankKey(token,index);
 
@@ -3201,6 +3228,7 @@ function sortedTokenRows(rows){
     const age=ageRanks.get(key)??0;
     const mc=mcRanks.get(key)??0;
     const entities=entityRanks.get(key)??0;
+    const volatility=volatilityRanks.get(key)??0;
 
     return {
       token,
@@ -3209,7 +3237,8 @@ function sortedTokenRows(rows){
       age,
       mc,
       entities,
-      total:(price+age+mc+entities)/4
+      volatility,
+      total:(price+age+mc+entities+volatility)/5
     };
   });
 
@@ -3219,6 +3248,7 @@ function sortedTokenRows(rows){
     || b.age-a.age
     || b.mc-a.mc
     || b.entities-a.entities
+    || b.volatility-a.volatility
     || a.index-b.index
   );
 
@@ -3281,6 +3311,10 @@ function ensureTokenSortControls(){
 
       <button type="button" data-token-ent class="is-active" title="Current holding Entities">
         ENT ${tokenEntityDirection==='desc'?'↓':'↑'}
+      </button>
+
+      <button type="button" data-token-vol class="is-active" title="Price movement amplitude for the selected period">
+        VOL ${tokenVolatilityDirection==='desc'?'↓':'↑'}
       </button>
     </div>`;
 
@@ -3355,6 +3389,23 @@ function ensureTokenSortControls(){
 
       try{
         localStorage.setItem('si-token-entity-direction',tokenEntityDirection);
+      }catch{}
+
+      renderTokens();
+    };
+  }
+
+  const volButton=wrap.querySelector('[data-token-vol]');
+  if(volButton){
+    volButton.setAttribute('aria-pressed','true');
+    volButton.onclick=()=>{
+      tokenPeriodMenuOpen=false;
+      tokenVolatilityDirection=tokenVolatilityDirection==='desc'
+        ? 'asc'
+        : 'desc';
+
+      try{
+        localStorage.setItem('si-token-volatility-direction',tokenVolatilityDirection);
       }catch{}
 
       renderTokens();
