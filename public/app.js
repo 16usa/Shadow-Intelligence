@@ -4369,6 +4369,60 @@ function renderConversations(a){$('#conversationList').innerHTML=a.map(u=>`<div 
 async function searchUsers(q){if(!q.trim())return loadConversations();try{const d=await api('/api/users?q='+encodeURIComponent(q));renderConversations(d.items)}catch(e){toast(e.message)}}
 async function openDm(id){try{const d=await api('/api/dm/'+id);state.activeDm=id;$('#dmHeader').innerHTML=`${avatar(d.user,'sm')} ${esc(d.user.displayName)} <small>${esc(d.user.xHandle||'')}</small>`;$('#dmMessages').innerHTML=d.items.map(m=>`<div class="si-dm-line ${m.senderId===state.user.id?'mine':''}"><div class="si-dm-text">${esc(m.body)}</div></div>`).join('');$('#dmInput').disabled=false;$('#dmForm button').disabled=false}catch(e){toast(e.message)}}
 async function sendDm(e){e.preventDefault();if(!state.activeDm)return;const i=$('#dmInput');if(!i.value.trim())return;try{await api('/api/dm/'+state.activeDm,{method:'POST',body:JSON.stringify({body:i.value})});i.value='';openDm(state.activeDm)}catch(x){toast(x.message)}}
+/* SHADOW_COPY_LATENCY_METER_V380_APP */
+let copyLatencyTimer=0;
+
+function latencyMs(value){
+  const n=Number(value);
+  return Number.isFinite(n)?`${Math.max(0,Math.round(n))} ms`:'—';
+}
+
+async function refreshCopyLatencyMeter(){
+  const last=$('#copyLatencyLast');
+  if(!last)return;
+
+  try{
+    const [live,engine]=await Promise.all([
+      api('/api/live/status'),
+      api('/api/copy-engine/status')
+    ]);
+
+    const fast=live?.realtime?.fastPath||{};
+    const decision=engine?.fastEvent||{};
+
+    const dispatchMs=Number(fast.lastDispatchLagMs||0);
+    const decisionMs=Number(decision.lastDecisionMs||0);
+    const hasSignal=Number(fast.dispatched||0)>0;
+
+    $('#copyLatencyLast').textContent=hasSignal?latencyMs(dispatchMs):'—';
+    $('#copyLatencyDecision').textContent=hasSignal?latencyMs(decisionMs):'—';
+    $('#copyLatencyTotal').textContent=hasSignal?latencyMs(dispatchMs+decisionMs):'—';
+    $('#copyLatencyP95').textContent=Number(fast.sampleCount||0)>0
+      ? latencyMs(Number(fast.p95DispatchLagMs||0)+Number(decision.p95DecisionMs||0))
+      : '—';
+
+    const signal=$('#copyLatencySignal');
+    if(signal){
+      signal.textContent=hasSignal
+        ? `${Number(fast.dispatched||0)} live signal${Number(fast.dispatched||0)===1?'':'s'} · last ${fast.lastDispatchAt?ago(fast.lastDispatchAt)+' ago':'now'}`
+        : 'Waiting for a live trade';
+    }
+  }catch(error){
+    const signal=$('#copyLatencySignal');
+    if(signal)signal.textContent='Latency status unavailable';
+  }
+}
+
+function startCopyLatencyMeter(){
+  if(copyLatencyTimer)clearInterval(copyLatencyTimer);
+  refreshCopyLatencyMeter().catch(()=>{});
+  copyLatencyTimer=setInterval(()=>{
+    if(currentPage!=='settings')return;
+    refreshCopyLatencyMeter().catch(()=>{});
+  },2000);
+}
+/* SHADOW_COPY_LATENCY_METER_V380_APP_END */
+
 async function loadSettings(){
   try{
     const s=await api('/api/settings');
@@ -4392,6 +4446,7 @@ async function loadSettings(){
       : `Mode: Current · Solana: ${h.solana?.status||'unknown'} · ${h.solana?.provider||''}`;
 
     await renderWalletInventory('#walletsAdminTable');
+    startCopyLatencyMeter();
   }catch(e){
     toast(e.message);
   }

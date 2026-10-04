@@ -61,6 +61,32 @@ export function createLiveIntelligence(db,{fetchImpl=fetch,onFastTrade=null}={})
       lastError:''
     }
   };
+  /* SHADOW_COPY_LATENCY_METER_V380_LIVE */
+  const fastDispatchSamples=[];
+
+  function latencyPercentile(values,p){
+    if(!values.length)return 0;
+    const sorted=[...values].sort((a,b)=>a-b);
+    const index=Math.min(sorted.length-1,Math.max(0,Math.ceil((p/100)*sorted.length)-1));
+    return Number(sorted[index]||0);
+  }
+
+  function recordFastDispatchLatency(value){
+    const n=Math.max(0,Number(value)||0);
+    fastDispatchSamples.push(n);
+    if(fastDispatchSamples.length>100)fastDispatchSamples.shift();
+  }
+
+  function publicFastPath(){
+    return {
+      ...realtime.fastPath,
+      sampleCount:fastDispatchSamples.length,
+      p50DispatchLagMs:latencyPercentile(fastDispatchSamples,50),
+      p95DispatchLagMs:latencyPercentile(fastDispatchSamples,95)
+    };
+  }
+  /* SHADOW_COPY_LATENCY_METER_V380_LIVE_END */
+
   let solanaHealthSnapshot={at:0,value:null};
 
   function setInternalSetting(key,value){
@@ -229,6 +255,7 @@ export function createLiveIntelligence(db,{fetchImpl=fetch,onFastTrade=null}={})
     fast.lastDispatchLagMs=lagMs;
     fast.maxDispatchLagMs=Math.max(Number(fast.maxDispatchLagMs||0),lagMs);
     fast.lastSignature=String(activity.signature||'');
+    recordFastDispatchLatency(lagMs);
 
     const marketAt=String(token?.last_market_at||'');
     const parsedMarketAt=marketAt?Date.parse(marketAt):NaN;
@@ -872,7 +899,7 @@ export function createLiveIntelligence(db,{fetchImpl=fetch,onFastTrade=null}={})
     return {
       worker:{running,lastCycleAt,lastError,cycleCount,enabled:getSetting(db,'live_monitor_enabled','true')==='true',reconciliationSeconds:reconciliationSeconds()},
       walletMonitoring:{mode,realtime:ensureRpcRealtime().status()},
-      realtime:{...realtime,queueDepth:webhookQueue.length,processing:webhookProcessing},
+      realtime:{...realtime,fastPath:publicFastPath(),queueDepth:webhookQueue.length,processing:webhookProcessing},
       solana:mode==='solana_rpc'?await solanaRpcHealth({fetchImpl}):await cachedSolanaHealth(),
       x:{configured:xConfigured(),enabled:getSetting(db,'x_monitor_enabled','true')==='true'}
     };

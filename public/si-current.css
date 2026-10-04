@@ -2393,3 +2393,51 @@ html[data-theme=dark]{
   --si-negative:var(--si-red);
 }
 /* SHADOW_SYSTEM_RED_GREEN_V100_END */
+
+
+/* SHADOW_COPY_LATENCY_METER_V380_CSS */
+.si-copy-latency{
+  margin-top:18px;
+  border-top:.5px solid var(--si-line);
+  padding-top:16px;
+}
+.si-copy-latency-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:12px;
+}
+.si-copy-latency-head small{
+  color:var(--si-muted);
+  text-align:right;
+}
+.si-copy-latency-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  border:.5px solid var(--si-line);
+  border-radius:16px;
+  overflow:hidden;
+}
+.si-copy-latency-grid>div{
+  min-width:0;
+  padding:14px 16px;
+}
+.si-copy-latency-grid>div:nth-child(odd){
+  border-right:.5px solid var(--si-line);
+}
+.si-copy-latency-grid>div:nth-child(-n+2){
+  border-bottom:.5px solid var(--si-line);
+}
+.si-copy-latency-grid strong{
+  display:block;
+  font-size:18px;
+  line-height:1.15;
+}
+.si-copy-latency-grid small{
+  display:block;
+  margin-top:5px;
+  color:var(--si-muted);
+  font-size:11px;
+}
+/* SHADOW_COPY_LATENCY_METER_V380_CSS_END */

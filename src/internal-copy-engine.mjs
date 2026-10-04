@@ -213,6 +213,32 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
     lastReason:''
   };
 
+  /* SHADOW_COPY_LATENCY_METER_V380_ENGINE */
+  const fastDecisionSamples=[];
+
+  function decisionPercentile(values,p){
+    if(!values.length)return 0;
+    const sorted=[...values].sort((a,b)=>a-b);
+    const index=Math.min(sorted.length-1,Math.max(0,Math.ceil((p/100)*sorted.length)-1));
+    return Number(sorted[index]||0);
+  }
+
+  function recordDecisionLatency(value){
+    const n=Math.max(0,Number(value)||0);
+    fastDecisionSamples.push(n);
+    if(fastDecisionSamples.length>100)fastDecisionSamples.shift();
+  }
+
+  function publicFastEvent(){
+    return {
+      ...fastEventState,
+      sampleCount:fastDecisionSamples.length,
+      p50DecisionMs:decisionPercentile(fastDecisionSamples,50),
+      p95DecisionMs:decisionPercentile(fastDecisionSamples,95)
+    };
+  }
+  /* SHADOW_COPY_LATENCY_METER_V380_ENGINE_END */
+
   function handleTradeEvent(event={}){
     const started=Date.now();
     const entityId=String(event.entityId||'');
@@ -226,6 +252,7 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
     if(!entityId){
       fastEventState.lastReason='missing_entity';
       fastEventState.lastDecisionMs=Date.now()-started;
+      recordDecisionLatency(fastEventState.lastDecisionMs);
       return {accepted:false,reason:'missing_entity'};
     }
 
@@ -266,6 +293,7 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
     fastEventState.candidates=candidates;
     fastEventState.blockedByMarketCap=blockedByMarketCap;
     fastEventState.lastDecisionMs=Date.now()-started;
+    recordDecisionLatency(fastEventState.lastDecisionMs);
 
     fastEventState.lastReason=candidates===0
       ? (blockedByMarketCap>0?'market_cap_filter':'no_active_subscription')
@@ -299,7 +327,7 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
       buildTransport:'replit-local-artifact',
       artifactRequiredAtRuntime:false,
       ...delegatedArtifactStatus(),
-      fastEvent:{...fastEventState},
+      fastEvent:publicFastEvent(),
       lastError,
     };
   }
