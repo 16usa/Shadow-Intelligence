@@ -1458,29 +1458,27 @@ function groups(db) {
 function parseRoute(urlPath) { return urlPath.split('/').filter(Boolean); }
 
 
-/* SHADOW_REPAIR_AUTO_PROFILE_AVATARS_V351 */
+/* SHADOW_REPAIR_AUTO_PROFILE_AVATARS_V352 */
 async function repairDuplicateAutoProfileAvatars(db){
+  /*
+   * v351 repaired only rows whose avatar URL was byte-for-byte duplicated.
+   * Fomo can serve the same generic artwork through different URLs/query
+   * strings, so visually duplicated avatars escaped that filter.
+   *
+   * v352 re-resolves every legacy Auto Entity with a handle unless its avatar
+   * was set manually. Once a real platform is detected, profile_platform is
+   * changed away from "auto", so that Entity drops out of future repair runs.
+   */
   const rows=db.prepare(`
     SELECT e.*
     FROM entities e
-    JOIN (
-      SELECT avatar
-      FROM entities
-      WHERE COALESCE(profile_platform,'auto')='auto'
-        AND COALESCE(avatar_source,'')='profile'
-        AND COALESCE(profile_handle,'')<>''
-        AND COALESCE(avatar,'')<>''
-      GROUP BY avatar
-      HAVING COUNT(*)>1
-    ) duplicated ON duplicated.avatar=e.avatar
     WHERE COALESCE(e.profile_platform,'auto')='auto'
-      AND COALESCE(e.avatar_source,'')='profile'
-      AND COALESCE(e.profile_handle,'')<>''
-      AND COALESCE(e.avatar,'')<>''
+      AND COALESCE(TRIM(e.profile_handle),'')<>''
+      AND COALESCE(e.avatar_source,'')<>'manual'
     ORDER BY e.created_at,e.id
   `).all();
 
-  if(!rows.length)return {checked:0,updated:0};
+  if(!rows.length)return {checked:0,updated:0,failed:0};
 
   const mainWallet=db.prepare(`
     SELECT address
@@ -1496,53 +1494,56 @@ async function repairDuplicateAutoProfileAvatars(db){
     WHERE id=?
   `);
 
-  const updateCopiedWalletAvatar=db.prepare(`
+  const updateWallets=db.prepare(`
     UPDATE wallets
     SET avatar=?,avatar_source=?
-    WHERE entity_id=? AND avatar=?
+    WHERE entity_id=? AND avatar_source<>'manual'
   `);
 
   let updated=0;
+  let failed=0;
 
   for(const entity of rows){
-    const oldAvatar=String(entity.avatar||'');
     const handle=String(entity.profile_handle||'').trim();
+    const wallet=String(mainWallet.get(entity.id)?.address||'').trim();
     if(!handle)continue;
 
     let resolved=null;
     try{
-      // Deliberately ignore the old profile_url: it may be the incorrect
-      // fomo.family/profile/<pump-handle> URL created by the old Auto logic.
       resolved=await resolveProfileAvatar({
         platform:'auto',
         handle,
-        profileUrl:''
+        profileUrl:'',
+        wallet
       });
-    }catch{}
+    }catch(error){
+      console.warn(`Profile avatar re-resolve failed for ${entity.name||entity.id}:`,error.message);
+    }
 
     let avatar=String(resolved?.avatar||'').trim();
     let source=String(resolved?.source||'pending');
     let detected=normalizeProfilePlatform(resolved?.platform||'auto');
     let newProfileUrl=String(resolved?.profileUrl||'').trim();
 
-    if(!avatar){
-      const wallet=mainWallet.get(entity.id);
-      if(wallet?.address){
-        try{
-          const fallback=await resolveWalletAvatar(wallet.address);
-          avatar=String(fallback?.avatar||'').trim();
-          source=String(fallback?.source||'generated');
-          if(source==='pump.fun')detected='pump.fun';
-        }catch{}
+    if(!avatar && wallet){
+      try{
+        const fallback=await resolveWalletAvatar(wallet);
+        avatar=String(fallback?.avatar||'').trim();
+        source=String(fallback?.source||'generated');
+        if(source==='pump.fun')detected='pump.fun';
+        else detected='auto';
+        if(source!=='pump.fun')newProfileUrl='';
+      }catch(error){
+        console.warn(`Wallet avatar fallback failed for ${entity.name||entity.id}:`,error.message);
       }
     }
 
-    // Never leave the known duplicated generic Fomo image in place.
-    if(!avatar || avatar===oldAvatar){
-      avatar='';
-      source='pending';
-      detected='auto';
-      newProfileUrl='';
+    if(!avatar){
+      failed++;
+      updateEntity.run('', 'pending', 'auto', '', entity.id);
+      updateWallets.run('', 'pending', entity.id);
+      console.log(`Profile avatar repair cleared stale avatar: ${entity.name||entity.id}`);
+      continue;
     }
 
     updateEntity.run(
@@ -1552,20 +1553,21 @@ async function repairDuplicateAutoProfileAvatars(db){
       newProfileUrl,
       entity.id
     );
-
-    updateCopiedWalletAvatar.run(
+    updateWallets.run(
       avatar,
       source,
-      entity.id,
-      oldAvatar
+      entity.id
     );
 
     updated++;
+    console.log(
+      `Profile avatar repair: ${entity.name||entity.id} -> ${detected} (${source})`
+    );
   }
 
-  return {checked:rows.length,updated};
+  return {checked:rows.length,updated,failed};
 }
-/* SHADOW_REPAIR_AUTO_PROFILE_AVATARS_V351_END */
+/* SHADOW_REPAIR_AUTO_PROFILE_AVATARS_V352_END */
 
 async function api(req, res, db, url, live) {
   const method = req.method || 'GET';
@@ -1939,7 +1941,8 @@ async function api(req, res, db, url, live) {
       const resolved=await resolveProfileAvatar({
         platform:profilePlatform,
         handle:profileHandle,
-        profileUrl
+        profileUrl,
+        wallet
       });
       if(!profileUrl&&resolved.profileUrl)profileUrl=clean(resolved.profileUrl,1000);
       if(profilePlatform==='auto' && resolved.platform && resolved.platform!=='auto'){

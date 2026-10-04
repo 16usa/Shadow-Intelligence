@@ -60,6 +60,17 @@ function absoluteUrl(value, baseUrl) {
   }
 }
 
+function normalizedImageIdentity(value) {
+  const raw=String(value||'').trim();
+  if(!raw)return '';
+  try{
+    const url=new URL(raw);
+    return `${url.protocol}//${url.hostname.toLowerCase()}${url.pathname}`;
+  }catch{
+    return raw.split(/[?#]/,1)[0];
+  }
+}
+
 function metaContent(tag) {
   const match = String(tag).match(/\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
   return decodeHtml(match?.[1] ?? match?.[2] ?? match?.[3] ?? '');
@@ -153,22 +164,28 @@ export async function resolveProfileAvatar(input = {}) {
   const platform = normalizeProfilePlatform(input.platform);
   const handle = normalizeProfileHandle(input.handle);
   const profileUrl = String(input.profileUrl || '').trim();
+  const wallet = String(input.wallet || '').trim();
 
   /*
    * Auto is detection, not a platform preference.
-   * Pump.fun has an identity API that accepts username or wallet, so it is the
-   * first strict check. It must return a real user object; no generated image
-   * is accepted as a successful match.
+   * Pump.fun is checked through its user API. When the Entity already has a
+   * wallet, Auto only accepts the Pump.fun username when the returned Pump.fun
+   * address matches that wallet.
    */
   if(handle && (platform==='pump.fun' || platform==='auto')){
     const pump=await resolvePumpUserProfile(handle);
-    if(pump){
+    const pumpAddress=String(pump?.address||'').trim();
+    const walletMatches=!wallet || !pumpAddress || pumpAddress===wallet;
+    const pumpAccepted=!!pump && (platform==='pump.fun' || walletMatches);
+
+    if(pumpAccepted){
       return {
         avatar:pump.avatar||'',
         source:pump.avatar?'pump.fun':'pending',
         platform:'pump.fun',
         profileUrl:pump.profileUrl||'',
-        handle:pump.username||handle
+        handle:pump.username||handle,
+        address:pumpAddress
       };
     }
 
@@ -213,7 +230,10 @@ export async function resolveProfileAvatar(input = {}) {
 
       // This is the exact failure that made unrelated Pump.fun handles all
       // receive the same Fomo image.
-      if(fomoHomeImage && result.avatar===fomoHomeImage)continue;
+      if(
+        fomoHomeImage &&
+        normalizedImageIdentity(result.avatar)===normalizedImageIdentity(fomoHomeImage)
+      )continue;
     }
 
     return {
