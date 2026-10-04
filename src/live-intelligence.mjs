@@ -33,7 +33,7 @@ function isTrackedTradeActivity(activity){
 }
 /* SHADOW_TRADE_ONLY_V239_LIVE_END */
 
-export function createLiveIntelligence(db,{fetchImpl=fetch}={}) {
+export function createLiveIntelligence(db,{fetchImpl=fetch,onFastTrade=null}={}) {
   /* SHADOW_RPC_REALTIME_V310 */
   const walletMonitorMode=()=>String(getSetting(db,'wallet_monitor_mode','current')||'current')==='solana_rpc'?'solana_rpc':'current';
   let rpcRealtime=null;
@@ -51,7 +51,15 @@ export function createLiveIntelligence(db,{fetchImpl=fetch}={}) {
     lastDeliveryAt:'',
     lastProcessedAt:'',
     lastError:'',
-    queueDepth:0
+    queueDepth:0,
+    fastPath:{
+      dispatched:0,
+      lastDispatchAt:'',
+      lastDispatchLagMs:0,
+      maxDispatchLagMs:0,
+      lastSignature:'',
+      lastError:''
+    }
   };
   let solanaHealthSnapshot={at:0,value:null};
 
@@ -198,14 +206,141 @@ export function createLiveIntelligence(db,{fetchImpl=fetch}={}) {
     }
   }
 
+  /* SHADOW_FAST_COPY_HOT_PATH_V370 */
+  const tradeEnrichmentPending=new Set();
+
+  function tradeEventKey(wallet,activity){
+    return `chain:${wallet.id}:${activity.signature}:${activity.mint}:${activity.type}`;
+  }
+
+  function cachedTokenForFastPath(mint){
+    return db.prepare('SELECT * FROM tokens WHERE mint=?').get(mint)||null;
+  }
+
+  function dispatchFastTrade(wallet,activity,token,eventReceivedAtMs){
+    if(typeof onFastTrade!=='function')return;
+
+    const dispatchedAtMs=Date.now();
+    const lagMs=Math.max(0,dispatchedAtMs-Number(eventReceivedAtMs||dispatchedAtMs));
+    const fast=realtime.fastPath;
+
+    fast.dispatched++;
+    fast.lastDispatchAt=nowIso();
+    fast.lastDispatchLagMs=lagMs;
+    fast.maxDispatchLagMs=Math.max(Number(fast.maxDispatchLagMs||0),lagMs);
+    fast.lastSignature=String(activity.signature||'');
+
+    const marketAt=String(token?.last_market_at||'');
+    const parsedMarketAt=marketAt?Date.parse(marketAt):NaN;
+    const marketAgeMs=Number.isFinite(parsedMarketAt)
+      ? Math.max(0,Date.now()-parsedMarketAt)
+      : null;
+
+    const payload={
+      entityId:wallet.entity_id,
+      sourceWalletId:wallet.id,
+      sourceWalletAddress:wallet.address,
+      signature:String(activity.signature||''),
+      slot:Number(activity.slot||0),
+      blockTime:activity.blockTime||null,
+      side:String(activity.type||'').toLowerCase()==='sell'?'sell':'buy',
+      mint:String(activity.mint||''),
+      tokenAmount:Number(activity.tokenAmount||0),
+      solAmount:Number(activity.solAmount||0),
+      quoteAsset:String(activity.quoteAsset||''),
+      quoteAmount:Number(activity.quoteAmount||0),
+      source:String(activity.source||'solana'),
+      isPump:!!activity.isPump,
+      cachedMarketCapUsd:Number(token?.market_cap||0),
+      cachedMarketAt:marketAt,
+      cachedMarketAgeMs:marketAgeMs,
+      webhookReceivedAtMs:Number(eventReceivedAtMs||dispatchedAtMs),
+      dispatchedAtMs,
+      serverDispatchLagMs:lagMs
+    };
+
+    Promise.resolve()
+      .then(()=>onFastTrade(payload))
+      .catch(error=>{
+        fast.lastError=String(error?.message||error).slice(0,300);
+        console.warn('Fast copy event dispatch failed:',fast.lastError);
+      });
+  }
+
+  function scheduleTradeEnrichment(wallet,activity){
+    const eventKey=tradeEventKey(wallet,activity);
+    if(tradeEnrichmentPending.has(eventKey))return;
+    tradeEnrichmentPending.add(eventKey);
+
+    setImmediate(async()=>{
+      try{
+        let token=null;
+        try{
+          token=await ensureToken(activity.mint);
+        }catch(error){
+          console.warn('Background token hydration failed:',String(error?.message||error));
+          token=cachedTokenForFastPath(activity.mint);
+        }
+
+        let tradeUsd=Math.abs(Number(activity.tradeUsd||0));
+        let tradeUsdSource=String(activity.tradeUsdSource||'');
+        let quoteAsset=String(activity.quoteAsset||'');
+        let quoteAmount=Math.abs(Number(activity.quoteAmount||0));
+
+        if(!(tradeUsd>0) && Math.abs(Number(activity.solAmount||0))>1e-12){
+          const solUsd=await currentSolUsdForTrade();
+          if(solUsd>0){
+            const sol=Math.abs(Number(activity.solAmount||0));
+            quoteAsset=quoteAsset||'SOL';
+            quoteAmount=quoteAmount||sol;
+            tradeUsd=sol*solUsd;
+            tradeUsdSource='sol-live-webhook-bg';
+          }
+        }
+
+        if(token || tradeUsd>0){
+          db.prepare(`
+            UPDATE wallet_activity
+            SET token_symbol=?,
+                token_name=?,
+                price_usd=?,
+                price_change=?,
+                is_pump=?,
+                quote_asset=?,
+                quote_amount=?,
+                trade_usd=?,
+                trade_usd_source=?
+            WHERE event_key=?
+          `).run(
+            token?.symbol||`$${String(activity.mint||'').slice(0,4)}`,
+            token?.name||String(activity.mint||'').slice(0,8),
+            Number(token?.price_usd||0),
+            Number(token?.price_change||0),
+            (activity.isPump||token?.is_pump)?1:0,
+            quoteAsset,
+            quoteAmount,
+            tradeUsd,
+            tradeUsdSource,
+            eventKey
+          );
+        }
+      }catch(error){
+        console.warn('Background trade enrichment failed:',String(error?.message||error));
+      }finally{
+        tradeEnrichmentPending.delete(eventKey);
+      }
+    });
+  }
+  /* SHADOW_FAST_COPY_HOT_PATH_V370_END */
+
   async function ingestWebhookBatch(events){
     const rows=(Array.isArray(events)?events:[]).filter(x=>x&&typeof x==='object');
     if(!rows.length)return {events:0,matched:0,inserted:0};
     const wallets=db.prepare('SELECT * FROM wallets WHERE monitoring_enabled=1').all();
     let matched=0,inserted=0;
-    let solUsd=0;
 
     for(const event of rows){
+      const eventReceivedAtMs=Number(event.__shadowWebhookReceivedAtMs||Date.now());
       for(const wallet of wallets){
         const activities=normalizeHeliusTransaction(event,wallet.address);
         if(!activities.length)continue;
@@ -214,24 +349,20 @@ export function createLiveIntelligence(db,{fetchImpl=fetch}={}) {
 
         for(const activity of activities){
           if(!isTrackedTradeActivity(activity))continue;
-          if(Math.abs(Number(activity?.solAmount||0))>1e-12 && !(Number(activity?.tradeUsd||0)>0)){
-            if(!(solUsd>0))solUsd=await currentSolUsdForTrade();
-            if(solUsd>0){
-              const sol=Math.abs(Number(activity.solAmount||0));
-              activity.quoteAsset=activity.quoteAsset||'SOL';
-              activity.quoteAmount=Number(activity.quoteAmount||0)||sol;
-              activity.tradeUsd=sol*solUsd;
-              activity.tradeUsdSource='sol-live-webhook';
-            }
-          }
-          let token=null;
-          try{token=await ensureToken(activity.mint)}catch(error){
-            console.warn('Webhook token hydration failed:',String(error?.message||error));
-            token=db.prepare('SELECT * FROM tokens WHERE mint=?').get(activity.mint)||null;
-          }
+
+          // Critical path: database-only. Never wait on DexScreener, metadata,
+          // SOL/USD or any other external request before handing the trade to
+          // the copy engine.
+          const token=cachedTokenForFastPath(activity.mint);
+
           if(insertActivity(wallet,activity,token)){
             inserted++;
             walletInserted++;
+
+            // Dispatch immediately after dedupe/insert. Market/token enrichment
+            // runs separately and cannot hold up copy-trade reaction time.
+            dispatchFastTrade(wallet,activity,token,eventReceivedAtMs);
+            scheduleTradeEnrichment(wallet,activity);
           }
         }
 
@@ -268,8 +399,12 @@ export function createLiveIntelligence(db,{fetchImpl=fetch}={}) {
 
   function enqueueWebhook(payload){
     const items=(Array.isArray(payload)?payload:[payload]).filter(x=>x&&typeof x==='object');
+    const receivedAtMs=Date.now();
     realtime.lastDeliveryAt=nowIso();
     if(!items.length)return {accepted:0,queueDepth:webhookQueue.length};
+    for(const item of items){
+      item.__shadowWebhookReceivedAtMs=receivedAtMs;
+    }
     webhookQueue.push(...items.slice(0,500));
     if(webhookQueue.length>2000)webhookQueue=webhookQueue.slice(-2000);
     realtime.queueDepth=webhookQueue.length;
