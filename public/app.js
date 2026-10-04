@@ -3021,6 +3021,29 @@ let tokenMcDirection=(()=>{
   }
 })();
 
+/* SHADOW_TOKEN_SORT_COMPACT_ENT_V391_STATE */
+let tokenEntityDirection=(()=>{
+  try{
+    return localStorage.getItem('si-token-entity-direction')==='asc'
+      ? 'asc'
+      : 'desc';
+  }catch{
+    return 'desc';
+  }
+})();
+
+let tokenPeriodMenuOpen=false;
+
+function tokenPeriodLabel(period=tokenPeriod){
+  if(period==='m1')return '1M';
+  if(period==='m5')return '5M';
+  if(period==='h1')return '1H';
+  if(period==='h6')return '6H';
+  if(period==='h24')return '24H';
+  return '1H';
+}
+/* SHADOW_TOKEN_SORT_COMPACT_ENT_V391_STATE_END */
+
 function tokenSortNumber(value,fallback=null){
   if(value==null||value==='')return fallback;
   const n=Number(value);
@@ -3125,8 +3148,9 @@ function sortedTokenRows(rows){
       1) selected period price-change rank
       2) Age rank
       3) MC rank
+      4) current holding-Entity count rank
 
-    All three are active at the same time with equal weight.
+    All four are active at the same time with equal weight.
     This is intentionally NOT a tie-break chain.
   */
 
@@ -3151,6 +3175,16 @@ function sortedTokenRows(rows){
     value=>Number.isFinite(value)&&value>0
   );
 
+  const entityRanks=buildPercentileRanks(
+    out,
+    token=>tokenSortNumber(
+      token?.holder_entities ?? token?.holderEntities?.length,
+      null
+    ),
+    tokenEntityDirection==='desc'?'desc':'asc',
+    value=>Number.isFinite(value)&&value>0
+  );
+
   const scored=out.map((token,index)=>{
     const key=tokenRankKey(token,index);
 
@@ -3158,6 +3192,7 @@ function sortedTokenRows(rows){
     const price=priceRanks.get(key)??0;
     const age=ageRanks.get(key)??0;
     const mc=mcRanks.get(key)??0;
+    const entities=entityRanks.get(key)??0;
 
     return {
       token,
@@ -3165,7 +3200,8 @@ function sortedTokenRows(rows){
       price,
       age,
       mc,
-      total:(price+age+mc)/3
+      entities,
+      total:(price+age+mc+entities)/4
     };
   });
 
@@ -3174,6 +3210,7 @@ function sortedTokenRows(rows){
     || b.price-a.price
     || b.age-a.age
     || b.mc-a.mc
+    || b.entities-a.entities
     || a.index-b.index
   );
 
@@ -3192,33 +3229,73 @@ function ensureTokenSortControls(){
     grid.before(wrap);
   }
 
+  const periodOptions=[
+    ['m1','1M'],
+    ['m5','5M'],
+    ['h1','1H'],
+    ['h6','6H'],
+    ['h24','24H']
+  ];
+
   wrap.innerHTML=`
-    <div class="si-token-sort" role="group" aria-label="Token joint sorting">
-      <button type="button" data-token-period="m1">1M</button>
-      <button type="button" data-token-period="m5">5M</button>
-      <button type="button" data-token-period="h1">1H</button>
-      <button type="button" data-token-period="h6">6H</button>
-      <button type="button" data-token-period="h24">24H</button>
+    <div class="si-token-sort si-token-sort-compact" role="group" aria-label="Token joint sorting">
+      <div class="si-token-period-control">
+        <button
+          type="button"
+          class="is-active si-token-period-trigger"
+          data-token-period-toggle
+          aria-haspopup="menu"
+          aria-expanded="${tokenPeriodMenuOpen?'true':'false'}"
+        >
+          <span>${tokenPeriodLabel()}</span>
+          <span class="si-token-period-chevron" aria-hidden="true">${tokenPeriodMenuOpen?'⌃':'⌄'}</span>
+        </button>
+
+        <div class="si-token-period-menu ${tokenPeriodMenuOpen?'is-open':''}" role="menu">
+          ${periodOptions.map(([period,label])=>`
+            <button
+              type="button"
+              role="menuitem"
+              data-token-period="${period}"
+              class="${period===tokenPeriod?'is-selected':''}"
+            >${label}</button>
+          `).join('')}
+        </div>
+      </div>
+
       <button type="button" data-token-age class="is-active">
         Age ${tokenAgeDirection==='youngest'?'↓':'↑'}
       </button>
+
       <button type="button" data-token-mc class="is-active">
         MC ${tokenMcDirection==='desc'?'↓':'↑'}
       </button>
+
+      <button type="button" data-token-ent class="is-active" title="Current holding Entities">
+        ENT ${tokenEntityDirection==='desc'?'↓':'↑'}
+      </button>
     </div>`;
 
+  const periodToggle=wrap.querySelector('[data-token-period-toggle]');
+  if(periodToggle){
+    periodToggle.onclick=event=>{
+      event.preventDefault();
+      event.stopPropagation();
+      tokenPeriodMenuOpen=!tokenPeriodMenuOpen;
+      ensureTokenSortControls();
+    };
+  }
+
   wrap.querySelectorAll('[data-token-period]').forEach(button=>{
-    const period=button.dataset.tokenPeriod;
-    const active=period===tokenPeriod;
+    button.onclick=event=>{
+      event.preventDefault();
+      event.stopPropagation();
 
-    button.classList.toggle('is-active',active);
-    button.setAttribute('aria-pressed',active?'true':'false');
-
-    button.onclick=()=>{
-      tokenPeriod=period;
+      tokenPeriod=button.dataset.tokenPeriod;
+      tokenPeriodMenuOpen=false;
 
       try{
-        localStorage.setItem('si-token-period',period);
+        localStorage.setItem('si-token-period',tokenPeriod);
       }catch{}
 
       renderTokens();
@@ -3228,8 +3305,8 @@ function ensureTokenSortControls(){
   const ageButton=wrap.querySelector('[data-token-age]');
   if(ageButton){
     ageButton.setAttribute('aria-pressed','true');
-
     ageButton.onclick=()=>{
+      tokenPeriodMenuOpen=false;
       tokenAgeDirection=tokenAgeDirection==='youngest'
         ? 'oldest'
         : 'youngest';
@@ -3245,8 +3322,8 @@ function ensureTokenSortControls(){
   const mcButton=wrap.querySelector('[data-token-mc]');
   if(mcButton){
     mcButton.setAttribute('aria-pressed','true');
-
     mcButton.onclick=()=>{
+      tokenPeriodMenuOpen=false;
       tokenMcDirection=tokenMcDirection==='desc'
         ? 'asc'
         : 'desc';
@@ -3258,7 +3335,45 @@ function ensureTokenSortControls(){
       renderTokens();
     };
   }
+
+  const entButton=wrap.querySelector('[data-token-ent]');
+  if(entButton){
+    entButton.setAttribute('aria-pressed','true');
+    entButton.onclick=()=>{
+      tokenPeriodMenuOpen=false;
+      tokenEntityDirection=tokenEntityDirection==='desc'
+        ? 'asc'
+        : 'desc';
+
+      try{
+        localStorage.setItem('si-token-entity-direction',tokenEntityDirection);
+      }catch{}
+
+      renderTokens();
+    };
+  }
 }
+
+/* SHADOW_TOKEN_SORT_COMPACT_ENT_V391_OUTSIDE */
+if(!window.__shadowTokenPeriodOutsideBound){
+  window.__shadowTokenPeriodOutsideBound=true;
+
+  document.addEventListener('click',event=>{
+    if(!tokenPeriodMenuOpen)return;
+    if(event.target.closest('#tokenSortWrap'))return;
+
+    tokenPeriodMenuOpen=false;
+    if(currentPage==='tokens')ensureTokenSortControls();
+  });
+
+  document.addEventListener('keydown',event=>{
+    if(event.key!=='Escape' || !tokenPeriodMenuOpen)return;
+
+    tokenPeriodMenuOpen=false;
+    if(currentPage==='tokens')ensureTokenSortControls();
+  });
+}
+/* SHADOW_TOKEN_SORT_COMPACT_ENT_V391_OUTSIDE_END */
 
 /* SHADOW_TOKEN_HOLDER_ENTITIES_V390_APP */
 function tokenHolderEntities(token){
