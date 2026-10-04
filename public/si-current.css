@@ -2601,3 +2601,31 @@ html[data-theme=dark]{
   }
 }
 /* SHADOW_TOKEN_VOLATILITY_SORT_V393_CSS_END */
+
+
+/* SHADOW_TOKEN_SORT_SELECTIVE_V395_CSS */
+.si-token-sort.si-token-sort-compact .is-off{
+  background:var(--si-panel)!important;
+  color:var(--si-muted)!important;
+  opacity:.58!important;
+}
+.si-token-sort.si-token-sort-compact .is-off:active{
+  opacity:.78!important;
+}
+.si-token-period-menu .si-token-period-off{
+  margin-top:5px!important;
+  padding-top:9px!important;
+  border-top:1px solid var(--si-line)!important;
+  border-radius:0 0 9px 9px!important;
+}
+.si-token-period-menu .si-token-period-off.is-selected{
+  color:var(--si-text)!important;
+  opacity:.72!important;
+}
+@media(max-width:520px){
+  .si-token-sort.si-token-sort-compact>button,
+  .si-token-sort.si-token-sort-compact .si-token-period-trigger{
+    letter-spacing:-.01em!important;
+  }
+}
+/* SHADOW_TOKEN_SORT_SELECTIVE_V395_CSS_END */

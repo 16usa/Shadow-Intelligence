@@ -3044,6 +3044,28 @@ let tokenVolatilityDirection=(()=>{
 })();
 /* SHADOW_TOKEN_VOLATILITY_SORT_V393_STATE_END */
 
+/* SHADOW_TOKEN_SORT_SELECTIVE_V395_STATE */
+function tokenSortEnabledState(storageKey){
+  try{
+    return localStorage.getItem(storageKey)!=='0';
+  }catch{
+    return true;
+  }
+}
+
+let tokenPriceEnabled=tokenSortEnabledState('si-token-price-enabled');
+let tokenAgeEnabled=tokenSortEnabledState('si-token-age-enabled');
+let tokenMcEnabled=tokenSortEnabledState('si-token-mc-enabled');
+let tokenEntityEnabled=tokenSortEnabledState('si-token-entity-enabled');
+let tokenVolatilityEnabled=tokenSortEnabledState('si-token-volatility-enabled');
+
+function saveTokenSortEnabled(storageKey,enabled){
+  try{
+    localStorage.setItem(storageKey,enabled?'1':'0');
+  }catch{}
+}
+/* SHADOW_TOKEN_SORT_SELECTIVE_V395_STATE_END */
+
 let tokenPeriodMenuOpen=false;
 
 function tokenPeriodLabel(period=tokenPeriod){
@@ -3171,64 +3193,84 @@ function sortedTokenRows(rows){
   const out=[...(Array.isArray(rows)?rows:[])];
 
   /*
-    TRUE JOINT SORT:
-      1) selected period price-change rank
-      2) Age rank
-      3) MC rank
-      4) current holding-Entity count rank
-      5) selected-period volatility rank (absolute % move)
+    SELECTIVE JOINT SORT:
+      - selected-period price change
+      - Age
+      - MC
+      - current holding Entity count
+      - selected-period volatility (absolute % move)
 
-    All five are active at the same time with equal weight.
-    This is intentionally NOT a tie-break chain.
+    Only enabled criteria participate.
+    Every enabled criterion has equal weight.
+    If everything is OFF, keep the source order unchanged.
   */
 
-  const priceRanks=buildPercentileRanks(
-    out,
-    token=>tokenSortNumber(tokenChangeForPeriod(token),null),
-    'desc',
-    value=>Number.isFinite(value)
-  );
+  const activeCount=[
+    tokenPriceEnabled,
+    tokenAgeEnabled,
+    tokenMcEnabled,
+    tokenEntityEnabled,
+    tokenVolatilityEnabled
+  ].filter(Boolean).length;
 
-  const ageRanks=buildPercentileRanks(
-    out,
-    token=>tokenAgeSortValue(token),
-    tokenAgeDirection==='oldest'?'desc':'asc',
-    value=>Number.isFinite(value)&&value>0
-  );
+  if(!activeCount)return out;
 
-  const mcRanks=buildPercentileRanks(
-    out,
-    token=>tokenSortNumber(token?.market_cap,null),
-    tokenMcDirection==='desc'?'desc':'asc',
-    value=>Number.isFinite(value)&&value>0
-  );
+  const priceRanks=tokenPriceEnabled
+    ? buildPercentileRanks(
+        out,
+        token=>tokenSortNumber(tokenChangeForPeriod(token),null),
+        'desc',
+        value=>Number.isFinite(value)
+      )
+    : new Map();
 
-  const entityRanks=buildPercentileRanks(
-    out,
-    token=>tokenSortNumber(
-      token?.holder_entities ?? token?.holderEntities?.length,
-      null
-    ),
-    tokenEntityDirection==='desc'?'desc':'asc',
-    value=>Number.isFinite(value)&&value>0
-  );
+  const ageRanks=tokenAgeEnabled
+    ? buildPercentileRanks(
+        out,
+        token=>tokenAgeSortValue(token),
+        tokenAgeDirection==='oldest'?'desc':'asc',
+        value=>Number.isFinite(value)&&value>0
+      )
+    : new Map();
 
-  const volatilityRanks=buildPercentileRanks(
-    out,
-    token=>tokenVolatilityForPeriod(token),
-    tokenVolatilityDirection==='desc'?'desc':'asc',
-    value=>Number.isFinite(value)
-  );
+  const mcRanks=tokenMcEnabled
+    ? buildPercentileRanks(
+        out,
+        token=>tokenSortNumber(token?.market_cap,null),
+        tokenMcDirection==='desc'?'desc':'asc',
+        value=>Number.isFinite(value)&&value>0
+      )
+    : new Map();
+
+  const entityRanks=tokenEntityEnabled
+    ? buildPercentileRanks(
+        out,
+        token=>tokenSortNumber(
+          token?.holder_entities ?? token?.holderEntities?.length,
+          null
+        ),
+        tokenEntityDirection==='desc'?'desc':'asc',
+        value=>Number.isFinite(value)&&value>0
+      )
+    : new Map();
+
+  const volatilityRanks=tokenVolatilityEnabled
+    ? buildPercentileRanks(
+        out,
+        token=>tokenVolatilityForPeriod(token),
+        tokenVolatilityDirection==='desc'?'desc':'asc',
+        value=>Number.isFinite(value)
+      )
+    : new Map();
 
   const scored=out.map((token,index)=>{
     const key=tokenRankKey(token,index);
 
-    // Missing data gets 0 for that criterion rather than a fake favorable rank.
-    const price=priceRanks.get(key)??0;
-    const age=ageRanks.get(key)??0;
-    const mc=mcRanks.get(key)??0;
-    const entities=entityRanks.get(key)??0;
-    const volatility=volatilityRanks.get(key)??0;
+    const price=tokenPriceEnabled ? (priceRanks.get(key)??0) : 0;
+    const age=tokenAgeEnabled ? (ageRanks.get(key)??0) : 0;
+    const mc=tokenMcEnabled ? (mcRanks.get(key)??0) : 0;
+    const entities=tokenEntityEnabled ? (entityRanks.get(key)??0) : 0;
+    const volatility=tokenVolatilityEnabled ? (volatilityRanks.get(key)??0) : 0;
 
     return {
       token,
@@ -3238,22 +3280,23 @@ function sortedTokenRows(rows){
       mc,
       entities,
       volatility,
-      total:(price+age+mc+entities+volatility)/5
+      total:(price+age+mc+entities+volatility)/activeCount
     };
   });
 
   scored.sort((a,b)=>
     b.total-a.total
-    || b.price-a.price
-    || b.age-a.age
-    || b.mc-a.mc
-    || b.entities-a.entities
-    || b.volatility-a.volatility
+    || (tokenPriceEnabled ? b.price-a.price : 0)
+    || (tokenAgeEnabled ? b.age-a.age : 0)
+    || (tokenMcEnabled ? b.mc-a.mc : 0)
+    || (tokenEntityEnabled ? b.entities-a.entities : 0)
+    || (tokenVolatilityEnabled ? b.volatility-a.volatility : 0)
     || a.index-b.index
   );
 
   return scored.map(row=>row.token);
 }
+
 
 function ensureTokenSortControls(){
   const grid=$('#tokensGrid');
@@ -3280,12 +3323,14 @@ function ensureTokenSortControls(){
       <div class="si-token-period-control">
         <button
           type="button"
-          class="is-active si-token-period-trigger"
+          class="${tokenPriceEnabled?'is-active':'is-off'} si-token-period-trigger"
           data-token-period-toggle
           aria-haspopup="menu"
           aria-expanded="${tokenPeriodMenuOpen?'true':'false'}"
+          aria-pressed="${tokenPriceEnabled?'true':'false'}"
+          title="Price change for selected time period"
         >
-          <span>${tokenPeriodLabel()}</span>
+          <span>${tokenPeriodLabel()}${tokenPriceEnabled?'':' ×'}</span>
           <span class="si-token-period-chevron" aria-hidden="true">${tokenPeriodMenuOpen?'⌃':'⌄'}</span>
         </button>
 
@@ -3295,26 +3340,54 @@ function ensureTokenSortControls(){
               type="button"
               role="menuitem"
               data-token-period="${period}"
-              class="${period===tokenPeriod?'is-selected':''}"
+              class="${tokenPriceEnabled&&period===tokenPeriod?'is-selected':''}"
             >${label}</button>
           `).join('')}
+          <button
+            type="button"
+            role="menuitem"
+            data-token-period-off
+            class="si-token-period-off ${!tokenPriceEnabled?'is-selected':''}"
+          >Off</button>
         </div>
       </div>
 
-      <button type="button" data-token-age class="is-active">
-        Age ${tokenAgeDirection==='oldest'?'↓':'↑'}
+      <button
+        type="button"
+        data-token-age
+        class="${tokenAgeEnabled?'is-active':'is-off'}"
+        aria-pressed="${tokenAgeEnabled?'true':'false'}"
+      >
+        ${tokenAgeEnabled?`Age ${tokenAgeDirection==='oldest'?'↓':'↑'}`:'Age OFF'}
       </button>
 
-      <button type="button" data-token-mc class="is-active">
-        MC ${tokenMcDirection==='desc'?'↓':'↑'}
+      <button
+        type="button"
+        data-token-mc
+        class="${tokenMcEnabled?'is-active':'is-off'}"
+        aria-pressed="${tokenMcEnabled?'true':'false'}"
+      >
+        ${tokenMcEnabled?`MC ${tokenMcDirection==='desc'?'↓':'↑'}`:'MC OFF'}
       </button>
 
-      <button type="button" data-token-ent class="is-active" title="Current holding Entities">
-        ENT ${tokenEntityDirection==='desc'?'↓':'↑'}
+      <button
+        type="button"
+        data-token-ent
+        class="${tokenEntityEnabled?'is-active':'is-off'}"
+        aria-pressed="${tokenEntityEnabled?'true':'false'}"
+        title="Current holding Entities"
+      >
+        ${tokenEntityEnabled?`ENT ${tokenEntityDirection==='desc'?'↓':'↑'}`:'ENT OFF'}
       </button>
 
-      <button type="button" data-token-vol class="is-active" title="Price movement amplitude for the selected period">
-        VOL ${tokenVolatilityDirection==='desc'?'↓':'↑'}
+      <button
+        type="button"
+        data-token-vol
+        class="${tokenVolatilityEnabled?'is-active':'is-off'}"
+        aria-pressed="${tokenVolatilityEnabled?'true':'false'}"
+        title="Price movement amplitude for the selected period"
+      >
+        ${tokenVolatilityEnabled?`VOL ${tokenVolatilityDirection==='desc'?'↓':'↑'}`:'VOL OFF'}
       </button>
     </div>`;
 
@@ -3334,28 +3407,51 @@ function ensureTokenSortControls(){
       event.stopPropagation();
 
       tokenPeriod=button.dataset.tokenPeriod;
+      tokenPriceEnabled=true;
       tokenPeriodMenuOpen=false;
 
       try{
         localStorage.setItem('si-token-period',tokenPeriod);
       }catch{}
+      saveTokenSortEnabled('si-token-price-enabled',true);
 
       renderTokens();
     };
   });
 
+  const periodOff=wrap.querySelector('[data-token-period-off]');
+  if(periodOff){
+    periodOff.onclick=event=>{
+      event.preventDefault();
+      event.stopPropagation();
+
+      // Keep the selected period because VOL still uses it.
+      tokenPriceEnabled=false;
+      tokenPeriodMenuOpen=false;
+      saveTokenSortEnabled('si-token-price-enabled',false);
+
+      renderTokens();
+    };
+  }
+
   const ageButton=wrap.querySelector('[data-token-age]');
   if(ageButton){
-    ageButton.setAttribute('aria-pressed','true');
     ageButton.onclick=()=>{
       tokenPeriodMenuOpen=false;
-      tokenAgeDirection=tokenAgeDirection==='youngest'
-        ? 'oldest'
-        : 'youngest';
+
+      if(!tokenAgeEnabled){
+        tokenAgeEnabled=true;
+        tokenAgeDirection='oldest';
+      }else if(tokenAgeDirection==='oldest'){
+        tokenAgeDirection='youngest';
+      }else{
+        tokenAgeEnabled=false;
+      }
 
       try{
         localStorage.setItem('si-token-age-direction',tokenAgeDirection);
       }catch{}
+      saveTokenSortEnabled('si-token-age-enabled',tokenAgeEnabled);
 
       renderTokens();
     };
@@ -3363,16 +3459,22 @@ function ensureTokenSortControls(){
 
   const mcButton=wrap.querySelector('[data-token-mc]');
   if(mcButton){
-    mcButton.setAttribute('aria-pressed','true');
     mcButton.onclick=()=>{
       tokenPeriodMenuOpen=false;
-      tokenMcDirection=tokenMcDirection==='desc'
-        ? 'asc'
-        : 'desc';
+
+      if(!tokenMcEnabled){
+        tokenMcEnabled=true;
+        tokenMcDirection='desc';
+      }else if(tokenMcDirection==='desc'){
+        tokenMcDirection='asc';
+      }else{
+        tokenMcEnabled=false;
+      }
 
       try{
         localStorage.setItem('si-token-mc-direction',tokenMcDirection);
       }catch{}
+      saveTokenSortEnabled('si-token-mc-enabled',tokenMcEnabled);
 
       renderTokens();
     };
@@ -3380,16 +3482,22 @@ function ensureTokenSortControls(){
 
   const entButton=wrap.querySelector('[data-token-ent]');
   if(entButton){
-    entButton.setAttribute('aria-pressed','true');
     entButton.onclick=()=>{
       tokenPeriodMenuOpen=false;
-      tokenEntityDirection=tokenEntityDirection==='desc'
-        ? 'asc'
-        : 'desc';
+
+      if(!tokenEntityEnabled){
+        tokenEntityEnabled=true;
+        tokenEntityDirection='desc';
+      }else if(tokenEntityDirection==='desc'){
+        tokenEntityDirection='asc';
+      }else{
+        tokenEntityEnabled=false;
+      }
 
       try{
         localStorage.setItem('si-token-entity-direction',tokenEntityDirection);
       }catch{}
+      saveTokenSortEnabled('si-token-entity-enabled',tokenEntityEnabled);
 
       renderTokens();
     };
@@ -3397,16 +3505,22 @@ function ensureTokenSortControls(){
 
   const volButton=wrap.querySelector('[data-token-vol]');
   if(volButton){
-    volButton.setAttribute('aria-pressed','true');
     volButton.onclick=()=>{
       tokenPeriodMenuOpen=false;
-      tokenVolatilityDirection=tokenVolatilityDirection==='desc'
-        ? 'asc'
-        : 'desc';
+
+      if(!tokenVolatilityEnabled){
+        tokenVolatilityEnabled=true;
+        tokenVolatilityDirection='desc';
+      }else if(tokenVolatilityDirection==='desc'){
+        tokenVolatilityDirection='asc';
+      }else{
+        tokenVolatilityEnabled=false;
+      }
 
       try{
         localStorage.setItem('si-token-volatility-direction',tokenVolatilityDirection);
       }catch{}
+      saveTokenSortEnabled('si-token-volatility-enabled',tokenVolatilityEnabled);
 
       renderTokens();
     };
