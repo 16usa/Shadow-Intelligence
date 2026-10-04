@@ -1,4 +1,5 @@
 import { isSafeHttpUrl } from '../utils.mjs';
+import { resolvePumpUserProfile } from './pump-profile.mjs';
 
 const PROFILE_PLATFORMS = new Set(['auto','fomo','pump.fun','x','other']);
 
@@ -122,7 +123,7 @@ async function fetchProfilePage(url) {
 
     const html = (await response.text()).slice(0, 900_000);
     const avatar = extractProfileImage(html, finalUrl);
-    return { avatar, profileUrl: finalUrl };
+    return { avatar, profileUrl: finalUrl, html };
   } catch {
     return null;
   }
@@ -152,22 +153,83 @@ export async function resolveProfileAvatar(input = {}) {
   const platform = normalizeProfilePlatform(input.platform);
   const handle = normalizeProfileHandle(input.handle);
   const profileUrl = String(input.profileUrl || '').trim();
-  const candidates = profileCandidates({ platform, handle, profileUrl });
 
-  for (const url of candidates) {
-    const result = await fetchProfilePage(url);
-    if (result?.avatar) {
+  /*
+   * Auto is detection, not a platform preference.
+   * Pump.fun has an identity API that accepts username or wallet, so it is the
+   * first strict check. It must return a real user object; no generated image
+   * is accepted as a successful match.
+   */
+  if(handle && (platform==='pump.fun' || platform==='auto')){
+    const pump=await resolvePumpUserProfile(handle);
+    if(pump){
       return {
-        avatar: result.avatar,
-        source: platform === 'auto' ? 'profile' : platform,
-        profileUrl: result.profileUrl || url,
+        avatar:pump.avatar||'',
+        source:pump.avatar?'pump.fun':'pending',
+        platform:'pump.fun',
+        profileUrl:pump.profileUrl||'',
+        handle:pump.username||handle
+      };
+    }
+
+    // If Pump.fun was explicitly selected, do not silently relabel it Fomo/X.
+    if(platform==='pump.fun'){
+      return {
+        avatar:'',
+        source:'pending',
+        platform:'pump.fun',
+        profileUrl:'',
+        handle
       };
     }
   }
 
+  const candidates = profileCandidates({ platform, handle, profileUrl });
+
+  // Cache the Fomo homepage image for this resolution. If a /profile/<handle>
+  // page returns the exact same OG image, it is a generic site preview, not the
+  // user's avatar, and must not be stored on the Entity.
+  let fomoHomeImage;
+
+  for (const url of candidates) {
+    const result = await fetchProfilePage(url);
+    if(!result?.avatar)continue;
+
+    let detectedPlatform=platform;
+    try{
+      const host=new URL(result.profileUrl||url).hostname.toLowerCase();
+      if(host==='fomo.family'||host.endsWith('.fomo.family'))detectedPlatform='fomo';
+      else if(host==='x.com'||host.endsWith('.x.com')||host==='twitter.com'||host.endsWith('.twitter.com'))detectedPlatform='x';
+      else if(platform==='auto')detectedPlatform='other';
+    }catch{
+      if(platform==='auto')detectedPlatform='other';
+    }
+
+    if(detectedPlatform==='fomo'){
+      if(fomoHomeImage===undefined){
+        const home=await fetchProfilePage('https://fomo.family/');
+        fomoHomeImage=home?.avatar||'';
+      }
+
+      // This is the exact failure that made unrelated Pump.fun handles all
+      // receive the same Fomo image.
+      if(fomoHomeImage && result.avatar===fomoHomeImage)continue;
+    }
+
+    return {
+      avatar:result.avatar,
+      source:detectedPlatform==='auto'?'profile':detectedPlatform,
+      platform:detectedPlatform,
+      profileUrl:result.profileUrl||url,
+      handle
+    };
+  }
+
   return {
-    avatar: '',
-    source: 'pending',
-    profileUrl: candidates.find(isPublicProfileUrl) || '',
+    avatar:'',
+    source:'pending',
+    platform,
+    profileUrl:candidates.find(isPublicProfileUrl) || '',
+    handle
   };
 }

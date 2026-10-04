@@ -85,7 +85,58 @@ async function resolveConfiguredProfile(wallet) {
   }
 }
 
+
+/* SHADOW_STRICT_PUMP_PROFILE_V351 */
+export async function resolvePumpUserProfile(identifier) {
+  const value=String(identifier||'').trim().replace(/^@+/,'');
+  if(!value)return null;
+
+  try{
+    const data=await requestJson(
+      `${PUMP_USER_API}/${encodeURIComponent(value)}`,
+      process.env.PUMP_PROFILE_TOKEN || '',
+    );
+    if(!data || typeof data!=='object')return null;
+
+    const address=String(
+      data?.address ||
+      data?.wallet ||
+      data?.wallet_address ||
+      data?.walletAddress ||
+      ''
+    ).trim();
+
+    const username=String(
+      data?.username ||
+      data?.user_name ||
+      data?.handle ||
+      ''
+    ).trim().replace(/^@+/,'');
+
+    // A real Pump.fun user response carries an identity. Never treat a generic
+    // HTTP page/image as a successful Pump.fun username match.
+    if(!address && !username)return null;
+
+    return {
+      avatar:extractAvatar(data),
+      source:'pump.fun',
+      platform:'pump.fun',
+      username:username||value,
+      address,
+      profileUrl:address
+        ? `https://pump.fun/profile/${encodeURIComponent(address)}`
+        : ''
+    };
+  }catch{
+    return null;
+  }
+}
+/* SHADOW_STRICT_PUMP_PROFILE_V351_END */
+
 export async function resolveWalletAvatar(wallet) {
+  const strict = await resolvePumpUserProfile(wallet);
+  if (strict?.avatar) return { avatar:strict.avatar, source:'pump.fun' };
+
   const direct = await resolveDirectPumpProfile(wallet);
   if (direct) return direct;
 

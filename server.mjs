@@ -1457,6 +1457,116 @@ function groups(db) {
 }
 function parseRoute(urlPath) { return urlPath.split('/').filter(Boolean); }
 
+
+/* SHADOW_REPAIR_AUTO_PROFILE_AVATARS_V351 */
+async function repairDuplicateAutoProfileAvatars(db){
+  const rows=db.prepare(`
+    SELECT e.*
+    FROM entities e
+    JOIN (
+      SELECT avatar
+      FROM entities
+      WHERE COALESCE(profile_platform,'auto')='auto'
+        AND COALESCE(avatar_source,'')='profile'
+        AND COALESCE(profile_handle,'')<>''
+        AND COALESCE(avatar,'')<>''
+      GROUP BY avatar
+      HAVING COUNT(*)>1
+    ) duplicated ON duplicated.avatar=e.avatar
+    WHERE COALESCE(e.profile_platform,'auto')='auto'
+      AND COALESCE(e.avatar_source,'')='profile'
+      AND COALESCE(e.profile_handle,'')<>''
+      AND COALESCE(e.avatar,'')<>''
+    ORDER BY e.created_at,e.id
+  `).all();
+
+  if(!rows.length)return {checked:0,updated:0};
+
+  const mainWallet=db.prepare(`
+    SELECT address
+    FROM wallets
+    WHERE entity_id=?
+    ORDER BY created_at
+    LIMIT 1
+  `);
+
+  const updateEntity=db.prepare(`
+    UPDATE entities
+    SET avatar=?,avatar_source=?,profile_platform=?,profile_url=?
+    WHERE id=?
+  `);
+
+  const updateCopiedWalletAvatar=db.prepare(`
+    UPDATE wallets
+    SET avatar=?,avatar_source=?
+    WHERE entity_id=? AND avatar=?
+  `);
+
+  let updated=0;
+
+  for(const entity of rows){
+    const oldAvatar=String(entity.avatar||'');
+    const handle=String(entity.profile_handle||'').trim();
+    if(!handle)continue;
+
+    let resolved=null;
+    try{
+      // Deliberately ignore the old profile_url: it may be the incorrect
+      // fomo.family/profile/<pump-handle> URL created by the old Auto logic.
+      resolved=await resolveProfileAvatar({
+        platform:'auto',
+        handle,
+        profileUrl:''
+      });
+    }catch{}
+
+    let avatar=String(resolved?.avatar||'').trim();
+    let source=String(resolved?.source||'pending');
+    let detected=normalizeProfilePlatform(resolved?.platform||'auto');
+    let newProfileUrl=String(resolved?.profileUrl||'').trim();
+
+    if(!avatar){
+      const wallet=mainWallet.get(entity.id);
+      if(wallet?.address){
+        try{
+          const fallback=await resolveWalletAvatar(wallet.address);
+          avatar=String(fallback?.avatar||'').trim();
+          source=String(fallback?.source||'generated');
+          if(source==='pump.fun')detected='pump.fun';
+        }catch{}
+      }
+    }
+
+    // Never leave the known duplicated generic Fomo image in place.
+    if(!avatar || avatar===oldAvatar){
+      avatar='';
+      source='pending';
+      detected='auto';
+      newProfileUrl='';
+    }
+
+    updateEntity.run(
+      avatar,
+      source,
+      detected,
+      newProfileUrl,
+      entity.id
+    );
+
+    updateCopiedWalletAvatar.run(
+      avatar,
+      source,
+      entity.id,
+      oldAvatar
+    );
+
+    updated++;
+  }
+
+  return {checked:rows.length,updated};
+}
+/* SHADOW_REPAIR_AUTO_PROFILE_AVATARS_V351_END */
+
 async function api(req, res, db, url, live) {
   const method = req.method || 'GET';
   const parts = parseRoute(url.pathname);
@@ -1777,7 +1887,7 @@ async function api(req, res, db, url, live) {
     if (!requireOwner(req,res,db)) return;
 
     const b=await readJson(req);
-    const profilePlatform=normalizeProfilePlatform(b.profilePlatform||b.platform||'auto');
+    let profilePlatform=normalizeProfilePlatform(b.profilePlatform||b.platform||'auto');
     const profileHandle=normalizeProfileHandle(b.profileHandle||b.handle||'');
     let profileUrl=clean(b.profileUrl,1000);
     const name=clean(b.name,80)||(profileHandle?`@${profileHandle}`:'');
@@ -1832,6 +1942,9 @@ async function api(req, res, db, url, live) {
         profileUrl
       });
       if(!profileUrl&&resolved.profileUrl)profileUrl=clean(resolved.profileUrl,1000);
+      if(profilePlatform==='auto' && resolved.platform && resolved.platform!=='auto'){
+        profilePlatform=normalizeProfilePlatform(resolved.platform);
+      }
       if(resolved.avatar){
         avatar=resolved.avatar;
         avatarSource=resolved.source||'profile';
@@ -2827,12 +2940,22 @@ export function createServer({dbPath,fetchImpl=fetch,autoMonitor=false}={}) {
   globalThis.__SHADOW_INTERNAL_COPY_ENGINE_SYNC=payload=>internalCopyEngine.syncSubscription(payload);
   const live=createLiveIntelligence(db,{fetchImpl});
   let tokenImageBackfillTimer=null;
+  let profileAvatarRepairTimer=null;
   let shadowPushStop=()=>{};
   // Startup repair belongs only to the real long-lived app server.
   // Unit/smoke tests create short-lived servers with autoMonitor=false;
   // scheduling delayed DB work there races server.close() and produces
   // misleading "database is not open" warnings after the tests pass.
   if(autoMonitor){
+    profileAvatarRepairTimer=setTimeout(()=>{
+      repairDuplicateAutoProfileAvatars(db)
+        .then(result=>{
+          if(result?.updated)console.log(`Profile avatar repair: ${result.updated}/${result.checked} updated`);
+        })
+        .catch(error=>console.warn('Profile avatar repair failed:',error.message));
+    },700);
+    profileAvatarRepairTimer.unref?.();
+
     tokenImageBackfillTimer=setTimeout(()=>{
       backfillMissingTokenImages(db)
         .then(result=>{
@@ -2851,7 +2974,7 @@ export function createServer({dbPath,fetchImpl=fetch,autoMonitor=false}={}) {
     }catch(err){ console.error(err); if(!res.headersSent)json(res,err.statusCode||500,{error:err.statusCode?err.message:'Internal server error'}); else res.end(); }
   });
   if(autoMonitor){ live.start(); if(!process.env.COPY_ENGINE_URL) internalCopyEngine.start(); }
-  server.on('close',()=>{ try{shadowPushStop();}catch{} try{internalCopyEngine.stop();}catch{} if(tokenImageBackfillTimer)clearTimeout(tokenImageBackfillTimer); try{live.stop();}catch{} try{db.close();}catch{} });
+  server.on('close',()=>{ try{shadowPushStop();}catch{} try{internalCopyEngine.stop();}catch{} if(profileAvatarRepairTimer)clearTimeout(profileAvatarRepairTimer); if(tokenImageBackfillTimer)clearTimeout(tokenImageBackfillTimer); try{live.stop();}catch{} try{db.close();}catch{} });
   return server;
 }
 
