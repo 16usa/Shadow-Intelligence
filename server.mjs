@@ -2962,7 +2962,10 @@ export function createServer({dbPath,fetchImpl=fetch,autoMonitor=false}={}) {
   const internalCopyEngine=createInternalCopyEngine(db,{fetchImpl});
   globalThis.__SHADOW_INTERNAL_COPY_ENGINE=internalCopyEngine;
   globalThis.__SHADOW_INTERNAL_COPY_ENGINE_SYNC=payload=>internalCopyEngine.syncSubscription(payload);
-  const live=createLiveIntelligence(db,{fetchImpl});
+  const live=createLiveIntelligence(db,{
+    fetchImpl,
+    onFastTrade:event=>internalCopyEngine.handleTradeEvent?.(event)
+  });
   let tokenImageBackfillTimer=null;
   let profileAvatarRepairTimer=null;
   let shadowPushStop=()=>{};

@@ -201,6 +201,87 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
   const connection=new Connection(rpcUrl(),'confirmed');
   let lastError='';
 
+  /* SHADOW_FAST_COPY_ENGINE_EVENT_V373 */
+  let fastEventState={
+    seen:0,
+    lastEventAt:'',
+    lastSignature:'',
+    lastServerDispatchLagMs:0,
+    lastDecisionMs:0,
+    candidates:0,
+    blockedByMarketCap:0,
+    lastReason:''
+  };
+
+  function handleTradeEvent(event={}){
+    const started=Date.now();
+    const entityId=String(event.entityId||'');
+    const side=String(event.side||'').toLowerCase()==='sell'?'sell':'buy';
+
+    fastEventState.seen++;
+    fastEventState.lastEventAt=now();
+    fastEventState.lastSignature=String(event.signature||'');
+    fastEventState.lastServerDispatchLagMs=Number(event.serverDispatchLagMs||0);
+
+    if(!entityId){
+      fastEventState.lastReason='missing_entity';
+      fastEventState.lastDecisionMs=Date.now()-started;
+      return {accepted:false,reason:'missing_entity'};
+    }
+
+    const subscriptions=db.prepare(`
+      SELECT *
+      FROM copy_subscriptions
+      WHERE entity_id=? AND enabled=1
+      ORDER BY updated_at DESC
+    `).all(entityId);
+
+    let candidates=0;
+    let blockedByMarketCap=0;
+
+    for(const sub of subscriptions){
+      if(side==='buy' && !sub.copy_buys)continue;
+      if(side==='sell' && !sub.copy_sells)continue;
+
+      if(side==='buy'){
+        const min=Math.max(0,Number(sub.min_market_cap_usd||0));
+        const max=Math.max(0,Number(sub.max_market_cap_usd||0));
+        const rangeEnabled=min>0||max>0;
+
+        if(rangeEnabled){
+          const mc=Number(event.cachedMarketCapUsd||0);
+          const age=Number(event.cachedMarketAgeMs);
+          const fresh=mc>0 && Number.isFinite(age) && age<=5000;
+
+          if(!fresh || (min>0&&mc<min) || (max>0&&mc>max)){
+            blockedByMarketCap++;
+            continue;
+          }
+        }
+      }
+
+      candidates++;
+    }
+
+    fastEventState.candidates=candidates;
+    fastEventState.blockedByMarketCap=blockedByMarketCap;
+    fastEventState.lastDecisionMs=Date.now()-started;
+
+    fastEventState.lastReason=candidates===0
+      ? (blockedByMarketCap>0?'market_cap_filter':'no_active_subscription')
+      : 'executor_security_gate';
+
+    return {
+      accepted:false,
+      candidates,
+      blockedByMarketCap,
+      decisionMs:fastEventState.lastDecisionMs,
+      executionAllowed:false,
+      reason:fastEventState.lastReason
+    };
+  }
+  /* SHADOW_FAST_COPY_ENGINE_EVENT_V373_END */
+
   function environmentStatus(){
     const pid=programId();
     const key=parseSessionMasterKey();
@@ -218,6 +299,7 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
       buildTransport:'replit-local-artifact',
       artifactRequiredAtRuntime:false,
       ...delegatedArtifactStatus(),
+      fastEvent:{...fastEventState},
       lastError,
     };
   }
@@ -408,5 +490,5 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
   async function withdrawSol(){
     throw Object.assign(new Error('Non-custodial vault withdrawals require an owner-signed on-chain transaction; server-side withdrawal is disabled'),{statusCode:409,code:'OWNER_SIGNATURE_REQUIRED'});
   }
-  return {status,start,stop,syncSubscription,authorizationDetails,prepareAction,confirmAction,withdrawSol};
+  return {status,start,stop,syncSubscription,authorizationDetails,prepareAction,confirmAction,withdrawSol,handleTradeEvent};
 }
