@@ -2934,7 +2934,7 @@ async function api(req, res, db, url, live) {
   }
   if (route === '/api/settings' && method === 'PATCH') {
     if(!requireOwner(req,res,db))return; const b=await readJson(req);
-    const allowed=['platform_name','registration_enabled','community_chat_enabled','copy_trading_enabled','risk_high_threshold','demo_mode','live_monitor_enabled','live_poll_seconds','wallet_history_limit','x_monitor_enabled','wallet_monitor_mode'];
+    const allowed=['platform_name','registration_enabled','community_chat_enabled','copy_trading_enabled','demo_mode','live_monitor_enabled','live_poll_seconds','wallet_history_limit','x_monitor_enabled','wallet_monitor_mode'];
     const stmt=db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
     for(const key of allowed){
       if(!Object.hasOwn(b,key))continue;

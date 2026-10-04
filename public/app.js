@@ -4430,7 +4430,6 @@ async function loadSettings(){
     $('#setRegistration').checked=s.registration_enabled==='true';
     $('#setChat').checked=s.community_chat_enabled==='true';
     $('#setCopy').checked=s.copy_trading_enabled==='true';
-    $('#setRiskThreshold').value=s.risk_high_threshold||80;
     $('#setDemo').checked=s.demo_mode==='true';
     $('#setLiveMonitor').checked=s.live_monitor_enabled==='true';
     $('#setWalletMonitorMode').value=s.wallet_monitor_mode==='solana_rpc'?'solana_rpc':'current';
@@ -4451,7 +4450,7 @@ async function loadSettings(){
     toast(e.message);
   }
 }
-async function saveSettings(e){e.preventDefault();try{const b={platform_name:$('#setPlatformName').value,registration_enabled:$('#setRegistration').checked,community_chat_enabled:$('#setChat').checked,copy_trading_enabled:$('#setCopy').checked,risk_high_threshold:$('#setRiskThreshold').value,demo_mode:$('#setDemo').checked,live_monitor_enabled:$('#setLiveMonitor').checked,wallet_monitor_mode:$('#setWalletMonitorMode').value,live_poll_seconds:$('#setPollSeconds').value,wallet_history_limit:$('#setHistoryLimit').value,x_monitor_enabled:$('#setXMonitor').checked};const s=await api('/api/settings',{method:'PATCH',body:JSON.stringify(b)});document.querySelectorAll('[data-platform-name]').forEach(x=>x.textContent=s.platform_name);toast('Settings saved')}catch(e){toast(e.message)}}
+async function saveSettings(e){e.preventDefault();try{const b={platform_name:$('#setPlatformName').value,registration_enabled:$('#setRegistration').checked,community_chat_enabled:$('#setChat').checked,copy_trading_enabled:$('#setCopy').checked,demo_mode:$('#setDemo').checked,live_monitor_enabled:$('#setLiveMonitor').checked,wallet_monitor_mode:$('#setWalletMonitorMode').value,live_poll_seconds:$('#setPollSeconds').value,wallet_history_limit:$('#setHistoryLimit').value,x_monitor_enabled:$('#setXMonitor').checked};const s=await api('/api/settings',{method:'PATCH',body:JSON.stringify(b)});document.querySelectorAll('[data-platform-name]').forEach(x=>x.textContent=s.platform_name);toast('Settings saved')}catch(e){toast(e.message)}}
 /* SHADOW_SEARCH_PAGE_V237_APP */
 function searchMatches(q){
   const query=String(q||'').trim().toLowerCase();
