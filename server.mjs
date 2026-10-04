@@ -255,6 +255,8 @@ function copySubscriptionRow(db,userId,entityId){
     maxPositionSol:row.max_position_sol,
     maxDailySol:row.max_daily_sol,
     slippageBps:row.slippage_bps,
+    minMarketCapUsd:Number(row.min_market_cap_usd||0),
+    maxMarketCapUsd:Number(row.max_market_cap_usd||0),
     sellPercent:row.sell_percent,
     engineState:row.engine_state,
     lastError:row.last_error,
@@ -2732,6 +2734,14 @@ async function api(req, res, db, url, live) {
     const maxPositionSol=numBetween(b.maxPositionSol,amountSol,1000,Math.max(0.5,amountSol));
     const maxDailySol=numBetween(b.maxDailySol,amountSol,10000,Math.max(1,amountSol));
     const slippageBps=Math.round(numBetween(b.slippageBps,10,3000,500));
+    const minMarketCapUsd=numBetween(b.minMarketCapUsd,0,1_000_000_000_000,0);
+    const rawMaxMarketCapUsd=Number(b.maxMarketCapUsd);
+    const maxMarketCapUsd=Number.isFinite(rawMaxMarketCapUsd)&&rawMaxMarketCapUsd>0
+      ? Math.min(1_000_000_000_000,rawMaxMarketCapUsd)
+      : 0;
+    if(maxMarketCapUsd>0 && maxMarketCapUsd<minMarketCapUsd){
+      return json(res,400,{error:'Maximum market cap must be greater than or equal to minimum market cap'});
+    }
     const copyBuys=b.copyBuys!==false?1:0;
     const copySells=b.copySells!==false?1:0;
     const sellPercent=Math.round(numBetween(b.sellPercent,1,100,100));
@@ -2745,16 +2755,27 @@ async function api(req, res, db, url, live) {
       db.prepare(`
         UPDATE copy_subscriptions SET
           user_wallet_id=?,amount_sol=?,max_position_sol=?,max_daily_sol=?,
-          slippage_bps=?,copy_buys=?,copy_sells=?,sell_percent=?,updated_at=?
+          slippage_bps=?,min_market_cap_usd=?,max_market_cap_usd=?,
+          copy_buys=?,copy_sells=?,sell_percent=?,updated_at=?
         WHERE id=? AND user_id=?
-      `).run(wallet.id,amountSol,maxPositionSol,maxDailySol,slippageBps,copyBuys,copySells,sellPercent,at,subId,user.id);
+      `).run(
+        wallet.id,amountSol,maxPositionSol,maxDailySol,
+        slippageBps,minMarketCapUsd,maxMarketCapUsd,
+        copyBuys,copySells,sellPercent,at,subId,user.id
+      );
     }else{
       db.prepare(`
         INSERT INTO copy_subscriptions
           (id,user_id,user_wallet_id,entity_id,enabled,amount_sol,max_position_sol,max_daily_sol,
-           slippage_bps,copy_buys,copy_sells,sell_percent,engine_state,last_error,created_at,updated_at)
-        VALUES (?,?,?,?,0,?,?,?,?,?,?,?,'draft','',?,?)
-      `).run(subId,user.id,wallet.id,entity.id,amountSol,maxPositionSol,maxDailySol,slippageBps,copyBuys,copySells,sellPercent,at,at);
+           slippage_bps,min_market_cap_usd,max_market_cap_usd,copy_buys,copy_sells,sell_percent,
+           engine_state,last_error,created_at,updated_at)
+        VALUES (?,?,?,?,0,?,?,?,?,?,?,?,?,?,'draft','',?,?)
+      `).run(
+        subId,user.id,wallet.id,entity.id,
+        amountSol,maxPositionSol,maxDailySol,slippageBps,
+        minMarketCapUsd,maxMarketCapUsd,copyBuys,copySells,sellPercent,
+        at,at
+      );
     }
 
     sub=db.prepare('SELECT * FROM copy_subscriptions WHERE id=?').get(subId);

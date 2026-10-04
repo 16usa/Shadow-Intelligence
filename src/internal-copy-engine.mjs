@@ -1,3 +1,4 @@
+/* SHADOW_REPLIT_ONLY_RUNTIME_V372 */
 /* SHADOW_DELEGATED_COPY_ENGINE_V340
  * Non-custodial architecture.
  *
@@ -12,6 +13,9 @@
  *   independently audited/reviewed.
  */
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   Connection,
   Keypair,
@@ -20,6 +24,10 @@ import {
   Transaction,
   TransactionInstruction,
 } from '@solana/web3.js';
+
+const __dirname=path.dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT=path.resolve(__dirname,'..');
+const DEFAULT_SBF_PATH=path.join(PROJECT_ROOT,'solana','shadow-delegated-vault','target','deploy','shadow_delegated_vault.so');
 
 const text=v=>String(v??'').trim();
 const now=()=>new Date().toISOString();
@@ -65,6 +73,28 @@ function programId(){
   const raw=text(process.env.SHADOW_DELEGATED_PROGRAM_ID);
   if(!raw)return null;
   try{return new PublicKey(raw)}catch{return null}
+}
+function delegatedArtifactStatus(){
+  const configured=text(process.env.SHADOW_DELEGATED_SBF_PATH);
+  const artifactPath=configured
+    ?(path.isAbsolute(configured)?configured:path.resolve(PROJECT_ROOT,configured))
+    :DEFAULT_SBF_PATH;
+  try{
+    const stat=fs.statSync(artifactPath);
+    return {
+      artifactPath,
+      artifactPresent:stat.isFile()&&stat.size>0,
+      artifactBytes:stat.isFile()?stat.size:0,
+      artifactSource:'replit-local',
+    };
+  }catch{
+    return {
+      artifactPath,
+      artifactPresent:false,
+      artifactBytes:0,
+      artifactSource:'replit-local',
+    };
+  }
 }
 function absUrl(path){
   const base=text(process.env.PUBLIC_BASE_URL)||text(process.env.REPLIT_DEPLOYMENT_URL)||text(process.env.REPLIT_DEV_DOMAIN);
@@ -146,6 +176,25 @@ function publicSession(row){
   };
 }
 
+function buyMarketCapFilter(subscription={}) {
+  const min=Math.max(0,Number(
+    subscription.min_market_cap_usd ?? subscription.minMarketCapUsd ?? 0
+  )||0);
+  const rawMax=Number(
+    subscription.max_market_cap_usd ?? subscription.maxMarketCapUsd ?? 0
+  );
+  const max=Number.isFinite(rawMax)&&rawMax>0?rawMax:0;
+  return {
+    enabled:min>0||max>0,
+    minMarketCapUsd:min,
+    maxMarketCapUsd:max,
+    appliesTo:'buy',
+    marketCapSource:'current_at_execution',
+    unknownMarketCap:'skip',
+    sellsBypass:true
+  };
+}
+
 export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
   // Export name intentionally preserved for v3.3.x server compatibility.
   ensureSchema(db);
@@ -165,6 +214,10 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
       mainnetApproved,
       programId:pid?.toBase58()||'',
       mode:'noncustodial_delegated_vault',
+      ciRequired:false,
+      buildTransport:'replit-local-artifact',
+      artifactRequiredAtRuntime:false,
+      ...delegatedArtifactStatus(),
       lastError,
     };
   }
@@ -255,6 +308,7 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
         custody:'user_owned_program_vault',
       },
       environment:environmentStatus(),
+      buyMarketCapFilter:buyMarketCapFilter(canonical),
       executionReady:false,
       executionReadyReason:policyActive?'ONCHAIN_POLICY_ACTIVE_EXECUTOR_REVIEW_REQUIRED':'ONCHAIN_POLICY_NOT_ACTIVE',
     };
@@ -279,7 +333,9 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
       entityId:sub.entity_id,entityName:sub.entity_name||'',ownerAddress:row.owner_address,
       vaultAddress:row.vault_address,policyAddress:row.policy_address,sessionPublicKey:row.session_public_key,
       mainWallet:main?.address||'',amountSol:Number(sub.amount_sol||0),maxPositionSol:Number(sub.max_position_sol||0),
-      maxDailySol:Number(sub.max_daily_sol||0),slippageBps:Number(sub.slippage_bps||0),copyBuys:!!sub.copy_buys,
+      maxDailySol:Number(sub.max_daily_sol||0),slippageBps:Number(sub.slippage_bps||0),
+      minMarketCapUsd:Number(sub.min_market_cap_usd||0),maxMarketCapUsd:Number(sub.max_market_cap_usd||0),
+      buyMarketCapFilter:buyMarketCapFilter(sub),copyBuys:!!sub.copy_buys,
       copySells:!!sub.copy_sells,sellPercent:Number(sub.sell_percent||100),expiresAt:row.auth_token_expires_at,
       cluster:clusterName(),programId:row.program_id,nonCustodial:true,
     };

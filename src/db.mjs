@@ -88,6 +88,8 @@ export function openDb(path = process.env.DB_PATH || './shadow-intelligence.db')
       max_position_sol REAL NOT NULL DEFAULT 0.5,
       max_daily_sol REAL NOT NULL DEFAULT 1.0,
       slippage_bps INTEGER NOT NULL DEFAULT 500,
+      min_market_cap_usd REAL NOT NULL DEFAULT 0,
+      max_market_cap_usd REAL NOT NULL DEFAULT 0,
       copy_buys INTEGER NOT NULL DEFAULT 1,
       copy_sells INTEGER NOT NULL DEFAULT 1,
       sell_percent INTEGER NOT NULL DEFAULT 100,
@@ -234,6 +236,10 @@ function migrateColumns(db) {
   addColumn(db,'entities',"profile_handle TEXT DEFAULT ''");
   addColumn(db,'entities',"profile_url TEXT DEFAULT ''");
   /* SHADOW_PROFILE_SOURCE_V270_DB_END */
+  /* SHADOW_COPY_MC_RANGE_V360_DB */
+  addColumn(db,'copy_subscriptions',"min_market_cap_usd REAL NOT NULL DEFAULT 0");
+  addColumn(db,'copy_subscriptions',"max_market_cap_usd REAL NOT NULL DEFAULT 0");
+  /* SHADOW_COPY_MC_RANGE_V360_DB_END */
   addColumn(db,'tokens',"price_usd REAL DEFAULT 0");
   addColumn(db,'tokens',"market_cap REAL DEFAULT 0");
   addColumn(db,'tokens',"liquidity_usd REAL DEFAULT 0");

@@ -1,6 +1,35 @@
 /* SHADOW_INTERNAL_COPY_ENGINE_V330 */
 import { isSafeHttpUrl } from '../utils.mjs';
 
+function normalizeCopySubscription(subscription={}) {
+  const min=Math.max(0,Number(
+    subscription.minMarketCapUsd ?? subscription.min_market_cap_usd ?? 0
+  )||0);
+  const rawMax=Number(
+    subscription.maxMarketCapUsd ?? subscription.max_market_cap_usd ?? 0
+  );
+  const max=Number.isFinite(rawMax)&&rawMax>0?rawMax:0;
+  const enabled=min>0||max>0;
+
+  return {
+    ...subscription,
+    minMarketCapUsd:min,
+    maxMarketCapUsd:max,
+    buyFilters:{
+      ...(subscription.buyFilters||{}),
+      marketCapUsd:{
+        enabled,
+        min,
+        max,
+        appliesTo:'buy',
+        marketCapSource:'current_at_execution',
+        unknownMarketCap:'skip'
+      }
+    }
+  };
+}
+
+
 export async function syncCopyGroup(group, wallets) {
   const endpoint = process.env.COPY_ENGINE_URL;
   if (!endpoint || !isSafeHttpUrl(endpoint)) {
@@ -17,10 +46,11 @@ export async function syncCopyGroup(group, wallets) {
 
 /* SHADOW_USER_COPY_TRADING_V230_ADAPTER */
 export async function syncCopySubscription(subscription, entityWallets, action='upsert') {
+  const normalizedSubscription=normalizeCopySubscription(subscription);
   const endpoint=process.env.COPY_ENGINE_URL;
   const internal=globalThis.__SHADOW_INTERNAL_COPY_ENGINE_SYNC;
   if((!endpoint || !isSafeHttpUrl(endpoint)) && typeof internal==='function'){
-    const data=await internal({action,subscription,entityWallets});
+    const data=await internal({action,subscription:normalizedSubscription,entityWallets});
     return {
       mode:'internal',configured:true,ok:true,
       active:data?.active===true,
@@ -40,7 +70,8 @@ export async function syncCopySubscription(subscription, entityWallets, action='
     headers,
     body:JSON.stringify({
       action,
-      subscription,
+      subscription:normalizedSubscription,
+      marketCapPolicy:normalizedSubscription.buyFilters.marketCapUsd,
       entityWallets:entityWallets.map(w=>({
         id:w.id,
         address:w.address,

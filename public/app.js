@@ -401,6 +401,12 @@ async function copyTradingModal(entityId,preloaded=null){
       <label>Max slippage (bps)
         <input name="slippageBps" type="number" min="10" max="3000" step="10" value="${esc(sub.slippageBps??500)}">
       </label>
+      <label>Min market cap ($)
+        <input name="minMarketCapUsd" type="number" min="0" max="1000000000000" step="1000" placeholder="No minimum" value="${Number(sub.minMarketCapUsd||0)>0?esc(sub.minMarketCapUsd):''}">
+      </label>
+      <label>Max market cap ($)
+        <input name="maxMarketCapUsd" type="number" min="0" max="1000000000000" step="1000" placeholder="No maximum" value="${Number(sub.maxMarketCapUsd||0)>0?esc(sub.maxMarketCapUsd):''}">
+      </label>
       <label class="si-copy-check"><span>Copy buys</span><input name="copyBuys" type="checkbox" ${sub.copyBuys===false?'':'checked'}></label>
       <label class="si-copy-check"><span>Copy sells</span><input name="copySells" type="checkbox" ${sub.copySells===false?'':'checked'}></label>
       <label>Sell amount (%)
@@ -435,10 +441,21 @@ async function copyTradingModal(entityId,preloaded=null){
       maxPositionSol:Number(fd.get('maxPositionSol')),
       maxDailySol:Number(fd.get('maxDailySol')),
       slippageBps:Number(fd.get('slippageBps')),
+      minMarketCapUsd:Number(fd.get('minMarketCapUsd')||0),
+      maxMarketCapUsd:Number(fd.get('maxMarketCapUsd')||0),
       copyBuys:form.elements.copyBuys.checked,
       copySells:form.elements.copySells.checked,
       sellPercent:Number(fd.get('sellPercent'))
     };
+
+    if(
+      body.maxMarketCapUsd>0 &&
+      body.maxMarketCapUsd<body.minMarketCapUsd
+    ){
+      toast('Max market cap must be greater than or equal to Min market cap');
+      form.elements.maxMarketCapUsd?.focus();
+      return;
+    }
 
     save.disabled=true;
     save.textContent='Connecting…';
@@ -482,6 +499,8 @@ async function copyTradingModal(entityId,preloaded=null){
           maxPositionSol:Number(form.elements.maxPositionSol.value),
           maxDailySol:Number(form.elements.maxDailySol.value),
           slippageBps:Number(form.elements.slippageBps.value),
+          minMarketCapUsd:Number(form.elements.minMarketCapUsd.value||0),
+          maxMarketCapUsd:Number(form.elements.maxMarketCapUsd.value||0),
           copyBuys:form.elements.copyBuys.checked,
           copySells:form.elements.copySells.checked,
           sellPercent:Number(form.elements.sellPercent.value)
