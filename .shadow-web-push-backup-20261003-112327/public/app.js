@@ -1,0 +1,4295 @@
+/* SHADOW_EXECUTION_WALLET_24X7_V320_APP */
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+const ago=v=>{if(!v)return'—';const m=Math.max(0,Math.floor((Date.now()-new Date(v))/60000));if(m<1)return'now';if(m<60)return`${m}m`;if(m<1440)return`${Math.floor(m/60)}h`;return`${Math.floor(m/1440)}d`};
+const money=n=>{n=Number(n||0);const a=Math.abs(n),s=n<0?'-':n>0?'+':'';if(a>=1e6)return s+'$'+(a/1e6).toFixed(2)+'M';if(a>=1e3)return s+'$'+(a/1e3).toFixed(a>=100000?0:1)+'K';return s+'$'+a.toFixed(a<10?2:0)};
+const short=a=>{a=String(a||'');return a.length>13?a.slice(0,7)+'…'+a.slice(-5):a};
+/* SHADOW_TOKEN_ADDRESS_COPY_V220_START */
+async function copyTokenAddress(value){
+  const text=String(value||'').trim();
+  if(!text)return false;
+
+  try{
+    if(navigator.clipboard?.writeText){
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  }catch{}
+
+  try{
+    const ta=document.createElement('textarea');
+    ta.value=text;
+    ta.setAttribute('readonly','');
+    ta.style.position='fixed';
+    ta.style.opacity='0';
+    ta.style.pointerEvents='none';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0,ta.value.length);
+    const ok=document.execCommand('copy');
+    ta.remove();
+    return !!ok;
+  }catch{
+    return false;
+  }
+}
+
+function tokenAddressCopyHtml(mint){
+  const address=String(mint||'').trim();
+  if(!address)return '<span>—</span>';
+
+  return `<span class="si-token-address-copy" style="display:inline-flex;align-items:center;gap:8px;max-width:100%">
+    <span style="min-width:0">${esc(short(address))}</span>
+    <button
+      type="button"
+      data-copy-token-address="${esc(address)}"
+      aria-label="Copy token address"
+      title="Copy token address"
+      style="
+        width:30px;height:30px;min-width:30px;padding:0;
+        display:inline-grid;place-items:center;
+        border:0;background:transparent;color:currentColor;
+        opacity:.72;cursor:pointer;border-radius:8px;
+        -webkit-tap-highlight-color:transparent
+      "
+    >
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="9" y="9" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/>
+        <path d="M15 9V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      </svg>
+    </button>
+  </span>`;
+}
+
+function bindTokenAddressCopy(root=document){
+  root.querySelectorAll?.('[data-copy-token-address]').forEach(button=>{
+    button.onclick=async event=>{
+      event.preventDefault();
+      event.stopPropagation();
+
+      const address=button.dataset.copyTokenAddress||'';
+      const ok=await copyTokenAddress(address);
+
+      if(ok){
+        const oldTitle=button.getAttribute('title')||'Copy token address';
+        button.setAttribute('title','Copied');
+        button.style.opacity='1';
+        toast('Token address copied');
+        setTimeout(()=>{
+          button.setAttribute('title',oldTitle);
+          button.style.opacity='.72';
+        },1200);
+      }else{
+        toast('Could not copy token address');
+      }
+    };
+  });
+}
+/* SHADOW_TOKEN_ADDRESS_COPY_V220_END */
+/* SHADOW_ENTITY_WALLET_COPY_V221_START */
+function walletAddressCopyHtml(address){
+  const value=String(address||'').trim();
+  if(!value)return '';
+
+  return `<span class="si-token-address-copy si-wallet-address-copy" style="display:inline-flex;align-items:center;gap:8px;max-width:100%">
+    <span style="min-width:0">${esc(short(value))}</span>
+    <button
+      type="button"
+      data-copy-wallet-address="${esc(value)}"
+      aria-label="Copy wallet address"
+      title="Copy wallet address"
+      style="
+        width:30px;height:30px;min-width:30px;padding:0;
+        display:inline-grid;place-items:center;
+        border:0;background:transparent;color:currentColor;
+        opacity:.72;cursor:pointer;border-radius:8px;
+        -webkit-tap-highlight-color:transparent
+      "
+    >
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="9" y="9" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/>
+        <path d="M15 9V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      </svg>
+    </button>
+  </span>`;
+}
+
+function bindWalletAddressCopy(root=document){
+  root.querySelectorAll?.('[data-copy-wallet-address]').forEach(button=>{
+    button.onclick=async event=>{
+      event.preventDefault();
+      event.stopPropagation();
+
+      const address=button.dataset.copyWalletAddress||'';
+      const ok=await copyTokenAddress(address);
+
+      if(ok){
+        const oldTitle=button.getAttribute('title')||'Copy wallet address';
+        button.setAttribute('title','Copied');
+        button.style.opacity='1';
+        toast('Wallet address copied');
+        setTimeout(()=>{
+          button.setAttribute('title',oldTitle);
+          button.style.opacity='.72';
+        },1200);
+      }else{
+        toast('Could not copy wallet address');
+      }
+    };
+  });
+}
+/* SHADOW_ENTITY_WALLET_COPY_V221_END */
+
+const state={user:null,settings:{},entities:[],tokens:[],overview:null,details:new Map(),graph:null,detailGraph:null,lastEventIds:new Set(),activeDm:null,userWallet:null,copySubscriptions:new Map(),notifications:{settings:null,items:[],unread:0,lastTopId:'',pollSeeded:false}};
+/* SHADOW_USER_COPY_TRADING_V230_CLIENT */
+let activeWalletProvider=null;
+
+function bytesToBase64(bytes){
+  let binary='';
+  const arr=bytes instanceof Uint8Array?bytes:new Uint8Array(bytes||[]);
+  for(let i=0;i<arr.length;i++)binary+=String.fromCharCode(arr[i]);
+  return btoa(binary);
+}
+
+function walletProviderCandidates(){
+  const rows=[];
+  const phantom=window.phantom?.solana;
+  if(phantom?.isPhantom)rows.push({name:'Phantom',key:'phantom',provider:phantom});
+
+  const sf=window.solflare?.solana||window.solflare;
+  if(sf && (sf.isSolflare||sf.connect))rows.push({name:'Solflare',key:'solflare',provider:sf});
+
+  if(window.solana?.connect && !rows.some(x=>x.provider===window.solana)){
+    rows.push({name:window.solana.isPhantom?'Phantom':'Solana wallet',key:window.solana.isPhantom?'phantom':'solana',provider:window.solana});
+  }
+  return rows;
+}
+
+function mobileWalletBrowseUrl(kind){
+  const target=encodeURIComponent(location.href);
+  const ref=encodeURIComponent(location.origin);
+  if(kind==='phantom')return `https://phantom.app/ul/browse/${target}?ref=${ref}`;
+  if(kind==='solflare')return `https://solflare.com/ul/v1/browse/${target}?ref=${ref}`;
+  return '';
+}
+
+function renderWalletButton(){
+  const b=$('#walletButton');
+  if(!b)return;
+  const connected=!!state.userWallet;
+  b.classList.toggle('is-connected',connected);
+  b.title=connected?`Wallet ${short(state.userWallet.address)}`:'Connect Solana wallet';
+  b.setAttribute('aria-label',b.title);
+}
+
+async function loadUserWalletState(){
+  state.userWallet=null;
+  if(!state.user){renderWalletButton();return}
+  try{
+    const data=await api('/api/user-wallets');
+    state.userWallet=Array.isArray(data.items)?data.items[0]||null:null;
+  }catch(error){
+    console.debug('User wallet state unavailable',error);
+  }
+  renderWalletButton();
+}
+
+function bindWalletButton(){
+  const b=$('#walletButton');
+  if(!b)return;
+  b.onclick=()=>walletConnectionModal();
+  renderWalletButton();
+}
+
+async function connectInjectedWallet(candidate){
+  const provider=candidate?.provider;
+  if(!provider?.connect)throw new Error('Wallet provider is unavailable');
+
+  const result=await provider.connect();
+  const publicKey=provider.publicKey||result?.publicKey;
+  const address=String(publicKey?.toString?.()||publicKey||'');
+  if(!address)throw new Error('Wallet did not return a Solana address');
+  if(!provider.signMessage)throw new Error('This wallet does not support message signing');
+
+  const challenge=await api('/api/wallet-auth/challenge',{
+    method:'POST',
+    body:JSON.stringify({address})
+  });
+
+  const messageBytes=new TextEncoder().encode(challenge.message);
+  const signed=await provider.signMessage(messageBytes,'utf8');
+  const signature=signed?.signature||signed;
+  if(!signature)throw new Error('Wallet signature was not returned');
+
+  const verified=await api('/api/wallet-auth/verify',{
+    method:'POST',
+    body:JSON.stringify({
+      challengeId:challenge.challengeId,
+      address,
+      provider:candidate.key,
+      signature:bytesToBase64(signature)
+    })
+  });
+
+  activeWalletProvider=provider;
+  state.user=verified.user||state.user;
+  state.userWallet=verified.wallet;
+  setAuth();
+  await loadNotificationState({silent:true});
+  renderWalletButton();
+  toast(`Wallet connected · ${short(address)}`);
+  walletConnectionModal();
+}
+
+function walletConnectionModal(){
+  if(state.userWallet){
+    modal(`<div class="si-wallet-modal">
+      <h2>Solana wallet</h2>
+      <p class="guest-note">Verified wallet used for your copy-trading subscriptions.</p>
+      <div class="si-wallet-summary">
+        <strong>${esc(short(state.userWallet.address))}</strong>
+        <small>${esc(state.userWallet.address)}</small>
+      </div>
+      <div class="si-copy-actions">
+        <button id="walletModalClose" type="button" class="si-button">Close</button>
+        <button id="walletDisconnect" type="button" class="si-button" style="color:#ff5c5c;border-color:rgba(255,75,75,.5)">Disconnect</button>
+      </div>
+      <p class="si-copy-note">Shadow Intelligence stores the public address and verification proof only. Seed phrases and private keys are never requested.</p>
+    </div>`);
+
+    $('#walletModalClose').onclick=closeModal;
+    $('#walletDisconnect').onclick=async()=>{
+      const button=$('#walletDisconnect');
+      button.disabled=true;
+      try{
+        await api(`/api/user-wallets/${state.userWallet.id}`,{method:'DELETE'});
+        try{await activeWalletProvider?.disconnect?.()}catch{}
+        activeWalletProvider=null;
+        state.userWallet=null;
+        state.copySubscriptions.clear();
+
+        if(String(state.user?.email||'').endsWith('@wallet.shadow.local')){
+          try{await api('/api/auth/logout',{method:'POST',body:'{}'})}catch{}
+          state.user=null;
+          setAuth();
+        }
+
+        closeModal();
+        renderWalletButton();
+        toast('Wallet disconnected');
+      }catch(error){
+        toast(error.message);
+        button.disabled=false;
+      }
+    };
+    return;
+  }
+
+  const candidates=walletProviderCandidates();
+  const injected=candidates.map((c,i)=>`
+    <button class="si-button primary" type="button" data-connect-wallet="${i}">
+      Connect ${esc(c.name)}
+    </button>`).join('');
+
+  modal(`<div class="si-wallet-modal">
+    <h2>Connect Solana wallet</h2>
+    <p class="guest-note">Connect a wallet to configure copy trading for any Entity.</p>
+    <div class="si-wallet-choice">
+      ${injected||'<div class="guest-note">No injected Solana wallet detected in this browser.</div>'}
+      <button id="openPhantomWallet" class="si-button" type="button">Open in Phantom</button>
+      <button id="openSolflareWallet" class="si-button" type="button">Open in Solflare</button>
+    </div>
+    <p class="si-copy-note">On iPhone, open this site inside Phantom or Solflare, then tap Connect. Your wallet signature signs you in automatically. We never ask for a seed phrase or private key.</p>
+  </div>`);
+
+  $$('[data-connect-wallet]').forEach(button=>{
+    button.onclick=async()=>{
+      const candidate=candidates[Number(button.dataset.connectWallet)];
+      button.disabled=true;
+      try{await connectInjectedWallet(candidate)}
+      catch(error){toast(error.message);button.disabled=false}
+    };
+  });
+  $('#openPhantomWallet').onclick=()=>{location.href=mobileWalletBrowseUrl('phantom')};
+  $('#openSolflareWallet').onclick=()=>{location.href=mobileWalletBrowseUrl('solflare')};
+}
+
+function copyControlHtml(entityId){
+  return `<div id="entityCopyControl" class="si-copy-control" data-copy-entity="${esc(entityId)}">
+    <button type="button" class="si-button si-copy-button" data-copy-open="${esc(entityId)}">Copy trade</button>
+  </div>`;
+}
+
+async function hydrateEntityCopyControl(entityId){
+  const root=$(`[data-copy-entity="${entityId}"]`);
+  if(!root)return;
+
+  if(!state.user){
+    root.innerHTML=`<button type="button" class="si-button si-copy-button" data-copy-wallet="1">Connect wallet to copy trade</button>`;
+    root.querySelector('[data-copy-wallet]').onclick=()=>walletConnectionModal();
+    return;
+  }
+
+  try{
+    const data=await api(`/api/entities/${entityId}/copy`);
+    const sub=data.subscription;
+    if(sub)state.copySubscriptions.set(entityId,sub);
+
+    const active=!!sub?.enabled;
+    const label=active?'Copy trading active':'Copy trade';
+    const stateText=sub?.engineState==='authorization_required'
+      ? 'Authorization required'
+      : sub?.engineState==='engine_required'
+        ? 'Execution engine required'
+        : active
+          ? `Active · ${Number(sub.amountSol||0).toFixed(3)} SOL/trade`
+          : state.userWallet
+            ? 'Wallet connected'
+            : 'Connect wallet first';
+
+    root.innerHTML=`
+      <button type="button" class="si-button si-copy-button ${active?'is-active':''}" data-copy-open="${esc(entityId)}">${label}</button>
+      <div class="si-copy-status"><span><i class="si-copy-dot ${active?'live':''}"></i>${esc(stateText)}</span></div>`;
+
+    root.querySelector('[data-copy-open]').onclick=()=>copyTradingModal(entityId,data);
+  }catch(error){
+    root.innerHTML=`<button type="button" class="si-button si-copy-button" data-copy-open="${esc(entityId)}">Copy trade</button>`;
+    root.querySelector('[data-copy-open]').onclick=()=>copyTradingModal(entityId);
+  }
+}
+
+async function copyTradingModal(entityId,preloaded=null){
+  if(!state.user){
+    walletConnectionModal();
+    return;
+  }
+
+  let data=preloaded;
+  if(!data){
+    try{data=await api(`/api/entities/${entityId}/copy`)}
+    catch(error){toast(error.message);return}
+  }
+
+  if(!state.userWallet){
+    walletConnectionModal();
+    return;
+  }
+
+  const entity=state.entities.find(x=>x.id===entityId)||{};
+  const sub=data.subscription||{};
+  const enabled=!!sub.enabled;
+
+  modal(`<div class="si-copy-modal" data-execution-entity="${esc(entityId)}">
+    <h2>${enabled?'Copy trading':'Copy trade'} ${esc(entity.xHandle||entity.x_handle||entity.name||'Entity')}</h2>
+    <p class="guest-note">Configure how this Entity is copied to your verified Solana wallet.</p>
+
+    <div class="si-wallet-summary">
+      <strong>Wallet ${esc(short(state.userWallet.address))}</strong>
+      <small>${esc(state.userWallet.address)}</small>
+    </div>
+
+    <form id="copyTradingForm" class="si-copy-form" novalidate>
+      <label>Trade size (SOL)
+        <input name="amountSol" type="number" min="0.001" max="100" step="0.001" value="${esc(sub.amountSol??0.05)}">
+      </label>
+      <label>Max position (SOL)
+        <input name="maxPositionSol" type="number" min="0.001" max="1000" step="0.001" value="${esc(sub.maxPositionSol??0.5)}">
+      </label>
+      <label>Daily cap (SOL)
+        <input name="maxDailySol" type="number" min="0.001" max="10000" step="0.001" value="${esc(sub.maxDailySol??1)}">
+      </label>
+      <label>Max slippage (bps)
+        <input name="slippageBps" type="number" min="10" max="3000" step="10" value="${esc(sub.slippageBps??500)}">
+      </label>
+      <label class="si-copy-check"><span>Copy buys</span><input name="copyBuys" type="checkbox" ${sub.copyBuys===false?'':'checked'}></label>
+      <label class="si-copy-check"><span>Copy sells</span><input name="copySells" type="checkbox" ${sub.copySells===false?'':'checked'}></label>
+      <label>Sell amount (%)
+        <input name="sellPercent" type="number" min="1" max="100" step="1" value="${esc(sub.sellPercent??100)}">
+      </label>
+
+      <div class="si-copy-actions">
+        <button id="copyCancel" class="si-button" type="button">Cancel</button>
+        <button id="copySave" class="si-button primary" type="button">${enabled?'Update':'Start copying'}</button>
+      </div>
+      ${enabled?'<button id="copyStop" class="si-button" type="button" style="width:100%;color:#ff5c5c;border-color:rgba(255,75,75,.5)">Stop copying</button>':''}
+    </form>
+
+    <p class="si-copy-note">Wallet connection only proves ownership. Automatic unattended execution requires the configured copy engine to have an explicit execution authorization from the user. Shadow Intelligence never stores seed phrases or private keys.</p>
+    ${!data.engineConfigured?'<p class="si-copy-note" style="color:#ff9f0a">Automatic execution engine is not configured on this deployment yet.</p>':''}
+  </div>`);
+
+  $('#copyCancel').onclick=()=>{
+    const detail=state.details.get(entityId);
+    if(detail)entityDetail(detail);
+    else closeModal();
+  };
+
+  const form=$('#copyTradingForm');
+  const save=$('#copySave');
+  save.onclick=async()=>{
+    const fd=new FormData(form);
+    const body={
+      walletId:state.userWallet.id,
+      enabled:true,
+      amountSol:Number(fd.get('amountSol')),
+      maxPositionSol:Number(fd.get('maxPositionSol')),
+      maxDailySol:Number(fd.get('maxDailySol')),
+      slippageBps:Number(fd.get('slippageBps')),
+      copyBuys:form.elements.copyBuys.checked,
+      copySells:form.elements.copySells.checked,
+      sellPercent:Number(fd.get('sellPercent'))
+    };
+
+    save.disabled=true;
+    save.textContent='Connecting…';
+    try{
+      const result=await api(`/api/entities/${entityId}/copy`,{
+        method:'PUT',
+        body:JSON.stringify(body)
+      });
+      if(result.subscription)state.copySubscriptions.set(entityId,result.subscription);
+
+      if(result.requiresAuthorization&&result.authorizationUrl){
+        toast('Execution authorization required');
+        window.open(result.authorizationUrl,'_blank','noopener,noreferrer');
+      }else if(result.subscription?.enabled){
+        toast('Copy trading active');
+      }else{
+        toast('Copy settings saved');
+      }
+
+      const detail=state.details.get(entityId);
+      if(detail)entityDetail(detail);
+      else closeModal();
+    }catch(error){
+      toast(error.message);
+      save.disabled=false;
+      save.textContent=enabled?'Update':'Start copying';
+    }
+  };
+
+  const stop=$('#copyStop');
+  if(stop)stop.onclick=async()=>{
+    stop.disabled=true;
+    stop.textContent='Stopping…';
+    try{
+      const result=await api(`/api/entities/${entityId}/copy`,{
+        method:'PUT',
+        body:JSON.stringify({
+          walletId:state.userWallet.id,
+          enabled:false,
+          amountSol:Number(form.elements.amountSol.value),
+          maxPositionSol:Number(form.elements.maxPositionSol.value),
+          maxDailySol:Number(form.elements.maxDailySol.value),
+          slippageBps:Number(form.elements.slippageBps.value),
+          copyBuys:form.elements.copyBuys.checked,
+          copySells:form.elements.copySells.checked,
+          sellPercent:Number(form.elements.sellPercent.value)
+        })
+      });
+      if(result.subscription)state.copySubscriptions.set(entityId,result.subscription);
+      toast('Copy trading stopped');
+      const detail=state.details.get(entityId);
+      if(detail)entityDetail(detail);
+      else closeModal();
+    }catch(error){
+      toast(error.message);
+      stop.disabled=false;
+      stop.textContent='Stop copying';
+    }
+  };
+}
+/* SHADOW_WALLET_AUTH_V235_CLIENT */
+/* Wallet-first login enabled for guest/mobile wallet browsers. */
+/* SHADOW_WALLET_AUTH_V235_CLIENT_END */
+/* SHADOW_USER_COPY_TRADING_V230_CLIENT_END */
+async function api(url,opt={}){const r=await fetch(url,{...opt,headers:{'content-type':'application/json',...(opt.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||`HTTP ${r.status}`);return d}
+function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove('show'),2400)}
+/* SHADOW_NOTIFICATIONS_V240_CLIENT */
+function resetNotificationState(){
+  state.notifications={settings:null,items:[],unread:0,lastTopId:'',pollSeeded:false};
+  renderNotificationBell();
+}
+
+function renderNotificationBell(){
+  const button=$('#notificationButton');
+  const badge=$('#notificationBadge');
+  if(!button||!badge)return;
+  /* SHADOW_NOTIFICATION_ZERO_HIDE_V247 */
+  const unread=Math.max(0,Number(state.user?state.notifications?.unread||0:0)||0);
+  const hasUnread=unread>0;
+  badge.hidden=!hasUnread;
+  badge.style.display=hasUnread?'grid':'none';
+  badge.textContent=hasUnread?(unread>99?'99+':String(unread)):'';
+  button.classList.toggle('has-unread',hasUnread);
+  button.title=state.user
+    ? unread>0?`${unread} unread notification${unread===1?'':'s'}`:'Notifications'
+    : 'Notifications · sign in to configure';
+  button.setAttribute('aria-label',button.title);
+}
+
+function notificationEntityLabel(row){
+  const handle=String(row?.xHandle||'').trim();
+  if(handle)return handle.startsWith('@')?handle:`@${handle}`;
+  return String(row?.entityName||'Entity').trim()||'Entity';
+}
+function notificationTokenLabel(row){
+  const raw=String(row?.symbol||row?.tokenName||short(row?.tokenMint||'Token')).trim();
+  return raw.startsWith('$')?raw:`$${raw}`;
+}
+function notificationAction(row){
+  const type=String(row?.type||'').toLowerCase();
+  return type==='sell'?'sold':type==='swap'?'swapped into':'bought';
+}
+function notificationEventHtml(row,index){
+  const entity=notificationEntityLabel(row);
+  const token=notificationTokenLabel(row);
+  const amountSol=Number(row?.solAmount||0);
+  const meta=[amountSol>0?`${amountSol.toFixed(amountSol<1?3:2)} SOL`:'',row?.eventAt?ago(row.eventAt):''].filter(Boolean).join(' · ');
+  return `<button type="button" class="si-notification-row" data-notification-row="${index}">
+    ${avatar({avatar:row?.entityAvatar,name:entity},'sm')}
+    <span class="si-notification-copy"><strong>${esc(entity)} ${esc(notificationAction(row))} ${esc(token)}</strong><small>${esc(meta||'Confirmed on-chain trade')}</small></span>
+    <span class="si-notification-chevron">›</span>
+  </button>`;
+}
+
+
+/* SHADOW_NOTIFICATION_BADGE_RACE_FIX_V2427 */
+let notificationRequestSeq=0;
+let notificationAppliedSeq=0;
+let notificationMutationEpoch=0;
+let notificationPollInFlight=null;
+let notificationReadPending=false;
+
+function invalidateNotificationRequests(){
+  notificationMutationEpoch++;
+  notificationAppliedSeq=Math.max(notificationAppliedSeq,notificationRequestSeq);
+}
+
+async function loadNotificationState({silent=false}={}){
+  if(!state.user){resetNotificationState();return;}
+
+  const requestUserId=String(state.user?.id||'');
+  const requestSeq=++notificationRequestSeq;
+  const requestEpoch=notificationMutationEpoch;
+
+  try{
+    const data=await api('/api/notifications?limit=60',{cache:'no-store'});
+
+    if(requestEpoch!==notificationMutationEpoch)return;
+    if(String(state.user?.id||'')!==requestUserId)return;
+    if(requestSeq<notificationAppliedSeq)return;
+    if(notificationReadPending)return;
+
+    notificationAppliedSeq=requestSeq;
+    state.notifications.settings=data.settings||null;
+    state.notifications.items=Array.isArray(data.items)?data.items:[];
+    state.notifications.unread=Math.max(0,Number(data.unread||0)||0);
+
+    const topId=String(state.notifications.items[0]?.id||'');
+    if(!state.notifications.pollSeeded){
+      state.notifications.lastTopId=topId;
+      state.notifications.pollSeeded=true;
+    }else if(
+      topId &&
+      state.notifications.lastTopId &&
+      topId!==state.notifications.lastTopId &&
+      state.notifications.unread>0 &&
+      !silent
+    ){
+      const first=state.notifications.items[0];
+      toast(`${notificationEntityLabel(first)} ${notificationAction(first)} ${notificationTokenLabel(first)}`);
+      state.notifications.lastTopId=topId;
+    }else if(topId){
+      state.notifications.lastTopId=topId;
+    }
+
+    renderNotificationBell();
+  }catch(error){
+    if(!silent)console.debug('Notification poll failed',error);
+  }
+}
+/* SHADOW_NOTIFICATION_BADGE_RACE_FIX_V2427_LOAD_END */
+
+async function markNotificationsRead(){
+  if(!state.user)return;
+
+  notificationReadPending=true;
+  invalidateNotificationRequests();
+
+  try{
+    await api('/api/notifications/read',{
+      method:'POST',
+      body:'{}',
+      cache:'no-store'
+    });
+
+    state.notifications.unread=0;
+    renderNotificationBell();
+  }catch(error){
+    console.debug('Could not mark notifications read',error);
+  }finally{
+    notificationReadPending=false;
+  }
+}
+
+function filterNotificationOptionRows(input,selector){
+  const q=String(input?.value||'').trim().toLowerCase();
+  document.querySelectorAll(selector).forEach(row=>{
+    row.hidden=!!q&&!String(row.dataset.search||'').toLowerCase().includes(q);
+  });
+}
+
+function notificationGuestModal(){
+  modal(`<div class="si-notification-center">
+    <div class="si-notification-head"><div><div class="si-eyebrow">ALERTS</div><h2>Notifications</h2><p>Sign in or connect a wallet to save alert preferences.</p></div></div>
+    <div class="si-notification-guest-actions">
+      <button id="notificationSignIn" class="si-button primary" type="button">Sign in</button>
+      <button id="notificationConnectWallet" class="si-button" type="button">Connect wallet</button>
+    </div>
+  </div>`);
+  $('#notificationSignIn').onclick=()=>authModal('login');
+  $('#notificationConnectWallet').onclick=()=>walletConnectionModal();
+}
+
+function notificationCenterModal(tab='notifications'){
+  if(!state.user)return notificationGuestModal();
+  const settings=state.notifications.settings||{entitiesEnabled:false,tokensEnabled:false,liveEnabled:false,entityIds:[],tokenMints:[]};
+  const selectedEntities=new Set(settings.entityIds||[]);
+  const selectedTokens=new Set(settings.tokenMints||[]);
+  const notificationsActive=tab==='notifications';
+  const body=notificationsActive
+    ? `<div class="si-notification-list">${(state.notifications.items||[]).map(notificationEventHtml).join('')||'<div class="si-notification-empty">No matching trade alerts yet.</div>'}</div>`
+    : `<form id="notificationSettingsForm" class="si-notification-settings">
+        <section class="si-notification-setting-block">
+          <label class="si-notification-master"><span><strong>Entities</strong><small>Alert only for selected people.</small></span><input id="notifyEntitiesEnabled" type="checkbox" ${settings.entitiesEnabled?'checked':''}/></label>
+          <input id="notifyEntitySearch" class="si-input" type="search" placeholder="Find an entity"/>
+          <div class="si-notification-options si-notification-entity-options">
+            ${(state.entities||[]).map(e=>{const name=e.xHandle||e.x_handle||e.name||'Entity';return `<label class="si-notification-option" data-notify-entity-row data-search="${esc([name,e.name].filter(Boolean).join(' '))}"><input type="checkbox" value="${esc(e.id)}" ${selectedEntities.has(e.id)?'checked':''}/>${avatar(e,'sm')}<span><strong>${esc(name)}</strong><small>${esc(e.name||'')}</small></span></label>`;}).join('')||'<div class="si-notification-empty">No Entities available.</div>'}
+          </div>
+        </section>
+        <section class="si-notification-setting-block">
+          <label class="si-notification-master"><span><strong>Tokens</strong><small>Alert when tracked Entities trade selected tokens.</small></span><input id="notifyTokensEnabled" type="checkbox" ${settings.tokensEnabled?'checked':''}/></label>
+          <input id="notifyTokenSearch" class="si-input" type="search" placeholder="Find a token"/>
+          <div class="si-notification-options si-notification-token-options">
+            ${(state.tokens||[]).map(t=>{const symbol=t.symbol||t.name||'Token';return `<label class="si-notification-option" data-notify-token-row data-search="${esc([symbol,t.name,t.mint].filter(Boolean).join(' '))}"><input type="checkbox" value="${esc(t.mint)}" ${selectedTokens.has(t.mint)?'checked':''}/>${avatar(t,'sm')}<span><strong>${esc(symbol.startsWith('$')?symbol:`$${symbol}`)}</strong><small>${esc(t.name||short(t.mint))}</small></span></label>`;}).join('')||'<div class="si-notification-empty">No Tokens available.</div>'}
+          </div>
+        </section>
+        <section class="si-notification-setting-block">
+          <label class="si-notification-master"><span><strong>Live</strong><small>Alert for every confirmed Buy / Sell / Swap across the tracked system.</small></span><input id="notifyLiveEnabled" type="checkbox" ${settings.liveEnabled?'checked':''}/></label>
+        </section>
+        <button class="si-button primary si-notification-save" type="submit">Save notifications</button>
+      </form>`;
+
+  modal(`<div class="si-notification-center"><div class="si-notification-head"><div><div class="si-eyebrow">ALERTS</div><h2>Notifications</h2><p>Only confirmed Buy / Sell / Swap activity can trigger an alert.</p></div></div><div class="si-notification-tabs"><button type="button" data-notify-tab="notifications" class="${notificationsActive?'active':''}">Notifications</button><button type="button" data-notify-tab="settings" class="${!notificationsActive?'active':''}">Settings</button></div>${body}</div>`);
+
+  $$('[data-notify-tab]').forEach(button=>{button.onclick=()=>notificationCenterModal(button.dataset.notifyTab);});
+  if(notificationsActive){
+    $$('[data-notification-row]').forEach(button=>{button.onclick=()=>{const row=state.notifications.items[Number(button.dataset.notificationRow)];if(!row)return;closeModal();if(row.entityId)return openObject('entity',{id:row.entityId});if(row.tokenMint)return openObject('token',{mint:row.tokenMint});};});
+    markNotificationsRead();
+    return;
+  }
+
+  const entitySearch=$('#notifyEntitySearch');
+  const tokenSearch=$('#notifyTokenSearch');
+  if(entitySearch)entitySearch.oninput=()=>filterNotificationOptionRows(entitySearch,'[data-notify-entity-row]');
+  if(tokenSearch)tokenSearch.oninput=()=>filterNotificationOptionRows(tokenSearch,'[data-notify-token-row]');
+  const form=$('#notificationSettingsForm');
+  if(form)form.onsubmit=async event=>{
+    event.preventDefault();
+    const save=form.querySelector('.si-notification-save');
+    save.disabled=true;save.textContent='Saving...';
+    const payload={
+      entitiesEnabled:!!$('#notifyEntitiesEnabled')?.checked,
+      tokensEnabled:!!$('#notifyTokensEnabled')?.checked,
+      liveEnabled:!!$('#notifyLiveEnabled')?.checked,
+      entityIds:$$('[data-notify-entity-row] input:checked').map(x=>x.value),
+      tokenMints:$$('[data-notify-token-row] input:checked').map(x=>x.value)
+    };
+    try{
+      const saved=await api('/api/notification-settings',{method:'PUT',body:JSON.stringify(payload)});
+      state.notifications.settings=saved.settings;
+      state.notifications.items=[];state.notifications.unread=0;state.notifications.lastTopId='';state.notifications.pollSeeded=false;
+      renderNotificationBell();
+      toast('Notification settings saved');
+      await loadNotificationState({silent:true});
+      notificationCenterModal('notifications');
+    }catch(error){toast(error.message);save.disabled=false;save.textContent='Save notifications';}
+  };
+}
+
+function bindNotificationButton(){
+  const button=$('#notificationButton');
+  if(!button)return;
+  button.onclick=async()=>{
+    if(!state.user)return notificationGuestModal();
+    await loadNotificationState({silent:true});
+    notificationCenterModal('notifications');
+  };
+  renderNotificationBell();
+  if(state.user)pollNotifications().catch(()=>{});
+}
+async function pollNotifications(){
+  if(!state.user||document.hidden||notificationReadPending)return;
+  if(notificationPollInFlight)return notificationPollInFlight;
+
+  notificationPollInFlight=loadNotificationState({silent:false})
+    .finally(()=>{
+      notificationPollInFlight=null;
+    });
+
+  return notificationPollInFlight;
+}
+
+function syncNotificationsOnResume(){
+  if(document.hidden||!state.user)return;
+  pollNotifications().catch(()=>{});
+}
+
+document.addEventListener('visibilitychange',()=>{
+  if(!document.hidden)syncNotificationsOnResume();
+},{passive:true});
+
+window.addEventListener('pageshow',syncNotificationsOnResume,{passive:true});
+window.addEventListener('focus',syncNotificationsOnResume,{passive:true});
+/* SHADOW_NOTIFICATION_BADGE_RACE_FIX_V2427_END */
+/* SHADOW_NOTIFICATIONS_V240_CLIENT_END */
+/* SHADOW_TOKEN_IMAGE_FIX_V211_START */
+function imageSource(item){
+  if(!item) return '';
+  const candidates=[
+    item.avatar,item.image,item.imageUrl,item.image_url,item.imageURI,item.image_uri,
+    item.icon,item.iconUrl,item.iconURL,item.icon_url,
+    item.logo,item.logoUrl,item.logoURL,item.logo_url,
+    item.logoURI,item.logo_uri,
+    item.thumbnail,item.thumb,item.picture,item.photo,
+    item.profile_image,item.profileImage,
+    item.metadata?.image,item.metadata?.image_url,item.metadata?.logoURI,
+    item.token?.image,item.token?.image_url,item.token?.logoURI
+  ];
+  for(const v of candidates){
+    const src=String(v||'').trim();
+    if(src) return src;
+  }
+  return '';
+}
+function avatar(item,size='md'){
+  const src=imageSource(item);
+  const key=item?.name||item?.displayName||item?.x_handle||item?.xHandle||item?.symbol||item?.address||item?.mint||'SI';
+  const hue=Math.abs([...String(key)].reduce((a,c)=>a+c.charCodeAt(0),0))%360;
+  const bg=src
+    ? `background-image:url(&quot;${esc(src)}&quot;)`
+    : `background:linear-gradient(135deg,hsl(${hue} 70% 52%),#111)`;
+  return `<span class="avatar avatar-${size}" style="${bg}"></span>`;
+}
+/* SHADOW_TOKEN_IMAGE_FIX_V211_END */
+function setAuth(){
+  const authed=!!state.user;
+  document.body.classList.toggle('is-auth',authed);
+  document.body.classList.toggle('is-owner',['owner','admin'].includes(state.user?.role));
+  $$('.auth-only').forEach(x=>x.style.display=authed?'':'none');
+  $$('.guest-only').forEach(x=>x.style.display=authed?'none':'');
+  $$('.owner-only').forEach(x=>x.style.display=['owner','admin'].includes(state.user?.role)?'':'none');
+  if(!authed)resetNotificationState();
+  renderNotificationBell();
+}
+function theme(){return document.documentElement.dataset.theme==='dark'?'dark':'light'}
+function toggleTheme(){const n=theme()==='dark'?'light':'dark';document.documentElement.dataset.theme=n;localStorage.setItem('si-theme',n);state.graph?.schedule();state.detailGraph?.schedule()}
+let currentPage='overview';
+
+function nav(name,{push=true,replace=false}={}){
+  const page=$(`#page-${name}`);
+  if(!page)return;
+  if(['messages'].includes(name)&&!state.user)return authModal('login');
+  /* SHADOW_ADMIN_WALLETS_V222_START */
+  if(['settings','wallets'].includes(name)&&!['owner','admin'].includes(state.user?.role)){
+    toast('Owner access required');
+    return;
+  }
+  /* SHADOW_ADMIN_WALLETS_V222_END */
+
+  if(!$('#modal')?.classList.contains('hidden'))closeModal();
+
+  const previous=currentPage;
+  currentPage=name;
+  $$('.si-page').forEach(p=>p.classList.remove('active-page'));
+  page.classList.add('active-page');
+  $$('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav===name));
+
+  if(push && name!==previous){
+    const url=new URL(location.href);
+    url.hash=name==='overview'?'':name;
+    const hist={...(history.state||{}),shadowPage:name};
+    if(replace)history.replaceState(hist,'',url);
+    else history.pushState(hist,'',url);
+  }else if(replace){
+    const url=new URL(location.href);
+    url.hash=name==='overview'?'':name;
+    history.replaceState({...(history.state||{}),shadowPage:name},'',url);
+  }
+
+  try{page.scrollTo({top:0,behavior:'instant'})}catch{page.scrollTop=0}
+
+  if(name==='overview')renderOverview().catch(e=>console.error('Map render failed',e));
+  if(name==='entities')renderEntities();
+  if(name==='tokens')renderTokens();
+  if(name==='feed')renderFeed();
+  if(name==='evidence')loadEvidence();
+  if(name==='chat')loadChat();
+  if(name==='messages')loadConversations();
+  if(name==='settings')loadSettings();
+  if(name==='search')renderSearchPageResults($('#searchPageInput')?.value||'');
+}
+
+function backPage(){
+  if(currentPage==='overview')return;
+  if(history.state?.shadowPage===currentPage && history.length>1){
+    history.back();
+    return;
+  }
+  nav('overview',{push:false,replace:true});
+}
+
+
+/* SHADOW_SECTION_COUNTS_V246 */
+const siSectionCounts={entities:null,wallets:null,tokens:null};
+let siSectionCountObserver=null;
+let siSectionCountQueued=false;
+
+function siCaptureLegacyOverviewCounts(){
+  const pattern=/^(\d+)\s+entities\s*[·•]\s*(\d+)\s+wallets\s*[·•]\s*(\d+)\s+tokens$/i;
+
+  document.querySelectorAll('div,span,p').forEach(el=>{
+    if(el.children.length)return;
+    const text=String(el.textContent||'').replace(/\s+/g,' ').trim();
+    const match=text.match(pattern);
+    if(!match)return;
+
+    siSectionCounts.entities=Number(match[1]);
+    siSectionCounts.wallets=Number(match[2]);
+    siSectionCounts.tokens=Number(match[3]);
+
+    /* SHADOW_SECTION_COUNTS_CLEANUP_V2461 */
+    let shell=el;
+    for(let i=0;i<3 && shell.parentElement;i++){
+      const parent=shell.parentElement;
+      const parentText=String(parent.textContent||'').replace(/\s+/g,' ').trim();
+      if(parentText===text && parent.children.length<=4){
+        shell=parent;
+        continue;
+      }
+      break;
+    }
+    shell.classList.add('si-legacy-overview-count-shell-hidden');
+    shell.setAttribute('aria-hidden','true');
+    el.classList.add('si-legacy-overview-count-hidden');
+    el.setAttribute('aria-hidden','true');
+  });
+}
+
+function siOverviewCount(key){
+  if(key==='entities' && Array.isArray(state?.entities))return state.entities.length;
+  if(key==='tokens' && Array.isArray(state?.tokens))return state.tokens.length;
+
+  const overview=state?.overview||{};
+  const candidates=[
+    overview?.[key],
+    overview?.counts?.[key],
+    overview?.summary?.[key],
+    overview?.stats?.[key],
+    overview?.[`${key}Count`],
+    overview?.[`${key}_count`]
+  ];
+
+  for(const value of candidates){
+    const number=Number(value);
+    if(Number.isFinite(number)&&number>=0)return number;
+  }
+
+  const cached=Number(siSectionCounts[key]);
+  return Number.isFinite(cached)&&cached>=0?cached:null;
+}
+
+/* SHADOW_SECTION_COUNTS_REMOVE_SOURCE_V2462 */
+function siRemoveLegacyCounterShell(){
+  const seeds=[
+    ...document.querySelectorAll(
+      '.si-legacy-overview-count-hidden,.si-legacy-overview-count-shell-hidden'
+    )
+  ];
+
+  for(const seed of seeds){
+    let node=seed;
+    for(let depth=0;depth<7 && node?.parentElement;depth++){
+      const parent=node.parentElement;
+      const rect=parent.getBoundingClientRect();
+      const style=getComputedStyle(parent);
+      const radius=parseFloat(style.borderTopLeftRadius)||0;
+
+      const isSmallRenderedShell=
+        rect.width>=16 &&
+        rect.width<=520 &&
+        rect.height>=12 &&
+        rect.height<=96 &&
+        radius>=8;
+
+      if(isSmallRenderedShell){
+        parent.remove();
+        break;
+      }
+      node=parent;
+    }
+  }
+
+  const viewportH=window.innerHeight||document.documentElement.clientHeight||0;
+  document.querySelectorAll('#main div,#main span,main div,main span').forEach(el=>{
+    if(el.children.length || String(el.textContent||'').trim())return;
+    const rect=el.getBoundingClientRect();
+    if(rect.width<16 || rect.width>100 || rect.height<12 || rect.height>50)return;
+    if(rect.top < viewportH*0.55)return;
+
+    const style=getComputedStyle(el);
+    const radius=parseFloat(style.borderTopLeftRadius)||0;
+    const borderWidth=parseFloat(style.borderTopWidth)||0;
+    if(radius<8 || borderWidth<=0)return;
+    if(el.closest('button,a,input,nav,.si-immersive-dock,.si-bottom-cluster'))return;
+    el.remove();
+  });
+}
+/* SHADOW_SECTION_COUNTS_REMOVE_SOURCE_V2462_END */
+
+function siSyncSectionCount(){
+  siCaptureLegacyOverviewCounts();
+  siRemoveLegacyCounterShell();
+
+  const main=document.querySelector('#main')||document.querySelector('main');
+  if(!main)return;
+
+  const titles=[...main.querySelectorAll('h1')];
+  for(const h1 of titles){
+    const title=[...h1.childNodes]
+      .filter(node=>node.nodeType===Node.TEXT_NODE)
+      .map(node=>node.textContent||'')
+      .join('')
+      .trim()
+      .toLowerCase();
+
+    const key=title==='entities'?'entities':title==='tokens'?'tokens':title==='wallets'?'wallets':'';
+    const existing=h1.querySelector(':scope > .si-section-count');
+
+    if(!key){
+      existing?.remove();
+      continue;
+    }
+
+    const count=siOverviewCount(key);
+    if(count===null)continue;
+
+    let badge=existing;
+    if(!badge){
+      badge=document.createElement('span');
+      badge.className='si-section-count';
+      badge.setAttribute('aria-hidden','true');
+      h1.appendChild(badge);
+    }
+    badge.textContent=String(count);
+    badge.title=`${count} ${key}`;
+  }
+}
+
+function siQueueSectionCountSync(){
+  if(siSectionCountQueued)return;
+  siSectionCountQueued=true;
+  requestAnimationFrame(()=>{
+    siSectionCountQueued=false;
+    siSyncSectionCount();
+  });
+}
+
+function startSectionCountSync(){
+  if(siSectionCountObserver)return;
+  siSectionCountObserver=new MutationObserver(siQueueSectionCountSync);
+  siSectionCountObserver.observe(document.body,{
+    subtree:true,
+    childList:true,
+    characterData:true
+  });
+  siQueueSectionCountSync();
+}
+/* SHADOW_SECTION_COUNTS_V246_END */
+
+
+async function boot(){
+ startSectionCountSync();
+ try{
+   const me=await api('/api/me');
+   state.user=me.user;
+   state.settings=me.settings||{};
+   document.title=state.settings.platformName||'Shadow Intelligence';
+ }catch{}
+ setAuth();
+ await loadUserWalletState();
+ bind();
+ bindWalletButton();
+ bindSearchPage();
+ bindNotificationButton();
+ nav('overview',{push:false,replace:true});
+ refresh();
+ startMapSignalPoll();
+ setInterval(()=>{
+   if(!['chat','messages','settings'].includes(currentPage))refresh();
+ },7000);
+ setInterval(()=>{
+   pollNotifications().catch(()=>{});
+ },7000);
+}
+function bind(){
+ $$('[data-nav]').forEach(b=>b.onclick=()=>{
+   const target=b.dataset.nav;
+   nav(target);
+   if(target==='overview')renderOverview().catch(e=>console.error('Map render failed',e));
+ });const themeDockButton=$('#themeToggleDock');if(themeDockButton)themeDockButton.onclick=toggleTheme;$('#adminTheme').onclick=toggleTheme;$('#modalClose').onclick=closeModal;$('#modal').onclick=e=>{if(e.target.id==='modal')closeModal()};$('#addEntityBtn').onclick=entityModal;$('#entitiesAddBtn').onclick=entityModal;$('#evidenceAddBtn').onclick=evidenceModal;$('#chatForm').onsubmit=sendChat;$('#dmForm').onsubmit=sendDm;$('#userSearch').oninput=()=>searchUsers($('#userSearch').value);$('#settingsForm').onsubmit=saveSettings;$('#fitMap').onclick=()=>state.graph?.fit();
+  $('#pageBack').onclick=backPage;
+  window.addEventListener('popstate',e=>{
+    const name=e.state?.shadowPage||'overview';
+    nav(name,{push:false});
+  });
+}
+let refreshSeq=0;
+let graphEntityKey='';
+
+/* SHADOW_GLOBAL_ENTITY_SWARM_V2426 */
+function globalEntityModel(){
+  // Every tracked Entity belongs on the global home swarm.
+  // Do not cap this list: the DOM swarm already handles dynamic rebuilds,
+  // collision resolution, persisted positions and fallback avatars.
+  return {entities:state.entities.slice(),wallets:[],tokens:[],activity:[]};
+}
+/* SHADOW_GLOBAL_ENTITY_SWARM_V2426_END */
+
+function currentMapCounts(){
+  return {
+    entities:state.entities.length,
+    wallets:state.entities.reduce((n,e)=>n+Number(e.walletCount||0),0),
+    tokens:state.tokens.length
+  };
+}
+
+function updateMapCounts(){
+  const el=$('#mapCounts');
+  if(!el)return;
+  const c=currentMapCounts();
+  el.textContent=`${c.entities} entities · ${c.wallets} wallets · ${c.tokens} tokens`;
+}
+
+/* SHADOW_LIVE_TRADE_BEACON_V291_START */
+const MAP_SIGNAL_TTL_MS=60000;
+let mapSignalPollTimer=0;
+let mapSignalPollBusy=false;
+const mapSignalRecent=new Map();
+let mapSignalGraph=null;
+let mapSignalRenderedIds=new Set();
+
+function mapSignalKind(event){
+  const type=String(event?.type||'').toLowerCase();
+  const title=String(event?.title||'').toLowerCase();
+
+  if(type==='buy'||type.includes('buy')||title.startsWith('bought ')||title.includes(' bought '))return 'buy';
+  if(type==='sell'||type.includes('sell')||title.startsWith('sold ')||title.includes(' sold '))return 'sell';
+
+  // Pump/PumpSwap token-to-token swaps are stored against the token received.
+  // Treat that acquired-token leg as a BUY beacon. If a future feed row explicitly
+  // says the token was swapped out/from, render it as SELL instead.
+  if(type==='swap'||title.startsWith('swapped ')||title.includes(' swapped ')){
+    if(title.includes('swapped out')||title.includes('swapped from'))return 'sell';
+    return 'buy';
+  }
+  return '';
+}
+
+function mapSignalEventTime(event){
+  const raw=event?.createdAt||event?.blockTime||event?.block_time||event?.created_at||'';
+  const value=Date.parse(raw);
+  return Number.isFinite(value)?value:0;
+}
+
+function mapSignalRecord(event,now=Date.now()){
+  const id=String(event?.id||'').trim();
+  const entityId=String(event?.entityId||event?.entity_id||'').trim();
+  const kind=mapSignalKind(event);
+  const startedAt=mapSignalEventTime(event);
+  if(!id||!entityId||!kind||!startedAt)return null;
+  const expiresAt=startedAt+MAP_SIGNAL_TTL_MS;
+  if(expiresAt<=now)return null;
+  return {id,entityId,kind,startedAt,expiresAt};
+}
+
+function rememberMapSignal(id){
+  if(!id)return;
+  state.lastEventIds.add(String(id));
+  while(state.lastEventIds.size>320){
+    const oldest=state.lastEventIds.values().next().value;
+    state.lastEventIds.delete(oldest);
+  }
+}
+
+function pruneMapSignals(now=Date.now()){
+  for(const [id,row] of mapSignalRecent){
+    if(Number(row?.expiresAt)<=now){
+      mapSignalRecent.delete(id);
+      mapSignalRenderedIds.delete(id);
+    }
+  }
+}
+
+function syncActiveMapSignals(now=Date.now()){
+  pruneMapSignals(now);
+  const graph=state.graph;
+  if(graph!==mapSignalGraph){
+    mapSignalGraph=graph;
+    mapSignalRenderedIds=new Set();
+  }
+  if(!graph||currentPage!=='overview'||document.body.classList.contains('si-detail-page-open'))return;
+
+  const rows=[...mapSignalRecent.values()]
+    .filter(row=>row.expiresAt>now)
+    .sort((a,b)=>a.startedAt-b.startedAt);
+
+  for(const row of rows){
+    if(mapSignalRenderedIds.has(row.id))continue;
+    const mounted=graph.mountBeacon?.(row.entityId,row.kind,row.expiresAt,false);
+    if(mounted)mapSignalRenderedIds.add(row.id);
+  }
+}
+
+function consumeMapSignals(items=[]){
+  const rows=Array.isArray(items)?items:[];
+  const now=Date.now();
+
+  for(const event of rows){
+    const id=String(event?.id||'').trim();
+    if(id)rememberMapSignal(id);
+    const record=mapSignalRecord(event,now);
+    if(record)mapSignalRecent.set(record.id,record);
+    else if(id)mapSignalRecent.delete(id);
+  }
+
+  syncActiveMapSignals(now);
+}
+
+async function pollMapSignals(){
+  if(mapSignalPollBusy||document.hidden)return;
+  mapSignalPollBusy=true;
+  try{
+    const data=await api('/api/feed?limit=100');
+    consumeMapSignals(data?.items||[]);
+  }catch(error){
+    console.debug('Map signal poll skipped:',error?.message||error);
+  }finally{
+    mapSignalPollBusy=false;
+  }
+}
+
+function startMapSignalPoll(){
+  if(mapSignalPollTimer)return;
+  pollMapSignals();
+  mapSignalPollTimer=setInterval(pollMapSignals,2000);
+}
+
+if(!window.__shadowLiveBeaconVisibilityV291){
+  window.__shadowLiveBeaconVisibilityV291=true;
+  document.addEventListener('visibilitychange',()=>{
+    if(document.hidden)return;
+    pollMapSignals();
+    syncActiveMapSignals();
+  },{passive:true});
+}
+/* SHADOW_LIVE_TRADE_BEACON_V291_END */
+
+function renderOverviewChrome(live=state.liveStatus){
+  const o=state.overview||{};
+  const selected=o.selected||state.entities[0]||null;
+  const focus=$('#focusPanel');
+  if(focus){
+    focus.innerHTML=selected
+      ? focusHtml(selected)
+      : '<div class="guest-note">Add an entity to begin mapping intelligence.</div>';
+  }
+  renderLive(o.feed||[]);
+  renderEntitiesStrip();
+  renderConnections({tokens:state.tokens.slice(0,42)});
+  const status=$('#railStatus');
+  if(status)status.textContent=live?.solana?.status==='online'?'online':'check';
+  updateMapCounts();
+}
+
+/* SHADOW_DOM_SWARM_V207_START */
+class ShadowDomSwarm{
+  constructor(root,model={},opts={}){
+    this.root=root;
+    this.model=model||{};
+    this.entities=Array.isArray(this.model.entities)?this.model.entities:[];
+    this.onSelect=opts.onSelect||(()=>{});
+    this.nodes=[];
+    this.dead=false;
+    this.raf=0;
+    this.last=performance.now();
+    this.lastPaint=0;
+    /* SHADOW_SWARM_CONTINUITY_V238 */
+    this.lastPersist=0;
+    this.persistEveryMs=1000;
+    this.persistKey='si-global-swarm-v238';
+    this.persisted=this.loadPersistedState();
+    this.didInitialRestore=false;
+    this.activeBeacons=new Map();
+    /* SHADOW_SWARM_CONTINUITY_V238_END */
+    this.drag=null;
+    this.w=1;
+    this.h=1;
+    this.centerX=0;
+    this.centerY=0;
+    this.safe={left:0,right:0,top:0,bottom:0};
+    this.camera={zoom:1,panX:0,panY:0,minZoom:.55,maxZoom:8};
+    this.cameraPointers=new Map();
+    this.cameraPan=null;
+    this.cameraPinch=null;
+    this.cameraLastTap={time:0,x:0,y:0};
+    this.cameraLastTouchDouble=0;
+
+    root.dataset.renderer='dom-v207';
+    root.dataset.rendererState='booting';
+    root.innerHTML=
+      '<div class="si-dom-swarm" aria-label="Entity intelligence map"></div>'+
+      '<div class="si-graph-empty">No network data yet.</div>';
+
+    this.layer=root.querySelector('.si-dom-swarm');
+    this.empty=root.querySelector('.si-graph-empty');
+
+    if(!this.layer||!this.empty){
+      throw new Error('Global map DOM scaffold could not be created');
+    }
+
+    this.bindCamera();
+
+    this.ro=typeof ResizeObserver==='function'
+      ? new ResizeObserver(()=>this.resize())
+      : null;
+    this.ro?.observe(root);
+
+    window.addEventListener('resize',this._onWindowResize=()=>this.resize(),{passive:true});
+    window.visualViewport?.addEventListener('resize',this._onViewportResize=()=>this.resize(),{passive:true});
+
+    this._onPageHide=()=>this.persistState(true);
+    this._onVisibilityChange=()=>{
+      if(document.hidden){
+        this.persistState(true);
+      }else{
+        this.last=performance.now();
+        this.schedule();
+      }
+    };
+    window.addEventListener('pagehide',this._onPageHide,{passive:true});
+    document.addEventListener('visibilitychange',this._onVisibilityChange,{passive:true});
+
+    this.build();
+    this.resize(true);
+    root.dataset.rendererState='ready';
+    root.dataset.nodeCount=String(this.nodes.length);
+    this.schedule();
+  }
+
+  hash(value){
+    let h=2166136261>>>0;
+    for(const ch of String(value||'entity')){
+      h^=ch.charCodeAt(0);
+      h=Math.imul(h,16777619)>>>0;
+    }
+    return h>>>0;
+  }
+
+  key(e){
+    return String(e?.id||e?.name||e?.x_handle||e?.xHandle||'entity');
+  }
+
+  loadPersistedState(){
+    try{
+      const raw=sessionStorage.getItem(this.persistKey);
+      if(!raw)return null;
+      const data=JSON.parse(raw);
+      if(!data||data.version!==1)return null;
+      if(Date.now()-Number(data.savedAt||0)>30*60*1000)return null;
+      return data;
+    }catch{
+      return null;
+    }
+  }
+
+  persistState(force=false){
+    if(this.dead&&!force)return;
+    if(!this.nodes?.length||this.w<=1||this.h<=1)return;
+    try{
+      const nodes={};
+      for(const n of this.nodes){
+        nodes[this.key(n.raw)]={nx:n.x/this.w,ny:n.y/this.h,vx:Number(n.vx||0),vy:Number(n.vy||0)};
+      }
+      const beacons=[];
+      const now=Date.now();
+      for(const [entityId,items] of this.activeBeacons){
+        for(const item of items||[]){
+          if(Number(item.expiresAt)>now){
+            beacons.push({entityId:String(entityId),kind:item.kind==='sell'?'sell':'buy',expiresAt:Number(item.expiresAt)});
+          }
+        }
+      }
+      sessionStorage.setItem(this.persistKey,JSON.stringify({version:1,savedAt:now,nodes,beacons}));
+    }catch{}
+  }
+
+  restorePersistedLayout(){
+    if(this.didInitialRestore)return false;
+    this.didInitialRestore=true;
+    const saved=this.persisted?.nodes;
+    if(!saved||typeof saved!=='object')return false;
+
+    let restored=0;
+    const missing=[];
+    for(const n of this.nodes){
+      const item=saved[this.key(n.raw)];
+      if(item&&Number.isFinite(Number(item.nx))&&Number.isFinite(Number(item.ny))){
+        n.x=Number(item.nx)*this.w;
+        n.y=Number(item.ny)*this.h;
+        n.vx=Number.isFinite(Number(item.vx))?Number(item.vx):0;
+        n.vy=Number.isFinite(Number(item.vy))?Number(item.vy):0;
+        this.keepNodeInside(n);
+        restored++;
+      }else missing.push(n);
+    }
+    if(!restored)return false;
+
+    const usableH=Math.max(180,this.h-this.safe.top-this.safe.bottom);
+    const spread=Math.max(82,Math.min(this.w*.31,usableH*.29,142));
+    const golden=2.399963229728653;
+    missing.forEach((n,i)=>{
+      const jitter=((n.seed&1023)/1023)-.5;
+      const angle=(restored+i)*golden+jitter*.64;
+      const dist=Math.max(54,spread*.82);
+      n.x=this.centerX+Math.cos(angle)*dist;
+      n.y=this.centerY+Math.sin(angle)*dist*.84;
+      n.vx=0;n.vy=0;
+      this.keepNodeInside(n);
+    });
+
+    for(let i=0;i<8;i++)this.resolveCollisions(null);
+    this.renderNodes();
+    this.restorePersistedBeacons();
+    this.schedule();
+    return true;
+  }
+
+  restorePersistedBeacons(){
+    // v2.9.1: live beacons are restored from /api/feed using the original event timestamp.
+  }
+
+  syncNodeVisual(node,raw,index){
+    node.raw=raw;
+    node.index=index;
+    const el=node.el;
+    if(!el)return;
+    el.setAttribute('aria-label',raw?.name||raw?.x_handle||'Entity');
+    const avatarUrl=String(raw?.avatar||'').trim();
+    let img=el.querySelector('img');
+    if(avatarUrl){
+      if(!img){
+        el.querySelector('.si-dom-node-fallback')?.remove();
+        img=document.createElement('img');
+        img.alt='';img.draggable=false;img.decoding='async';img.loading='eager';
+        img.addEventListener('error',()=>{img.remove();this.ensureFallback(el,node.raw);});
+        el.prepend(img);
+      }
+      if(img.getAttribute('src')!==avatarUrl)img.src=avatarUrl;
+    }else{
+      img?.remove();
+      this.ensureFallback(el,raw);
+    }
+  }
+
+  updateEntities(next=[]){
+    const incoming=Array.isArray(next)?next:[];
+    if(incoming.length!==this.nodes.length)return false;
+    const byKey=new Map(this.nodes.map(n=>[this.key(n.raw),n]));
+    const nextNodes=[];
+    for(let i=0;i<incoming.length;i++){
+      const raw=incoming[i];
+      const node=byKey.get(this.key(raw));
+      if(!node)return false;
+      this.syncNodeVisual(node,raw,i);
+      nextNodes.push(node);
+    }
+    this.entities=incoming;
+    this.model={...(this.model||{}),entities:incoming};
+    this.nodes=nextNodes;
+    this.applyAdaptiveSizes();
+    this.root.dataset.nodeCount=String(this.nodes.length);
+    this.schedule();
+    return true;
+  }
+
+  mountBeacon(entityId,kind='buy',expiresAt=Date.now()+60000,track=true){
+    if(this.dead||!entityId)return false;
+    const node=this.nodes.find(n=>String(n.raw?.id||'')===String(entityId));
+    if(!node?.el)return false;
+    const now=Date.now();
+    if(expiresAt<=now)return false;
+
+    const existing=[...node.el.querySelectorAll('.si-entity-beacon')];
+    while(existing.length>=2)existing.shift()?.remove();
+
+    const beacon=document.createElement('span');
+    beacon.className=`si-entity-beacon ${kind==='sell'?'sell':'buy'}`;
+    beacon.setAttribute('aria-hidden','true');
+    node.el.appendChild(beacon);
+
+    const remove=()=>{
+      beacon.remove();
+      const list=(this.activeBeacons.get(String(entityId))||[]).filter(x=>x.expiresAt!==expiresAt);
+      if(list.length)this.activeBeacons.set(String(entityId),list);
+      else this.activeBeacons.delete(String(entityId));
+      this.persistState();
+    };
+    setTimeout(remove,Math.max(1,expiresAt-now));
+
+    const key=String(entityId);
+    const list=(this.activeBeacons.get(key)||[]).filter(x=>x.expiresAt>Date.now());
+    if(track||!list.some(x=>x.expiresAt===expiresAt))list.push({kind:kind==='sell'?'sell':'buy',expiresAt});
+    while(list.length>2)list.shift();
+    this.activeBeacons.set(key,list);
+    if(track)this.persistState();
+    return true;
+  }
+
+  build(){
+    this.nodes=[];
+    this.layer.replaceChildren();
+
+    for(let i=0;i<this.entities.length;i++){
+      const raw=this.entities[i];
+      const seed=this.hash(this.key(raw));
+      const el=document.createElement('button');
+
+      el.type='button';
+      el.className='si-dom-node';
+      el.setAttribute('aria-label',raw?.name||raw?.x_handle||'Entity');
+      el.style.position='absolute';
+      el.style.display='block';
+      el.style.opacity='1';
+      el.style.visibility='visible';
+      el.style.transform='none';
+      el.style.webkitTransform='none';
+
+      const avatarUrl=String(raw?.avatar||'').trim();
+      if(avatarUrl){
+        const img=document.createElement('img');
+        img.alt='';
+        img.draggable=false;
+        img.decoding='async';
+        img.loading='eager';
+        img.src=avatarUrl;
+        img.addEventListener('error',()=>{
+          img.remove();
+          this.ensureFallback(el,raw);
+        },{once:true});
+        el.appendChild(img);
+      }else{
+        this.ensureFallback(el,raw);
+      }
+
+      const node={
+        raw,el,seed,index:i,
+        x:0,y:0,vx:0,vy:0,
+        radius:23,visualSize:46,overallScore:50,percentile:50,
+        phase:(seed%6283)/1000,
+        phase2:((seed>>>8)%6283)/1000
+      };
+
+      el.addEventListener('pointerdown',e=>this.pointerDown(e,node),{passive:false});
+      el.addEventListener('pointermove',e=>this.pointerMove(e,node),{passive:false});
+      el.addEventListener('pointerup',e=>this.pointerUp(e,node),{passive:false});
+      el.addEventListener('pointercancel',e=>this.pointerUp(e,node),{passive:false});
+
+      this.layer.appendChild(el);
+      this.nodes.push(node);
+    }
+
+    this.applyAdaptiveSizes();
+    this.empty.style.display=this.nodes.length?'none':'grid';
+    this.root.dataset.nodeCount=String(this.nodes.length);
+  }
+
+
+  /* SHADOW_MAP_ADAPTIVE_CAMERA_V290_JS_START */
+  adaptiveSizeRange(count){
+    if(count<=20)return [30,64];
+    if(count<=50)return [20,58];
+    if(count<=100)return [14,52];
+    return [10,46];
+  }
+
+  ensureNodeInfo(n){
+    if(!n?.el)return null;
+    let info=n.el.querySelector('.si-dom-node-info');
+    if(!info){
+      info=document.createElement('span');
+      info.className='si-dom-node-info';
+      const title=document.createElement('strong');
+      const meta=document.createElement('small');
+      info.append(title,meta);
+      n.el.appendChild(info);
+    }
+    const title=info.querySelector('strong');
+    const meta=info.querySelector('small');
+    const label=n.raw?.x_handle||n.raw?.xHandle||n.raw?.name||'Entity';
+    if(title)title.textContent=label;
+    const profit=Number(n.raw?.profitUsd);
+    const profitText=n.raw?.profitKnown&&Number.isFinite(profit)?` · ${money(profit)}`:'';
+    if(meta)meta.textContent=`Score ${Math.round(Number(n.overallScore||0))}${profitText}`;
+    return info;
+  }
+
+  applyAdaptiveSizes(){
+    const count=this.nodes.length;
+    if(!count)return;
+    const [minSize,maxSize]=this.adaptiveSizeRange(count);
+    const ranked=this.nodes.map((n,index)=>{
+      let score=50;
+      try{
+        const value=Number(entityOverallScore(n.raw));
+        if(Number.isFinite(value))score=value;
+      }catch{}
+      return {n,index,score};
+    }).sort((a,b)=>a.score-b.score||a.index-b.index);
+
+    let cursor=0;
+    while(cursor<ranked.length){
+      let end=cursor+1;
+      while(end<ranked.length&&ranked[end].score===ranked[cursor].score)end++;
+      const mid=(cursor+end-1)/2;
+      const percentile=ranked.length===1?1:mid/(ranked.length-1);
+      const curved=Math.pow(percentile,.9);
+      for(let i=cursor;i<end;i++){
+        const {n,score}=ranked[i];
+        const size=minSize+(maxSize-minSize)*curved;
+        n.overallScore=score;
+        n.percentile=percentile;
+        n.visualSize=size;
+        n.radius=size/2;
+        n.el.style.setProperty('width',`${size.toFixed(2)}px`,'important');
+        n.el.style.setProperty('height',`${size.toFixed(2)}px`,'important');
+        n.el.style.setProperty('min-width',`${size.toFixed(2)}px`,'important');
+        n.el.style.setProperty('min-height',`${size.toFixed(2)}px`,'important');
+        n.el.style.setProperty('--si-node-visual-size',`${size.toFixed(2)}px`);
+        n.el.dataset.overallScore=score.toFixed(2);
+        n.el.dataset.percentile=percentile.toFixed(4);
+        this.ensureNodeInfo(n);
+        this.keepNodeInside(n);
+      }
+      cursor=end;
+    }
+  }
+
+  bindCamera(){
+    this.root.style.touchAction='none';
+    this.layer.style.transformOrigin='0 0';
+    this.layer.style.webkitTransformOrigin='0 0';
+    this._cameraDown=e=>this.cameraPointerDown(e);
+    this._cameraMove=e=>this.cameraPointerMove(e);
+    this._cameraUp=e=>this.cameraPointerUp(e);
+    this._cameraWheel=e=>{
+      if(this.dead)return;
+      e.preventDefault();
+      const local=this.cameraLocalPoint(e);
+      const factor=Math.exp(-Number(e.deltaY||0)*.0015);
+      this.zoomAt(local.x,local.y,this.camera.zoom*factor);
+    };
+    this._cameraDouble=e=>{
+      if(this.dead||performance.now()-this.cameraLastTouchDouble<450||e.target?.closest?.('.si-dom-node'))return;
+      e.preventDefault();
+      const local=this.cameraLocalPoint(e);
+      if(this.camera.zoom>1.05)this.resetCamera();
+      else this.zoomAt(local.x,local.y,Math.min(2.2,this.camera.maxZoom));
+    };
+    this.root.addEventListener('pointerdown',this._cameraDown,{capture:true,passive:false});
+    this.root.addEventListener('pointermove',this._cameraMove,{capture:true,passive:false});
+    this.root.addEventListener('pointerup',this._cameraUp,{capture:true,passive:false});
+    this.root.addEventListener('pointercancel',this._cameraUp,{capture:true,passive:false});
+    this.root.addEventListener('wheel',this._cameraWheel,{passive:false});
+    this.root.addEventListener('dblclick',this._cameraDouble,{passive:false});
+  }
+
+  cameraLocalPoint(e){
+    const r=this.root.getBoundingClientRect();
+    return {x:e.clientX-r.left,y:e.clientY-r.top};
+  }
+
+  clampCamera(){
+    const z=this.camera.zoom;
+    const scaledW=this.w*z;
+    const scaledH=this.h*z;
+    if(scaledW<=this.w)this.camera.panX=(this.w-scaledW)/2;
+    else this.camera.panX=Math.min(0,Math.max(this.w-scaledW,this.camera.panX));
+    if(scaledH<=this.h)this.camera.panY=(this.h-scaledH)/2;
+    else this.camera.panY=Math.min(0,Math.max(this.h-scaledH,this.camera.panY));
+  }
+
+  applyCamera(){
+    if(!this.layer||!this.camera)return;
+    this.clampCamera();
+    const z=this.camera.zoom;
+    const transform=`translate3d(${this.camera.panX.toFixed(3)}px,${this.camera.panY.toFixed(3)}px,0) scale(${z.toFixed(5)})`;
+    this.layer.style.setProperty('transform',transform,'important');
+    this.layer.style.setProperty('-webkit-transform',transform,'important');
+    this.layer.style.setProperty('--si-camera-inverse',String(1/Math.max(.001,z)));
+    this.root.classList.toggle('si-map-zoom-labels',z>=2);
+    this.root.classList.toggle('si-map-zoom-metrics',z>=4);
+    this.root.dataset.cameraZoom=z.toFixed(2);
+  }
+
+  resetCamera(){
+    this.camera.zoom=1;
+    this.camera.panX=0;
+    this.camera.panY=0;
+    this.applyCamera();
+  }
+
+  zoomAt(x,y,nextZoom){
+    const oldZoom=this.camera.zoom;
+    const zoom=Math.max(this.camera.minZoom,Math.min(this.camera.maxZoom,Number(nextZoom)||oldZoom));
+    const worldX=(x-this.camera.panX)/oldZoom;
+    const worldY=(y-this.camera.panY)/oldZoom;
+    this.camera.zoom=zoom;
+    this.camera.panX=x-worldX*zoom;
+    this.camera.panY=y-worldY*zoom;
+    this.applyCamera();
+  }
+
+  cancelNodeDrag(){
+    const d=this.drag;
+    if(!d)return;
+    if(d.holdTimer)clearTimeout(d.holdTimer);
+    d.node?.el?.classList.remove('dragging');
+    try{d.node?.el?.releasePointerCapture?.(d.id)}catch{}
+    this.drag=null;
+  }
+
+  beginPinch(){
+    if(this.cameraPointers.size<2)return;
+    this.cancelNodeDrag();
+    this.cameraPan=null;
+    const pts=[...this.cameraPointers.values()].slice(0,2);
+    const mid={x:(pts[0].x+pts[1].x)/2,y:(pts[0].y+pts[1].y)/2};
+    const distance=Math.max(1,Math.hypot(pts[1].x-pts[0].x,pts[1].y-pts[0].y));
+    this.cameraPinch={
+      distance,
+      zoom:this.camera.zoom,
+      worldX:(mid.x-this.camera.panX)/this.camera.zoom,
+      worldY:(mid.y-this.camera.panY)/this.camera.zoom
+    };
+  }
+
+  cameraPointerDown(e){
+    if(this.dead)return;
+    const local=this.cameraLocalPoint(e);
+    this.cameraPointers.set(e.pointerId,{x:local.x,y:local.y});
+    if(this.cameraPointers.size>=2){
+      e.preventDefault();
+      this.beginPinch();
+      return;
+    }
+    if(e.target?.closest?.('.si-dom-node'))return;
+    this.cameraPan={
+      id:e.pointerId,
+      startX:local.x,startY:local.y,
+      panX:this.camera.panX,panY:this.camera.panY,
+      moved:false,
+      pointerType:e.pointerType||''
+    };
+  }
+
+  cameraPointerMove(e){
+    if(this.dead||!this.cameraPointers.has(e.pointerId))return;
+    const local=this.cameraLocalPoint(e);
+    this.cameraPointers.set(e.pointerId,{x:local.x,y:local.y});
+    if(this.cameraPinch&&this.cameraPointers.size>=2){
+      e.preventDefault();
+      const pts=[...this.cameraPointers.values()].slice(0,2);
+      const mid={x:(pts[0].x+pts[1].x)/2,y:(pts[0].y+pts[1].y)/2};
+      const distance=Math.max(1,Math.hypot(pts[1].x-pts[0].x,pts[1].y-pts[0].y));
+      const zoom=Math.max(this.camera.minZoom,Math.min(this.camera.maxZoom,this.cameraPinch.zoom*(distance/this.cameraPinch.distance)));
+      this.camera.zoom=zoom;
+      this.camera.panX=mid.x-this.cameraPinch.worldX*zoom;
+      this.camera.panY=mid.y-this.cameraPinch.worldY*zoom;
+      this.applyCamera();
+      return;
+    }
+    const pan=this.cameraPan;
+    if(!pan||pan.id!==e.pointerId)return;
+    const dx=local.x-pan.startX,dy=local.y-pan.startY;
+    if(Math.hypot(dx,dy)>4)pan.moved=true;
+    this.camera.panX=pan.panX+dx;
+    this.camera.panY=pan.panY+dy;
+    this.applyCamera();
+    if(pan.moved)e.preventDefault();
+  }
+
+  cameraPointerUp(e){
+    if(this.dead)return;
+    const local=this.cameraLocalPoint(e);
+    const pan=this.cameraPan&&this.cameraPan.id===e.pointerId?this.cameraPan:null;
+    this.cameraPointers.delete(e.pointerId);
+    if(this.cameraPinch){
+      if(this.cameraPointers.size<2)this.cameraPinch=null;
+      this.cameraPan=null;
+      return;
+    }
+    if(pan){
+      this.cameraPan=null;
+      if(!pan.moved&&String(e.pointerType||'')==='touch'&&!e.target?.closest?.('.si-dom-node')){
+        const now=performance.now();
+        const last=this.cameraLastTap;
+        if(last&&now-last.time<320&&Math.hypot(local.x-last.x,local.y-last.y)<34){
+          this.cameraLastTap={time:0,x:0,y:0};
+          this.cameraLastTouchDouble=now;
+          if(this.camera.zoom>1.05)this.resetCamera();
+          else this.zoomAt(local.x,local.y,Math.min(2.2,this.camera.maxZoom));
+        }else{
+          this.cameraLastTap={time:now,x:local.x,y:local.y};
+        }
+      }
+    }
+  }
+  /* SHADOW_MAP_ADAPTIVE_CAMERA_V290_JS_END */
+
+  ensureFallback(el,raw){
+    if(el.querySelector('.si-dom-node-fallback'))return;
+    const f=document.createElement('span');
+    f.className='si-dom-node-fallback';
+    const text=String(raw?.name||raw?.x_handle||'?').trim();
+    f.textContent=(text[0]||'?').toUpperCase();
+    el.appendChild(f);
+  }
+
+  resize(forceFit=false){
+    if(this.dead)return;
+
+    const r=this.root.getBoundingClientRect();
+    const viewportW=window.visualViewport?.width||window.innerWidth||r.width;
+    const viewportH=window.visualViewport?.height||window.innerHeight||r.height;
+
+    const nw=Math.max(1,r.width||viewportW);
+    const nh=Math.max(1,r.height||viewportH);
+    const oldW=this.w,oldH=this.h;
+    const first=oldW<=1||oldH<=1;
+
+    this.w=nw;
+    this.h=nh;
+
+    this.safe.top=0;
+    this.safe.bottom=0;
+    this.centerX=this.w*.5;
+
+    const usable=Math.max(180,this.h-this.safe.top-this.safe.bottom);
+    this.centerY=this.h*.5;
+
+    this.root.dataset.mapSize=`${Math.round(this.w)}x${Math.round(this.h)}`;
+
+    if(forceFit||first){
+      if(this.restorePersistedLayout())return;
+      this.fit();
+      return;
+    }
+
+    const sx=this.w/Math.max(1,oldW);
+    const sy=this.h/Math.max(1,oldH);
+
+    for(const n of this.nodes){
+      n.x*=sx;
+      n.y*=sy;
+      this.keepNodeInside(n);
+    }
+
+    for(let i=0;i<4;i++)this.resolveCollisions(null);
+    this.renderNodes();
+    this.applyCamera();
+    this.schedule();
+  }
+
+  fit(){
+    if(!this.nodes.length)return;
+    this.applyAdaptiveSizes();
+    const usableH=Math.max(180,this.h-this.safe.top-this.safe.bottom);
+    const spreadX=Math.max(90,this.w*.46);
+    const spreadY=Math.max(120,usableH*.44);
+    const golden=2.399963229728653;
+    const total=this.nodes.length;
+
+    this.nodes.forEach((n,i)=>{
+      const f=Math.sqrt((i+.72)/Math.max(1,total));
+      const jitter=((n.seed&1023)/1023)-.5;
+      const angle=i*golden+jitter*.64;
+      n.x=this.centerX+Math.cos(angle)*spreadX*f;
+      n.y=this.centerY+Math.sin(angle)*spreadY*f;
+      n.vx=0;
+      n.vy=0;
+      this.keepNodeInside(n);
+    });
+
+    for(let i=0;i<5;i++)this.resolveCollisions(null);
+    this.renderNodes();
+    this.resetCamera();
+    this.schedule();
+  }
+
+  keepNodeInside(n){
+    const r=n.radius;
+    const minX=this.safe.left+r;
+    const maxX=Math.max(minX,this.w-this.safe.right-r);
+    const minY=this.safe.top+r;
+    const maxY=Math.max(minY,this.h-this.safe.bottom-r);
+
+    n.x=Math.max(minX,Math.min(maxX,n.x));
+    n.y=Math.max(minY,Math.min(maxY,n.y));
+  }
+
+  resolveCollisions(dragged=null){
+    if(this.nodes.length<2)return;
+    const maxRadius=Math.max(...this.nodes.map(n=>Number(n.radius||0)),1);
+    const cellSize=Math.max(28,(maxRadius+8)*2);
+
+    for(let pass=0;pass<3;pass++){
+      const buckets=new Map();
+      for(let i=0;i<this.nodes.length;i++){
+        const n=this.nodes[i];
+        const cx=Math.floor(n.x/cellSize),cy=Math.floor(n.y/cellSize);
+        const key=`${cx}:${cy}`;
+        if(!buckets.has(key))buckets.set(key,[]);
+        buckets.get(key).push({n,i,cx,cy});
+      }
+
+      let changed=false;
+      for(let i=0;i<this.nodes.length;i++){
+        const a=this.nodes[i];
+        const acx=Math.floor(a.x/cellSize),acy=Math.floor(a.y/cellSize);
+        for(let ox=-1;ox<=1;ox++)for(let oy=-1;oy<=1;oy++){
+          const rows=buckets.get(`${acx+ox}:${acy+oy}`)||[];
+          for(const row of rows){
+            if(row.i<=i)continue;
+            const b=row.n;
+            let dx=b.x-a.x;
+            let dy=b.y-a.y;
+            let d=Math.hypot(dx,dy);
+            if(d<.01){
+              const angle=((a.seed^b.seed)%6283)/1000;
+              dx=Math.cos(angle);dy=Math.sin(angle);d=1;
+            }
+            const min=a.radius+b.radius+8;
+            if(d>=min)continue;
+            const nx=dx/d,ny=dy/d,overlap=min-d;
+            if(a===dragged&&b!==dragged){
+              b.x+=nx*overlap;b.y+=ny*overlap;b.vx=b.vy=0;this.keepNodeInside(b);
+            }else if(b===dragged&&a!==dragged){
+              a.x-=nx*overlap;a.y-=ny*overlap;a.vx=a.vy=0;this.keepNodeInside(a);
+            }else{
+              a.x-=nx*overlap*.5;a.y-=ny*overlap*.5;
+              b.x+=nx*overlap*.5;b.y+=ny*overlap*.5;
+              a.vx*=.32;a.vy*=.32;b.vx*=.32;b.vy*=.32;
+              this.keepNodeInside(a);this.keepNodeInside(b);
+            }
+            changed=true;
+          }
+        }
+      }
+      if(!changed)break;
+    }
+  }
+
+  physics(now){
+    const dt=Math.max(.45,Math.min(2.2,(now-this.last)/16.667));
+    this.last=now;
+    const motionNow=Date.now();
+    const damping=Math.pow(.972,dt);
+    const centerGravity=this.nodes.length>80?.000032:this.nodes.length>40?.000038:.000045;
+
+    for(const n of this.nodes){
+      if(this.drag?.node===n)continue;
+
+      const wanderX=
+        Math.sin(motionNow*.00021+n.phase)*.007+
+        Math.cos(motionNow*.00013+n.phase2)*.004;
+      const wanderY=
+        Math.cos(motionNow*.00019+n.phase2)*.007+
+        Math.sin(motionNow*.00011+n.phase)*.004;
+
+      n.vx+=((this.centerX-n.x)*centerGravity+wanderX)*dt;
+      n.vy+=((this.centerY-n.y)*centerGravity+wanderY)*dt;
+      n.vx*=damping;
+      n.vy*=damping;
+
+      const speed=Math.hypot(n.vx,n.vy);
+      if(speed>.72){
+        n.vx=n.vx/speed*.72;
+        n.vy=n.vy/speed*.72;
+      }
+
+      n.x+=n.vx*dt;
+      n.y+=n.vy*dt;
+      this.keepNodeInside(n);
+    }
+
+    this.resolveCollisions(null);
+  }
+
+  /* SHADOW_MAP_SMOOTH_MOTION_V280_JS_START */
+  renderNodes(){
+    for(const n of this.nodes){
+      // Keep full sub-pixel coordinates. left/top are pinned once and motion is
+      // compositor-driven so Safari does not quantize every frame to integers.
+      const left=n.x-n.radius;
+      const top=n.y-n.radius;
+      const transform=`translate3d(${left.toFixed(3)}px,${top.toFixed(3)}px,0)`;
+
+      if(n.el.style.left!=='0px')n.el.style.left='0px';
+      if(n.el.style.top!=='0px')n.el.style.top='0px';
+      n.el.style.setProperty('transform',transform,'important');
+      n.el.style.setProperty('-webkit-transform',transform,'important');
+      n.el.style.zIndex=String(12+n.index);
+    }
+  }
+  /* SHADOW_MAP_SMOOTH_MOTION_V280_JS_END */
+
+  render(){
+    if(this.dead)return;
+    this.raf=0;
+
+    if(currentPage!=='overview'||document.body.classList.contains('si-detail-page-open')){
+      return;
+    }
+
+    const now=performance.now();
+    this.lastPaint=now;
+    this.physics(now);
+    this.renderNodes();
+    if(now-this.lastPersist>=this.persistEveryMs){
+      this.lastPersist=now;
+      this.persistState();
+    }
+    this.schedule();
+  }
+
+  schedule(){
+    if(!this.dead&&!this.raf){
+      this.raf=requestAnimationFrame(()=>this.render());
+    }
+  }
+
+  pointerDown(e,node){
+    if(this.dead||this.cameraPointers.size>1||this.cameraPinch)return;
+    e.preventDefault();
+    e.stopPropagation();
+    try{node.el.setPointerCapture(e.pointerId)}catch{}
+
+    const d={
+      node,id:e.pointerId,
+      startX:e.clientX,startY:e.clientY,
+      originX:node.x,originY:node.y,
+      moved:false,cancelled:false,active:false,holdTimer:0
+    };
+    d.holdTimer=setTimeout(()=>{
+      if(this.drag!==d||this.cameraPointers.size>1||this.cameraPinch)return;
+      d.active=true;
+      node.el.classList.add('dragging');
+    },220);
+    this.drag=d;
+    node.vx=node.vy=0;
+  }
+
+  pointerMove(e,node){
+    const d=this.drag;
+    if(!d||d.id!==e.pointerId||d.node!==node)return;
+    e.preventDefault();
+    e.stopPropagation();
+    const dx=e.clientX-d.startX,dy=e.clientY-d.startY;
+    const distance=Math.hypot(dx,dy);
+    if(!d.active){
+      if(distance>8){
+        d.moved=true;d.cancelled=true;
+        if(d.holdTimer){clearTimeout(d.holdTimer);d.holdTimer=0;}
+      }
+      return;
+    }
+    if(distance>4)d.moved=true;
+    const zoom=Math.max(.001,this.camera.zoom||1);
+    node.x=d.originX+dx/zoom;
+    node.y=d.originY+dy/zoom;
+    this.keepNodeInside(node);
+    this.resolveCollisions(node);
+    this.renderNodes();
+  }
+
+  pointerUp(e,node){
+    const d=this.drag;
+    if(!d||d.id!==e.pointerId||d.node!==node)return;
+    e.preventDefault();
+    e.stopPropagation();
+    if(d.holdTimer)clearTimeout(d.holdTimer);
+    try{node.el.releasePointerCapture(e.pointerId)}catch{}
+    node.el.classList.remove('dragging');
+    this.drag=null;
+    node.vx=node.vy=0;
+    if(!d.active&&!d.cancelled&&!d.moved)this.onSelect('entity',node.raw);
+    this.schedule();
+  }
+
+  pulseEntity(entityId,kind='buy'){
+    return this.mountBeacon(String(entityId||''),kind,Date.now()+60000,true);
+  }
+
+  setModel(model={}){
+    const next=Array.isArray(model?.entities)?model.entities:[];
+    if(this.updateEntities(next)){
+      this.model=model||{};
+      return;
+    }
+    this.persistState(true);
+    this.model=model||{};
+    this.entities=next;
+    this.persisted=this.loadPersistedState();
+    this.didInitialRestore=false;
+    this.build();
+    this.resetCamera();
+    if(!this.restorePersistedLayout())this.fit();
+  }
+
+  destroy(){
+    this.persistState(true);
+    this.dead=true;
+
+    if(this.raf)cancelAnimationFrame(this.raf);
+    this.raf=0;
+
+    this.ro?.disconnect();
+    window.removeEventListener('resize',this._onWindowResize);
+    window.visualViewport?.removeEventListener('resize',this._onViewportResize);
+    window.removeEventListener('pagehide',this._onPageHide);
+    document.removeEventListener('visibilitychange',this._onVisibilityChange);
+    this.root.removeEventListener('pointerdown',this._cameraDown,true);
+    this.root.removeEventListener('pointermove',this._cameraMove,true);
+    this.root.removeEventListener('pointerup',this._cameraUp,true);
+    this.root.removeEventListener('pointercancel',this._cameraUp,true);
+    this.root.removeEventListener('wheel',this._cameraWheel);
+    this.root.removeEventListener('dblclick',this._cameraDouble);
+    this.cancelNodeDrag();
+    this.cameraPointers.clear();
+    this.cameraPan=null;
+    this.cameraPinch=null;
+
+    this.drag=null;
+  }
+}
+
+function mountGlobalGraph(){
+  const root=$('#globalMap');
+  if(!root)return null;
+
+  const model=globalEntityModel();
+  updateMapCounts();
+
+  const key=JSON.stringify(
+    model.entities
+      .map(e=>String(e.id||e.name||e.x_handle||e.xHandle||''))
+      .sort()
+  );
+
+  const healthy=
+    state.graph instanceof ShadowDomSwarm &&
+    root.dataset.renderer==='dom-v207' &&
+    root.dataset.rendererState==='ready' &&
+    root.querySelectorAll('.si-dom-node').length===model.entities.length;
+
+  if(healthy&&graphEntityKey===key){
+    state.graph.updateEntities(model.entities);
+    state.graph.schedule();
+    return model;
+  }
+
+  try{state.graph?.destroy?.()}catch(error){
+    console.warn('Graph destroy warning:',error);
+  }
+
+  state.graph=null;
+  root.replaceChildren();
+
+  try{
+    state.graph=new ShadowDomSwarm(root,model,{onSelect:openObject});
+    graphEntityKey=key;
+    return model;
+  }catch(error){
+    root.dataset.rendererState='error';
+    root.innerHTML=
+      '<div class="si-map-render-error">'+
+      '<strong>Map renderer error</strong>'+
+      '<span>'+esc(error?.message||'Unknown renderer failure')+'</span>'+
+      '</div>';
+    throw error;
+  }
+}
+/* SHADOW_DOM_SWARM_V207_END */
+
+async function renderOverview(live=state.liveStatus){
+  let model=null;
+  try{model=mountGlobalGraph();syncActiveMapSignals()}
+  catch(error){
+    console.error('Global graph render failed:',error);
+    toast('3D renderer failed to start');
+  }
+  renderOverviewChrome(live);
+  return model;
+}
+
+async function refresh(){
+  const seq=++refreshSeq;
+
+  const entitiesTask=api('/api/entities')
+    .then(data=>{
+      if(seq!==refreshSeq)return;
+      state.entities=Array.isArray(data.items)?data.items:[];
+      updateMapCounts();
+      if(currentPage==='overview')renderOverview();
+      if(currentPage==='entities')renderEntities();
+    })
+    .catch(error=>{
+      console.error('Entities refresh failed:',error);
+      if(!state.entities.length)toast('Entity data unavailable');
+    });
+
+  const tokensTask=api('/api/tokens')
+    .then(data=>{
+      if(seq!==refreshSeq)return;
+      state.tokens=Array.isArray(data.items)?data.items:[];
+      updateMapCounts();
+      if(currentPage==='tokens')renderTokens();
+      if(currentPage==='overview')renderConnections({tokens:state.tokens.slice(0,42)});
+    })
+    .catch(error=>console.error('Tokens refresh failed:',error));
+
+  const overviewTask=api('/api/overview')
+    .then(data=>{
+      if(seq!==refreshSeq)return;
+      state.overview=data||null;
+      if(currentPage==='overview')renderOverviewChrome();
+      if(currentPage==='feed')renderFeed();
+    })
+    .catch(error=>console.error('Overview refresh failed:',error));
+
+  const liveTask=api('/api/live/status')
+    .then(data=>{
+      if(seq!==refreshSeq)return;
+      state.liveStatus=data||null;
+      if(currentPage==='overview')renderOverviewChrome(state.liveStatus);
+    })
+    .catch(error=>console.error('Live status refresh failed:',error));
+
+  await Promise.allSettled([entitiesTask,tokensTask,overviewTask,liveTask]);
+}
+
+/* SHADOW_PUMP_LINKS_V217_START */
+function pumpFunCoinUrl(mint){
+  const value=String(mint||'').trim();
+  return value ? `https://pump.fun/coin/${encodeURIComponent(value)}` : '';
+}
+
+function pumpTokenLink(token,label){
+  const mint=String(token?.mint||token?.tokenMint||'').trim();
+  const text=esc(label||token?.symbol||token?.tokenName||token?.name||'Token');
+  if(!mint)return `<strong>${text}</strong>`;
+  return `<a class="si-token-trade-link" data-pump-token-link="1" href="${esc(pumpFunCoinUrl(mint))}" aria-label="Open ${text.replace(/<[^>]*>/g,'')} on Pump.fun"><span>${text}</span><span class="si-token-trade-arrow" aria-hidden="true">&#8599;</span></a>`;
+}
+/* SHADOW_PUMP_LINKS_V217_END */
+
+/* SHADOW_ENTITY_PROFIT_V2413_APP */
+function entityMetricMoney(e,key){
+  if(!e?.profitKnown)return '—';
+  const value=Number(e[key]);
+  return Number.isFinite(value)?money(value):'—';
+}
+function entityMetricClass(e,key){
+  if(!e?.profitKnown)return '';
+  const value=Number(e[key]);
+  return value>0?'pos':value<0?'neg':'';
+}
+function entityHandleHtml(e){
+  const handle=String(e?.x_handle||e?.xHandle||'').trim();
+  const name=String(e?.name||'').trim();
+  if(!handle||handle.toLowerCase()===name.toLowerCase())return '';
+  return `<p>${esc(handle)}</p>`;
+}
+function focusHtml(e){return`<div class="si-focus-main">${avatar(e,'lg')}<div><h3>${esc(e.name)}</h3>${entityHandleHtml(e)}</div></div><div class="si-metrics"><div class="si-metric"><strong class="${entityMetricClass(e,'profitUsd')}">${entityMetricMoney(e,'profitUsd')}</strong><small>Profit</small></div><div class="si-metric"><strong>${Number(e.performanceTokens||0)}</strong><small>Tokens</small></div><div class="si-metric"><strong class="${entityMetricClass(e,'avgProfitUsd')}">${entityMetricMoney(e,'avgProfitUsd')}</strong><small>Avg / Token</small></div></div>`}
+/* SHADOW_ENTITY_PROFIT_V2413_APP_END */
+function eventHtml(x){
+  const type=String(x.type||'activity').toLowerCase(),sell=type.includes('sell')||type==='send',tr=type.includes('transfer')||type==='receive';
+  const title=(x.title||type).replace(/^./,c=>c.toUpperCase());
+  const titleHtml=x.tokenMint?pumpTokenLink({mint:x.tokenMint},title):`<strong>${esc(title)}</strong>`;
+  return `<div class="si-event"><i class="si-event-dot ${sell?'sell':tr?'transfer':''}"></i><div>${titleHtml}<small>${esc(x.detail||x.symbol||x.tokenName||x.walletAddress||'Observed on-chain activity')}</small></div><time>${ago(x.createdAt||x.block_time)}</time></div>`;
+}
+function renderLive(items){$('#overviewLive').innerHTML=(items||[]).slice(0,8).map(eventHtml).join('')||'<div class="guest-note">Waiting for live activity.</div>'}
+function renderEntitiesStrip(){const arr=state.entities.slice(0,4);$('#entityStrip').innerHTML=arr.map(e=>`<div class="si-entity-chip" data-open="${e.id}">${avatar(e,'sm')}<div><strong>${esc(e.name)}</strong><small>${esc(e.x_handle||'')} · ${e.walletCount||0} wallets</small></div></div>`).join('')||'<div class="guest-note">No tracked entities.</div>';$$('[data-open]',$('#entityStrip')).forEach(x=>x.onclick=()=>openObject('entity',{id:x.dataset.open}))}
+function renderConnections(model){const pairs=[];model.tokens.slice(0,12).forEach(t=>pairs.push(`${t.symbol||t.name||'Token'} ↔ ${short(t.mint)}`));$('#connectionStrip').innerHTML=pairs.map(x=>`<span class="si-connection">${esc(x)}</span>`).join('')||'<span class="guest-note">Connections appear after wallet activity.</span>'}
+
+/* SHADOW_ENTITIES_PROFIT_SORT_V2415 */
+/* SHADOW_ENTITIES_OVERALL_RANK_V2421 */
+function entityMetricPercentile(entity,key,{knownKey=''}={}){
+  const population=Array.isArray(state.entities)?state.entities:[];
+  const entityValue=Number(entity?.[key]);
+
+  if(
+    (knownKey && entity?.[knownKey]===false) ||
+    !Number.isFinite(entityValue)
+  ) return 50;
+
+  const values=population
+    .filter(row=>!(knownKey && row?.[knownKey]===false))
+    .map(row=>Number(row?.[key]))
+    .filter(Number.isFinite)
+    .sort((a,b)=>a-b);
+
+  if(values.length<=1)return 50;
+
+  let below=0;
+  let equal=0;
+  for(const value of values){
+    if(value<entityValue)below++;
+    else if(value===entityValue)equal++;
+  }
+
+  return ((below + Math.max(0,equal-1)/2) / (values.length-1))*100;
+}
+
+function entityOverallScore(entity){
+  const profit=entityMetricPercentile(entity,'profitUsd',{knownKey:'profitKnown'});
+  const winRate=entityMetricPercentile(entity,'winRate',{knownKey:'winRateKnown'});
+  const median=entityMetricPercentile(entity,'medianProfitUsd');
+  const avg=entityMetricPercentile(entity,'avgProfitUsd');
+
+  const raw=
+    profit*.40+
+    winRate*.30+
+    median*.20+
+    avg*.10;
+
+  const closed=Math.max(0,Number(entity?.closedTokens||0));
+  const reliability=Math.min(1,Math.sqrt(closed/12));
+  const confidenceWeight=.5+(.5*reliability);
+  const adjusted=50+((raw-50)*confidenceWeight);
+
+  return Number(Math.max(0,Math.min(100,adjusted)).toFixed(2));
+}
+
+function entityProfitSort(a,b){
+  const scoreDiff=entityOverallScore(b)-entityOverallScore(a);
+  if(Math.abs(scoreDiff)>1e-9)return scoreDiff;
+
+  const profitDiff=Number(b?.profitUsd||0)-Number(a?.profitUsd||0);
+  if(Math.abs(profitDiff)>1e-9)return profitDiff;
+
+  const winDiff=Number(b?.winRate||0)-Number(a?.winRate||0);
+  if(Math.abs(winDiff)>1e-9)return winDiff;
+
+  const medianDiff=Number(b?.medianProfitUsd||0)-Number(a?.medianProfitUsd||0);
+  if(Math.abs(medianDiff)>1e-9)return medianDiff;
+
+  return String(a?.name||'').localeCompare(String(b?.name||''));
+}
+/* SHADOW_ENTITIES_OVERALL_RANK_V2421_END */
+/* SHADOW_ENTITIES_PROFIT_SORT_V2415_END */
+
+/* SHADOW_ENTITIES_RANK_V2416 */
+/* SHADOW_ENTITIES_CARD_INFO_V2417_APP */
+
+/* SHADOW_ENTITIES_PODIUM_V2419_APP */
+function entityPodiumClass(rank){
+  const n=Number(rank||0);
+  return n===1?'si-podium-gold':n===2?'si-podium-silver':n===3?'si-podium-bronze':'';
+}
+/* SHADOW_ENTITIES_PODIUM_V2419_APP_END */
+
+/* SHADOW_ENTITY_PERFORMANCE_V2420_APP */
+
+/* SHADOW_ENTITY_METRIC_INFO_V2422B_APP */
+const ENTITY_METRIC_INFO={
+  profit:{
+    title:'Profit',
+    body:'Total dollar P&L for the Entity across all priced token positions. Positive means net profit. Negative means net loss.'
+  },
+  winRate:{
+    title:'Win Rate',
+    body:'Percentage of CLOSED token positions that finished positive. Open positions are excluded. Formula: Wins / (Wins + Losses).'
+  },
+  tokens:{
+    title:'Tokens',
+    body:'Number of distinct token positions tracked for this Entity.'
+  },
+  wins:{
+    title:'Wins',
+    body:'Fully closed token positions that finished with positive P&L.'
+  },
+  losses:{
+    title:'Losses',
+    body:'Fully closed token positions that finished with negative P&L.'
+  },
+  open:{
+    title:'Open',
+    body:'Token positions that are still open and therefore are not counted in Win Rate yet.'
+  },
+  closed:{
+    title:'Closed',
+    body:'Total number of fully closed token positions. Closed equals Wins + Losses.'
+  },
+
+  avgToken:{
+    title:'Avg / Token',
+    body:'Average P&L per token position. A few very large winners or losers can move this number substantially.'
+  },
+  medianToken:{
+    title:'Median / Token',
+    body:'The middle token result after sorting all token P&Ls. It shows the typical result and is much less affected by one unusually large winner.'
+  }
+};
+
+function entityMetricInfoButton(key,label){
+  const info=ENTITY_METRIC_INFO[key];
+  if(!info)return esc(label||'');
+  return `<span class="si-metric-label-with-info">
+    <span>${esc(label||info.title)}</span>
+    <button
+      type="button"
+      class="si-info-badge"
+      data-entity-info="${esc(key)}"
+      aria-label="About ${esc(info.title)}"
+      title="About ${esc(info.title)}"
+    >i</button>
+  </span>`;
+}
+
+/* SHADOW_ENTITY_INFO_RETURN_V2424_APP */
+function closeEntityMetricInfo(){
+  const layer=document.querySelector('.si-entity-info-layer');
+  if(!layer)return false;
+  layer.remove();
+  return true;
+}
+
+function showEntityMetricInfo(key){
+  const info=ENTITY_METRIC_INFO[key];
+  if(!info)return;
+
+  const host=$('#modalBody');
+  if(!host)return;
+
+  host.querySelector('.si-entity-info-layer')?.remove();
+
+  const layer=document.createElement('div');
+  layer.className='si-entity-info-layer';
+  layer.innerHTML=`<div class="si-info-sheet">
+    <div class="si-info-sheet-head">${esc(info.title)}</div>
+    <div class="si-info-sheet-body">${esc(info.body)}</div>
+    <div class="si-info-sheet-actions">
+      <button type="button" class="si-button primary" id="closeEntityInfoSheet">OK</button>
+    </div>
+  </div>`;
+
+  host.appendChild(layer);
+
+  const closeBtn=layer.querySelector('#closeEntityInfoSheet');
+  if(closeBtn)closeBtn.onclick=()=>closeEntityMetricInfo();
+}
+/* SHADOW_ENTITY_INFO_RETURN_V2424_APP_END */
+
+if(!window.__shadowEntityMetricInfoBound){
+  window.__shadowEntityMetricInfoBound=true;
+  document.addEventListener('click',event=>{
+    const button=event.target?.closest?.('[data-entity-info]');
+    if(!button)return;
+    event.preventDefault();
+    event.stopPropagation();
+    showEntityMetricInfo(button.dataset.entityInfo);
+  });
+}
+/* SHADOW_ENTITY_METRIC_INFO_V2422B_APP_END */
+
+function entityWinRateText(e){
+  if(!e?.winRateKnown||!Number.isFinite(Number(e?.winRate)))return '—';
+  const value=Number(e.winRate);
+  return `${value.toFixed(value%1?1:0)}%`;
+}
+
+function entityPerformanceMoney(value){
+  const n=Number(value);
+  return Number.isFinite(n)?money(n):'—';
+}
+
+function entityPerformanceMoneyClass(value){
+  const n=Number(value);
+  return !Number.isFinite(n)?'':n>0?'pos':n<0?'neg':'';
+}
+
+/* SHADOW_ENTITY_REMOVE_FLAT_V2428_APP */
+function entityPerformanceBreakdownHtml(e){
+  const closed=Number(e?.closedTokens ?? (Number(e?.wins||0)+Number(e?.losses||0)));
+  return `<div class="si-entity-performance-breakdown">
+    <div class="si-performance-counts">
+      <div><strong>${Number(e?.wins||0)}</strong><small>${entityMetricInfoButton('wins','Wins')}</small></div>
+      <div><strong>${Number(e?.losses||0)}</strong><small>${entityMetricInfoButton('losses','Losses')}</small></div>
+      <div><strong>${Number(e?.openTokens||0)}</strong><small>${entityMetricInfoButton('open','Open')}</small></div>
+      <div><strong>${closed}</strong><small>${entityMetricInfoButton('closed','Closed')}</small></div>
+    </div>
+    <div class="si-performance-money">
+      <div>
+        <span>${entityMetricInfoButton('avgToken','Avg / Token')}</span>
+        <strong class="${entityPerformanceMoneyClass(e?.avgProfitUsd)}">${entityPerformanceMoney(e?.avgProfitUsd)}</strong>
+      </div>
+      <div>
+        <span>${entityMetricInfoButton('medianToken','Median / Token')}</span>
+        <strong class="${entityPerformanceMoneyClass(e?.medianProfitUsd)}">${entityPerformanceMoney(e?.medianProfitUsd)}</strong>
+      </div>
+    </div>
+  </div>`;
+}
+/* SHADOW_ENTITY_REMOVE_FLAT_V2428_APP_END */
+/* SHADOW_ENTITY_PERFORMANCE_V2420_APP_END */
+
+function entityCardMainWalletHtml(e){
+  const address=String(e?.mainWalletAddress||'').trim();
+  if(!address){
+    return `<div class="si-entity-card-main-wallet" style="display:flex;align-items:center;gap:8px;min-width:0;opacity:.58">
+      <span style="white-space:nowrap">Main Wallet</span>
+      <span>-</span>
+    </div>`;
+  }
+
+  return `<div class="si-entity-card-main-wallet" style="display:flex;align-items:center;gap:8px;min-width:0;opacity:.64">
+    <span style="white-space:nowrap">Main Wallet</span>
+    <span aria-hidden="true">·</span>
+    ${walletAddressCopyHtml(address)}
+  </div>`;
+}
+
+function entityCardCopyStatusHtml(e){
+  const active=!!e?.copyTradingActive;
+  return `<div class="si-entity-card-copy-status" style="display:flex;align-items:center;gap:7px;white-space:nowrap;opacity:${active?'1':'.58'}">
+    <i class="si-copy-dot ${active?'live':''}" aria-hidden="true"></i>
+    <span>Copy trade · ${active?'Active':'Off'}</span>
+  </div>`;
+}
+
+/* SHADOW_ENTITIES_CARD_CLEAN_V2423B */
+function renderEntities(q=''){
+  const query=(q||'').toLowerCase();
+
+  const ranked=state.entities
+    .slice()
+    .sort(entityProfitSort)
+    .map((e,index)=>({...e,entityRank:index+1}));
+
+  const a=ranked.filter(e=>{
+    if(!query)return true;
+    const wallets=Array.isArray(e.linkedWallets)?e.linkedWallets:[];
+    const hay=[
+      e.name,
+      e.x_handle,
+      e.notes,
+      e.mainWalletAddress,
+      ...wallets.flatMap(w=>[w.address,w.label])
+    ].filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(query);
+  });
+
+  $('#entitiesGrid').innerHTML=a.map(e=>`
+    <article class="si-panel si-entity-card ${entityPodiumClass(e.entityRank)}" data-entity="${e.id}" style="position:relative">
+      <span
+        class="si-entity-rank"
+        aria-label="Rank ${e.entityRank}"
+        title="Overall performance rank"
+        style="position:absolute;top:18px;right:18px;font-size:14px;font-weight:700;line-height:1;letter-spacing:.01em;opacity:.52;pointer-events:none"
+      >#${e.entityRank}</span>
+
+      <div class="si-card-top">
+        ${avatar(e,'lg')}
+        <div>
+          <h3>${esc(e.name)}</h3>
+          ${entityHandleHtml(e)}
+        </div>
+      </div>
+
+      <div class="si-card-stats">
+        <div class="si-card-stat">
+          <strong class="${entityMetricClass(e,'profitUsd')}">${entityMetricMoney(e,'profitUsd')}</strong>
+          <small>Profit</small>
+        </div>
+        <div class="si-card-stat" title="${Number(e.wins||0)} wins · ${Number(e.losses||0)} losses">
+          <strong>${entityWinRateText(e)}</strong>
+          <small>Win Rate</small>
+        </div>
+        <div class="si-card-stat">
+          <strong>${Number(e.performanceTokens||0)}</strong>
+          <small>Tokens</small>
+        </div>
+      </div>
+    </article>
+  `).join('')||'<div class="guest-note">No entities found.</div>';
+
+  $$('[data-entity]').forEach(x=>x.onclick=()=>openObject('entity',{id:x.dataset.entity}));
+  bindWalletAddressCopy($('#entitiesGrid'));
+}
+/* SHADOW_ENTITIES_CARD_INFO_V2417_APP_END */
+/* SHADOW_WALLETS_IN_ADMIN_V233_APP */
+/* SHADOW_RPC_WALLET_STATUS_V312 */
+let adminWalletRealtimeStatusTimer=0;
+
+async function refreshAdminWalletRealtimeStatuses(){
+  const target=$('#walletsAdminTable');
+  if(!target)return;
+
+  let payload;
+  try{payload=await api('/api/live/wallet-status')}catch{return}
+  const monitor=payload?.walletMonitoring||{};
+  if(String(monitor.mode||'current')!=='solana_rpc')return;
+
+  const realtime=monitor.realtime||{};
+  const subscribed=new Set((Array.isArray(realtime.subscribedWalletIds)?realtime.subscribedWalletIds:[]).map(String));
+
+  target.querySelectorAll('[data-admin-wallet-status]').forEach(cell=>{
+    const walletId=String(cell.dataset.adminWalletStatus||'');
+    let status='error';
+    if(realtime.connected)status=subscribed.has(walletId)?'live':'subscribing';
+    else if(realtime.connecting||realtime.reconnecting)status='reconnecting';
+    cell.textContent=status;
+  });
+}
+
+function startAdminWalletRealtimeStatusPolling(){
+  if(adminWalletRealtimeStatusTimer)clearInterval(adminWalletRealtimeStatusTimer);
+  adminWalletRealtimeStatusTimer=setInterval(()=>{
+    if(currentPage!=='settings')return;
+    refreshAdminWalletRealtimeStatuses().catch(()=>{});
+  },3000);
+}
+
+async function renderWalletInventory(targetSelector='#walletsAdminTable'){
+  if(!['owner','admin'].includes(state.user?.role))return;
+
+  const target=$(targetSelector);
+  if(!target)return;
+
+  try{
+    const ds=await Promise.all(state.entities.map(e=>api(`/api/entities/${e.id}`)));
+    const ws=ds.flatMap(d=>(d.wallets||[]).map(w=>({
+      ...w,
+      entityName:d.entity.name,
+      xHandle:d.entity.x_handle
+    })));
+
+    const count=$('#adminWalletCount');
+    if(count)count.textContent=`${ws.length} wallet${ws.length===1?'':'s'}`;
+
+    target.innerHTML=`<table class="si-table">
+      <thead>
+        <tr>
+          <th>Wallet</th>
+          <th>Entity</th>
+          <th>Status</th>
+          <th>Last scan</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${ws.map(w=>`<tr>
+          <td><strong>${short(w.address)}</strong><br><small>${esc(w.label||'Main wallet')}</small></td>
+          <td>${esc(w.xHandle||w.entityName||'')}</td>
+          <td>${esc(String(w.sync_status||'pending').replaceAll('_',' '))}${w.sync_error?`<br><small>${esc(w.sync_error)}</small>`:''}</td>
+          <td>${w.last_scanned_at?ago(w.last_scanned_at)+' ago':'not scanned'}</td>
+          <td><button class="si-button" data-admin-wallet-sync="${w.id}">Sync</button></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+
+    /* SHADOW_RPC_WALLET_STATUS_V312_TAG_ROWS */
+    target.querySelectorAll('tbody tr').forEach((row,index)=>{
+      const wallet=ws[index];
+      if(!wallet)return;
+      const cells=row.querySelectorAll('td');
+      const statusCell=cells[2];
+      if(!statusCell)return;
+      statusCell.dataset.adminWalletStatus=String(wallet.id||'');
+      statusCell.dataset.storedStatus=String(wallet.sync_status||'pending');
+    });
+
+    await refreshAdminWalletRealtimeStatuses();
+    startAdminWalletRealtimeStatusPolling();
+
+    target.querySelectorAll('[data-admin-wallet-sync]').forEach(button=>{
+      button.onclick=async()=>{
+        button.disabled=true;
+        const original=button.textContent;
+        button.textContent='Syncing...';
+        try{
+          const r=await api(`/api/wallets/${button.dataset.adminWalletSync}/sync`,{
+            method:'POST',
+            body:'{}'
+          });
+          toast(`Synced - ${r.newActivity||0} new`);
+          await renderWalletInventory(targetSelector);
+        }catch(error){
+          toast(error.message);
+          button.disabled=false;
+          button.textContent=original;
+        }
+      };
+    });
+  }catch(error){
+    target.innerHTML=`<div class="guest-note">${esc(error.message)}</div>`;
+    toast(error.message);
+  }
+}
+
+async function renderWallets(){
+  return renderWalletInventory('#walletsAdminTable');
+}
+/* SHADOW_TOKEN_AVATAR_STABILITY_V2411_START */
+const siTokenAvatarCache = new Map();
+
+function siTokenAvatarKey(token){
+  return String(token?.mint || token?.address || token?.tokenMint || '').trim();
+}
+
+function siFindDetailedToken(token){
+  const mint = siTokenAvatarKey(token);
+  if(!mint) return null;
+
+  for(const value of state.details.values()){
+    if(!value) continue;
+
+    if(value?.token){
+      const t = value.token;
+      if(String(t?.mint || t?.address || t?.tokenMint || '').trim() === mint) return t;
+    }
+
+    const lists = [
+      value?.tokens,
+      value?.entity?.tokens,
+      value?.holdings,
+      value?.positions
+    ];
+
+    for(const list of lists){
+      if(!Array.isArray(list)) continue;
+      const hit = list.find(t =>
+        String(t?.mint || t?.address || t?.tokenMint || '').trim() === mint
+      );
+      if(hit) return hit;
+    }
+  }
+
+  return null;
+}
+
+function siStableTokenAvatarModel(token){
+  const key = siTokenAvatarKey(token);
+  const detailed = siFindDetailedToken(token);
+
+  const currentSource = imageSource(token) || imageSource(detailed);
+
+  if(currentSource && key){
+    siTokenAvatarCache.set(key, currentSource);
+  }
+
+  const stableSource =
+    currentSource ||
+    (key ? siTokenAvatarCache.get(key) : '') ||
+    '';
+
+  return {
+    ...(detailed || {}),
+    ...(token || {}),
+    avatar: stableSource,
+    image: stableSource,
+    imageUrl: stableSource,
+    image_url: stableSource,
+    imageURI: stableSource,
+    image_uri: stableSource,
+    icon: stableSource,
+    iconUrl: stableSource,
+    icon_url: stableSource,
+    logo: stableSource,
+    logoUrl: stableSource,
+    logo_url: stableSource,
+    logoURI: stableSource,
+    logo_uri: stableSource,
+    thumbnail: stableSource,
+    thumb: stableSource,
+    picture: stableSource,
+    photo: stableSource
+  };
+}
+
+function siTokenAvatarHtml(token){
+  return avatar(siStableTokenAvatarModel(token),'md');
+}
+/* SHADOW_TOKEN_AVATAR_STABILITY_V2411_END */
+/* SHADOW_TOKENS_JOINT_RANK_V269_START */
+let tokenPeriod=(()=>{
+  try{
+    const saved=localStorage.getItem('si-token-period');
+    if(['m1','m5','h1','h6','h24'].includes(saved))return saved;
+
+    const legacy=localStorage.getItem('si-token-sort');
+    if(['m1','m5','h1','h6','h24'].includes(legacy))return legacy;
+    if(legacy==='top1h')return 'h1';
+
+    return 'h1';
+  }catch{
+    return 'h1';
+  }
+})();
+
+let tokenAgeDirection=(()=>{
+  try{
+    return localStorage.getItem('si-token-age-direction')==='oldest'
+      ? 'oldest'
+      : 'youngest';
+  }catch{
+    return 'youngest';
+  }
+})();
+
+let tokenMcDirection=(()=>{
+  try{
+    return localStorage.getItem('si-token-mc-direction')==='asc'
+      ? 'asc'
+      : 'desc';
+  }catch{
+    return 'desc';
+  }
+})();
+
+function tokenSortNumber(value,fallback=null){
+  if(value==null||value==='')return fallback;
+  const n=Number(value);
+  return Number.isFinite(n)?n:fallback;
+}
+
+function tokenCreatedTimestamp(token){
+  const raw=token?.token_created_at||token?.token_market_created_at||'';
+  const value=Date.parse(raw);
+  return Number.isFinite(value)?value:0;
+}
+
+function tokenAgeLabel(token){
+  const created=tokenCreatedTimestamp(token);
+  if(!created)return '—';
+
+  const minutes=Math.max(0,Math.floor((Date.now()-created)/60000));
+  if(minutes<1)return '<1m';
+  if(minutes<60)return `${minutes}m`;
+
+  const hours=Math.floor(minutes/60);
+  if(hours<24)return `${hours}h`;
+
+  const days=Math.floor(hours/24);
+  if(days<30)return `${days}d`;
+
+  const months=Math.floor(days/30);
+  if(months<12)return `${months}mo`;
+
+  return `${Math.floor(days/365)}y`;
+}
+
+function tokenChangeForPeriod(token,period=tokenPeriod){
+  if(period==='m1')return token?.price_change_1m;
+  if(period==='m5')return token?.price_change_5m;
+  if(period==='h1')return token?.price_change_1h ?? token?.price_change;
+  if(period==='h6')return token?.price_change_6h;
+  if(period==='h24')return token?.price_change_24h;
+  return token?.price_change_1h ?? token?.price_change;
+}
+
+function tokenRankKey(token,index){
+  return String(token?.mint||token?.id||`row-${index}`);
+}
+
+function buildPercentileRanks(rows,valueGetter,direction='desc',validGetter=null){
+  const ranked=[];
+
+  rows.forEach((token,index)=>{
+    const value=valueGetter(token);
+    const valid=validGetter ? !!validGetter(value,token) : Number.isFinite(value);
+
+    if(valid){
+      ranked.push({
+        key:tokenRankKey(token,index),
+        value:Number(value),
+        index
+      });
+    }
+  });
+
+  ranked.sort((a,b)=>{
+    if(a.value===b.value)return a.index-b.index;
+    return direction==='asc'
+      ? a.value-b.value
+      : b.value-a.value;
+  });
+
+  const scores=new Map();
+  const n=ranked.length;
+
+  if(!n)return scores;
+  if(n===1){
+    scores.set(ranked[0].key,1);
+    return scores;
+  }
+
+  // Same raw value receives the same percentile score.
+  let cursor=0;
+  while(cursor<n){
+    let end=cursor+1;
+    while(end<n && ranked[end].value===ranked[cursor].value)end++;
+
+    const mid=(cursor+(end-1))/2;
+    const score=1-(mid/(n-1));
+
+    for(let k=cursor;k<end;k++){
+      scores.set(ranked[k].key,score);
+    }
+
+    cursor=end;
+  }
+
+  return scores;
+}
+
+function sortedTokenRows(rows){
+  const out=[...(Array.isArray(rows)?rows:[])];
+
+  /*
+    TRUE JOINT SORT:
+      1) selected period price-change rank
+      2) Age rank
+      3) MC rank
+
+    All three are active at the same time with equal weight.
+    This is intentionally NOT a tie-break chain.
+  */
+
+  const priceRanks=buildPercentileRanks(
+    out,
+    token=>tokenSortNumber(tokenChangeForPeriod(token),null),
+    'desc',
+    value=>Number.isFinite(value)
+  );
+
+  const ageRanks=buildPercentileRanks(
+    out,
+    token=>tokenCreatedTimestamp(token),
+    tokenAgeDirection==='youngest'?'desc':'asc',
+    value=>Number.isFinite(value)&&value>0
+  );
+
+  const mcRanks=buildPercentileRanks(
+    out,
+    token=>tokenSortNumber(token?.market_cap,null),
+    tokenMcDirection==='desc'?'desc':'asc',
+    value=>Number.isFinite(value)&&value>0
+  );
+
+  const scored=out.map((token,index)=>{
+    const key=tokenRankKey(token,index);
+
+    // Missing data gets 0 for that criterion rather than a fake favorable rank.
+    const price=priceRanks.get(key)??0;
+    const age=ageRanks.get(key)??0;
+    const mc=mcRanks.get(key)??0;
+
+    return {
+      token,
+      index,
+      price,
+      age,
+      mc,
+      total:(price+age+mc)/3
+    };
+  });
+
+  scored.sort((a,b)=>
+    b.total-a.total
+    || b.price-a.price
+    || b.age-a.age
+    || b.mc-a.mc
+    || a.index-b.index
+  );
+
+  return scored.map(row=>row.token);
+}
+
+function ensureTokenSortControls(){
+  const grid=$('#tokensGrid');
+  if(!grid)return;
+
+  let wrap=$('#tokenSortWrap');
+  if(!wrap){
+    wrap=document.createElement('div');
+    wrap.id='tokenSortWrap';
+    wrap.className='si-token-sort-wrap';
+    grid.before(wrap);
+  }
+
+  wrap.innerHTML=`
+    <div class="si-token-sort" role="group" aria-label="Token joint sorting">
+      <button type="button" data-token-period="m1">1M</button>
+      <button type="button" data-token-period="m5">5M</button>
+      <button type="button" data-token-period="h1">1H</button>
+      <button type="button" data-token-period="h6">6H</button>
+      <button type="button" data-token-period="h24">24H</button>
+      <button type="button" data-token-age class="is-active">
+        Age ${tokenAgeDirection==='youngest'?'↓':'↑'}
+      </button>
+      <button type="button" data-token-mc class="is-active">
+        MC ${tokenMcDirection==='desc'?'↓':'↑'}
+      </button>
+    </div>`;
+
+  wrap.querySelectorAll('[data-token-period]').forEach(button=>{
+    const period=button.dataset.tokenPeriod;
+    const active=period===tokenPeriod;
+
+    button.classList.toggle('is-active',active);
+    button.setAttribute('aria-pressed',active?'true':'false');
+
+    button.onclick=()=>{
+      tokenPeriod=period;
+
+      try{
+        localStorage.setItem('si-token-period',period);
+      }catch{}
+
+      renderTokens();
+    };
+  });
+
+  const ageButton=wrap.querySelector('[data-token-age]');
+  if(ageButton){
+    ageButton.setAttribute('aria-pressed','true');
+
+    ageButton.onclick=()=>{
+      tokenAgeDirection=tokenAgeDirection==='youngest'
+        ? 'oldest'
+        : 'youngest';
+
+      try{
+        localStorage.setItem('si-token-age-direction',tokenAgeDirection);
+      }catch{}
+
+      renderTokens();
+    };
+  }
+
+  const mcButton=wrap.querySelector('[data-token-mc]');
+  if(mcButton){
+    mcButton.setAttribute('aria-pressed','true');
+
+    mcButton.onclick=()=>{
+      tokenMcDirection=tokenMcDirection==='desc'
+        ? 'asc'
+        : 'desc';
+
+      try{
+        localStorage.setItem('si-token-mc-direction',tokenMcDirection);
+      }catch{}
+
+      renderTokens();
+    };
+  }
+}
+
+function renderTokens(){
+  ensureTokenSortControls();
+
+  const a=sortedTokenRows(state.tokens);
+
+  $('#tokensGrid').innerHTML=a.map(t=>{
+    const raw=tokenChangeForPeriod(t);
+    const change=raw==null?null:Number(raw);
+    const known=Number.isFinite(change);
+    const changeClass=!known?'':change>=0?'pos':'neg';
+    const changeText=!known
+      ? '—'
+      : `${change>=0?'+':''}${change.toFixed(1)}%`;
+
+    return `<article class="si-panel si-token-card" data-token="${esc(t.mint)}">
+      ${siTokenAvatarHtml(t)}
+      <div>
+        <span class="si-token-symbol">${pumpTokenLink(t,t.symbol||'TOKEN')}</span>
+        <p>${esc(t.name||'Unknown')}<br><small>${short(t.mint)}</small></p>
+        <small>${t.is_pump?'Pump.fun / PumpSwap':esc(t.dex_id||'Solana')} · Age ${tokenAgeLabel(t)} · MC ${money(t.market_cap||0)}</small>
+      </div>
+      <strong class="${changeClass}">${changeText}</strong>
+    </article>`;
+  }).join('')||'<div class="guest-note">Tokens appear after observed activity.</div>';
+
+  $$('[data-token]').forEach(x=>x.onclick=event=>{
+    if(event.target.closest('[data-pump-token-link]'))return;
+    openObject('token',{mint:x.dataset.token});
+  });
+
+  ensureTokenSortControls();
+}
+/* SHADOW_TOKENS_JOINT_RANK_V269_END */
+/* SHADOW_TOKENS_MARKET_REFRESH_V264_START */
+let tokenMarketRefreshBusy=false;
+
+async function refreshTokensMarketData(){
+  const page=$('#page-tokens');
+  if(
+    document.hidden ||
+    !page?.classList.contains('active-page') ||
+    tokenMarketRefreshBusy
+  )return;
+
+  tokenMarketRefreshBusy=true;
+  try{
+    const data=await api('/api/tokens');
+    if(Array.isArray(data?.items)){
+      state.tokens=data.items;
+      renderTokens();
+    }
+  }catch(error){
+    console.debug('Tokens market refresh unavailable',error);
+  }finally{
+    tokenMarketRefreshBusy=false;
+  }
+}
+
+setInterval(refreshTokensMarketData,65000);
+
+document.addEventListener('visibilitychange',()=>{
+  if(!document.hidden)refreshTokensMarketData();
+});
+/* SHADOW_TOKENS_MARKET_REFRESH_V264_END */
+
+/* SHADOW_LIVE_AVATAR_STABILITY_V2410_START */
+/*
+ * Live Activity rows are event objects, not entity objects.
+ * A refresh can therefore omit the avatar even though the tracked Entity
+ * still has one. Resolve the row back to its Entity and remember the last
+ * known-good image so the avatar does not blink/disappear between refreshes.
+ */
+const siLiveAvatarCache = new Map();
+
+function siNormIdentity(value){
+  return String(value ?? '').trim().toLowerCase().replace(/^@/,'');
+}
+
+function siLiveEventEntity(event){
+  const rows = Array.isArray(state.entities) ? state.entities : [];
+  if(!rows.length || !event) return null;
+
+  const eventId = String(event.entityId ?? event.entity_id ?? '').trim();
+  if(eventId){
+    const hit = rows.find(e => String(e?.id ?? '').trim() === eventId);
+    if(hit) return hit;
+  }
+
+  const names = [
+    event.entityName,event.entity_name,event.entity,
+    event.x_handle,event.xHandle,event.handle,event.username
+  ].map(siNormIdentity).filter(Boolean);
+
+  if(names.length){
+    const hit = rows.find(e => {
+      const entityNames = [
+        e?.name,e?.displayName,e?.entityName,
+        e?.x_handle,e?.xHandle,e?.handle,e?.username
+      ].map(siNormIdentity).filter(Boolean);
+      return names.some(n => entityNames.includes(n));
+    });
+    if(hit) return hit;
+  }
+
+  const wallet = siNormIdentity(
+    event.walletAddress ?? event.wallet_address ?? event.wallet ?? event.address
+  );
+  if(wallet){
+    const hit = rows.find(e => {
+      const direct = [
+        e?.walletAddress,e?.wallet_address,e?.wallet,e?.address
+      ].map(siNormIdentity).filter(Boolean);
+      const nested = Array.isArray(e?.wallets)
+        ? e.wallets.flatMap(w => [
+            w?.address,w?.walletAddress,w?.wallet_address,w?.wallet
+          ].map(siNormIdentity).filter(Boolean))
+        : [];
+      return direct.includes(wallet) || nested.includes(wallet);
+    });
+    if(hit) return hit;
+  }
+
+  return null;
+}
+
+function siLiveAvatarKey(event, entity){
+  return [
+    entity?.id,
+    event?.entityId,event?.entity_id,
+    entity?.x_handle,entity?.xHandle,
+    event?.entityName,event?.entity_name,
+    event?.x_handle,event?.xHandle,
+    event?.walletAddress,event?.wallet_address
+  ].map(siNormIdentity).find(Boolean) || '';
+}
+
+function siLiveAvatarModel(event){
+  const entity = siLiveEventEntity(event);
+  const key = siLiveAvatarKey(event, entity);
+
+  const currentSource = imageSource(event) || imageSource(entity);
+
+  if(currentSource && key){
+    siLiveAvatarCache.set(key, currentSource);
+  }
+
+  const stableSource = currentSource || (key ? siLiveAvatarCache.get(key) : '') || '';
+
+  return {
+    ...(entity || {}),
+    ...(event || {}),
+    avatar: stableSource,
+    image: stableSource,
+    imageUrl: stableSource,
+    image_url: stableSource,
+    profileImage: stableSource,
+    profile_image: stableSource,
+    name: event?.entityName || event?.entity_name || entity?.name || event?.name || 'Entity',
+    x_handle: entity?.x_handle || entity?.xHandle || event?.x_handle || event?.xHandle || ''
+  };
+}
+
+function siLiveAvatarHtml(event){
+  return avatar(siLiveAvatarModel(event),'md');
+}
+/* SHADOW_LIVE_AVATAR_STABILITY_V2410_END */
+function renderFeed(){
+  const rows=state.overview?.feed||[];
+  $('#fullFeed').innerHTML=rows.map(x=>{
+    const title=x.title||x.type||'Activity';
+    const titleHtml=x.tokenMint
+      ? pumpTokenLink({mint:x.tokenMint},title)
+      : `<strong>${esc(title)}</strong>`;
+    return `<div class="si-feed-row">${siLiveAvatarHtml(x)}<div><h3>${titleHtml}</h3><p>${esc(x.detail||x.symbol||x.walletAddress||'')}</p><time>${esc(x.entityName||'Unknown')} · ${ago(x.createdAt)}</time></div><strong class="${Number(x.value)<0?'neg':'pos'}">${x.value!=null?(Number(x.value)>0?'+':'')+esc(x.value)+'%':''}</strong></div>`;
+  }).join('')||'<div class="guest-note">No live events yet.</div>';
+  loadHealth();
+}
+async function loadHealth(){try{const h=await api('/api/health');$('#liveHealth').innerHTML=`<div class="si-health-line"><span>Solana</span><strong>${esc(h.live?.solana?.status||'unknown')}</strong></div><div class="si-health-line"><span>Provider</span><strong>${esc(h.live?.solana?.provider||'')}</strong></div><div class="si-health-line"><span>X API</span><strong>${h.intelligence?.x?.configured?'configured':'not configured'}</strong></div>`}catch{}}
+function modal(html){
+  const wasHidden=$('#modal')?.classList.contains('hidden');
+
+  state.detailGraph?.destroy();
+  state.detailGraph=null;
+
+  $('#modalBody').innerHTML=html;
+  $('#modal').classList.remove('hidden');
+  $('#modalBody').scrollTop=0;
+  document.body.classList.add('si-detail-page-open');
+
+  if(wasHidden){
+    const active=$('.si-page.active-page');
+    document.body.dataset.detailReturnPage=active?.id||'page-overview';
+  }
+}
+
+function closeModal(){
+  if(typeof closeEntityMetricInfo==='function' && closeEntityMetricInfo())return;
+  state.detailGraph?.destroy();
+  state.detailGraph=null;
+  $('#modal').classList.add('hidden');
+  $('#modalBody').innerHTML='';
+  document.body.classList.remove('si-detail-page-open');
+  delete document.body.dataset.detailReturnPage;
+  state.graph?.schedule?.();
+  syncActiveMapSignals?.();
+}
+/* SHADOW_INSTANT_ENTITY_OPEN_V208_START */
+
+let entityOpenSeq=0;
+
+/* SHADOW_ENTITY_DETAIL_INFO_V2418 */
+function entityGlobalRank(entityId){
+  const id=String(entityId||'');
+  const ranked=state.entities.slice().sort(entityProfitSort);
+  const index=ranked.findIndex(e=>String(e?.id||'')===id);
+  return index>=0?index+1:null;
+}
+
+function entityDetailRankHtml(e){
+  const rank=entityGlobalRank(e?.id);
+  return rank
+    ? `<span class="si-entity-rank" aria-label="Rank ${rank}" title="Overall performance rank" style="position:absolute;top:24px;right:24px;font-size:18px;font-weight:700;line-height:1;opacity:.52;pointer-events:none">#${rank}</span>`
+    : '';
+}
+
+
+/* SHADOW_ENTITY_PUMP_LINK_V2425_APP */
+function entityPumpProfileLinkHtml(e,wallets=[]){
+  const address=String(e?.mainWalletAddress||wallets?.[0]?.address||'').trim();
+  if(!address)return '';
+
+  const href=`https://pump.fun/profile/${encodeURIComponent(address)}`;
+  return `<a
+    class="si-entity-pump-link"
+    href="${href}"
+    target="_blank"
+    rel="noopener noreferrer"
+    aria-label="Open Pump.fun profile"
+    title="Open Pump.fun profile"
+  ><svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M8 5h11v11M19 5 7 17M17 13v6H5V7h6"/>
+  </svg></a>`;
+}
+
+function entityDetailNameHtml(e,wallets=[]){
+  return `<div class="si-entity-name-row">
+    <h2>${esc(e?.name||'Entity')}</h2>
+    ${entityPumpProfileLinkHtml(e,wallets)}
+  </div>`;
+}
+/* SHADOW_ENTITY_PUMP_LINK_V2425_APP_END */
+
+function entityDetailMainWalletHtml(e,wallets=[]){
+  const address=String(e?.mainWalletAddress||wallets?.[0]?.address||'').trim();
+  return entityCardMainWalletHtml({...e,mainWalletAddress:address});
+}
+
+function entityDetailMetricsHtml(e){
+  return `<div class="si-metrics">
+    <div class="si-metric">
+      <strong class="${entityMetricClass(e,'profitUsd')}">${entityMetricMoney(e,'profitUsd')}</strong>
+      <small>${entityMetricInfoButton('profit','Profit')}</small>
+    </div>
+    <div class="si-metric" title="${Number(e?.wins||0)} wins · ${Number(e?.losses||0)} losses">
+      <strong>${entityWinRateText(e)}</strong>
+      <small>${entityMetricInfoButton('winRate','Win Rate')}</small>
+    </div>
+    <div class="si-metric">
+      <strong>${Number(e?.performanceTokens||0)}</strong>
+      <small>${entityMetricInfoButton('tokens','Tokens')}</small>
+    </div>
+  </div>`;
+}
+/* SHADOW_ENTITY_DETAIL_INFO_V2418_END */
+
+function entityDetailLoading(e){
+  const handle=e?.xHandle||e?.x_handle||'';
+
+  modal(`<div class="si-detail-layout">
+    <aside class="si-detail-side">
+      <div class="si-panel si-entity-profile-panel ${entityPodiumClass(entityGlobalRank(e?.id))}" style="box-shadow:none;position:relative">
+        ${entityDetailRankHtml(e)}
+        <div class="si-entity-profile-avatar">${avatar(e,'xl')}</div>
+        ${entityDetailNameHtml(e,[])}
+        ${handle?`<p>${esc(handle)}</p>`:''}
+
+        <div style="margin-top:16px">
+          ${entityDetailMainWalletHtml(e,[])}
+        </div>
+
+        <div style="margin-top:16px">
+          ${entityDetailMetricsHtml(e)}
+          ${entityPerformanceBreakdownHtml(e)}
+        </div>
+      </div>
+
+      <div class="si-panel" style="box-shadow:none;margin-top:12px">
+        <div class="si-panel-head"><span>LIVE ACTIVITY</span></div>
+        <div class="guest-note">Loading live activity…</div>
+      </div>
+    </aside>
+
+    <section class="si-detail-map">
+      <div class="guest-note">Loading network…</div>
+    </section>
+  </div>`);
+
+  const body=$('#modalBody');
+  if(body)body.dataset.detailLoadingId=String(e?.id||'');
+}
+
+async function openObject(kind,raw){
+  if(kind==='entity'){
+    const id=raw?.id;
+    if(!id){
+      toast('Entity id missing');
+      return;
+    }
+
+    const cached=state.details.get(id);
+    if(cached){
+      entityDetail(cached);
+      return;
+    }
+
+    const e=state.entities.find(x=>x.id===id)||raw;
+    const seq=++entityOpenSeq;
+
+    // Open immediately from data already present in the global map.
+    // Do not wait for the detail endpoint or market-price enrichment.
+    entityDetailLoading(e);
+
+    try{
+      const d=await api(`/api/entities/${id}`);
+      state.details.set(id,d);
+
+      const body=$('#modalBody');
+      const stillCurrent=
+        seq===entityOpenSeq &&
+        body?.dataset.detailLoadingId===String(id) &&
+        !$('#modal')?.classList.contains('hidden');
+
+      if(!stillCurrent)return;
+
+      delete body.dataset.detailLoadingId;
+      entityDetail(d);
+    }catch(e){
+      console.error('Open entity hydration failed:',e);
+      const body=$('#modalBody');
+      if(
+        seq===entityOpenSeq &&
+        body?.dataset.detailLoadingId===String(id) &&
+        !$('#modal')?.classList.contains('hidden')
+      ){
+        const note=body.querySelector('.si-detail-activity')||body.querySelector('.guest-note');
+        if(note)note.textContent='Could not load live details. Tap back and try again.';
+      }
+      toast(e.message);
+    }
+    return;
+  }
+
+  if(kind==='wallet'){
+    try{
+      const id=raw?.id;
+      if(!id)throw new Error('Wallet id missing');
+      const a=await api(`/api/wallets/${id}/activity?limit=120`);
+      walletDetail(raw,a.items||[]);
+    }catch(e){
+      console.error('Open wallet failed:',e);
+      toast(e.message);
+    }
+    return;
+  }
+
+  if(kind==='token'){
+    try{
+      const mint=raw?.mint;
+      if(!mint)throw new Error('Token mint missing');
+      const t=state.tokens.find(x=>x.mint===mint)||raw;
+      tokenDetail(t);
+    }catch(e){
+      console.error('Open token failed:',e);
+      toast(e.message);
+    }
+  }
+}
+/* SHADOW_INSTANT_ENTITY_OPEN_V208_END */
+
+/* SHADOW_ENTITY_TOKENS_V210_START */
+function entityTokenRows(tokens=[]){
+  if(!tokens.length){
+    return '<div class="guest-note si-detail-token-empty">No open positions.</div>';
+  }
+
+  return `<div class="si-detail-token-list">${
+    tokens.map((t,index)=>{
+      const pct=t?.pnlKnown && Number.isFinite(Number(t.pnlPercent))
+        ? Number(t.pnlPercent)
+        : null;
+      const pnl=t?.pnlKnown && Number.isFinite(Number(t.pnlUsd))
+        ? Number(t.pnlUsd)
+        : null;
+      const qty=Number(t?.positionTokens||0);
+
+      const qtyText=qty>0
+        ? `${qty>=1000000?(qty/1000000).toFixed(2)+'M':qty>=1000?(qty/1000).toFixed(1)+'K':qty.toLocaleString(undefined,{maximumFractionDigits:4})} tokens`
+        : short(t?.mint||'');
+
+      return `<button type="button" class="si-detail-token-row" data-entity-token="${index}">
+        ${avatar(t,'md')}
+        <span class="si-detail-token-main">
+          ${pumpTokenLink(t,t?.symbol||'Token')}
+          <small>${esc(t?.name||'Unknown token')}</small>
+          <small class="si-detail-token-mint">${esc(qtyText)}</small>
+        </span>
+        <span class="si-detail-token-pnl">
+          <strong class="${pct===null?'':pct>=0?'pos':'neg'}">${
+            pct===null?'—':`${pct>=0?'+':''}${pct.toFixed(2)}%`
+          }</strong>
+          <small class="${pnl===null?'':pnl>=0?'pos':'neg'}">${
+            pnl===null?'P&L —':money(pnl)
+          }</small>
+        </span>
+      </button>`;
+    }).join('')
+  }</div>`;
+}
+
+/* SHADOW_LINKED_WALLET_3D_V15 */
+function entityDetailLinkedWallets(d,e){
+  const sources=[
+    ...(Array.isArray(e?.linkedWallets)?e.linkedWallets:[]),
+    ...(Array.isArray(d?.linkedWallets)?d.linkedWallets:[]),
+    ...(Array.isArray(d?.wallets)?d.wallets:[])
+  ];
+
+  const byKey=new Map();
+  const order=[];
+
+  for(const raw of sources){
+    if(!raw)continue;
+    const address=String(raw.address||'').trim();
+    const id=String(raw.id||'').trim();
+    const key=address||id;
+    if(!key)continue;
+
+    if(!byKey.has(key))order.push(key);
+    byKey.set(key,{
+      ...(byKey.get(key)||{}),
+      ...raw,
+      entity_id:raw.entity_id||e?.id||''
+    });
+  }
+
+  return order.map(key=>byKey.get(key));
+}
+/* SHADOW_LINKED_WALLET_3D_V15_END */
+
+function entityDetail(d){
+  const liveEntity=state.entities.find(x=>x.id===d?.entity?.id)||{};
+  const e={
+    ...liveEntity,
+    ...(d?.entity||{}),
+    avatar:d?.entity?.avatar||liveEntity.avatar||''
+  };
+
+  const tokens=(Array.isArray(d?.tokens)?d.tokens:[]).map(t=>{
+    const live=(state.tokens||[]).find(x=>
+      (t?.mint && x?.mint===t.mint) ||
+      (t?.address && x?.address===t.address) ||
+      (t?.id && x?.id===t.id) ||
+      ((t?.symbol||'') && (x?.symbol||'') && t.symbol===x.symbol && (t?.name||'')===(x?.name||''))
+    )||{};
+    const src=imageSource(t)||imageSource(live);
+    return {
+      ...live,
+      ...t,
+      avatar: src || t?.avatar || live?.avatar || '',
+      image: src || t?.image || live?.image || '',
+      imageUrl: src || t?.imageUrl || live?.imageUrl || '',
+      image_url: src || t?.image_url || live?.image_url || '',
+      logoURI: src || t?.logoURI || live?.logoURI || ''
+    };
+  });
+  // v1.5: detail response can be stale/main-wallet-only while /api/entities
+  // already contains every linked wallet from v1.4. Merge + dedupe both sources
+  // before rendering the profile, activity graph, and 3D network.
+  const wallets=entityDetailLinkedWallets(d,e);
+  const incidents=Array.isArray(d?.incidents)?d.incidents:[];
+
+  const model={
+    entities:[e],
+    wallets,
+    tokens:tokens.map(t=>({...t,entity_id:e.id})),
+    activity:incidents
+  };
+
+  modal(`<div class="si-detail-layout">
+    <aside class="si-detail-side">
+      <div class="si-panel si-entity-profile-panel ${entityPodiumClass(entityGlobalRank(e?.id))}" style="box-shadow:none;position:relative">
+        ${entityDetailRankHtml(e)}
+        <div class="si-entity-profile-avatar">${avatar(e,'xl')}</div>
+        ${entityDetailNameHtml(e,wallets)}
+        ${(e.xHandle||e.x_handle)?`<p>${esc(e.xHandle||e.x_handle||'')}</p>`:''}
+
+        <div style="margin-top:16px">
+          ${entityDetailMainWalletHtml(e,wallets)}
+        </div>
+
+        <div style="margin-top:16px">
+          ${entityDetailMetricsHtml(e)}
+          ${entityPerformanceBreakdownHtml(e)}
+        </div>
+
+        ${copyControlHtml(e.id)}
+
+        ${['owner','admin'].includes(state.user?.role)
+          ? `<div class="si-entity-admin-actions" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">
+               <button id="syncEntity" class="si-button primary" style="grid-column:1/-1;width:100%">Sync now</button>
+               <button id="editEntity" class="si-button" type="button">Edit</button>
+               <button id="deleteEntity" class="si-button" type="button" style="border-color:rgba(255,75,75,.5);color:#ff5c5c">Delete</button>
+             </div>`
+          : ''
+        }
+      </div>
+
+      <div class="si-panel" style="box-shadow:none;margin-top:12px">
+        <div class="si-panel-head"><span>LIVE ACTIVITY</span></div>
+        <div class="si-detail-activity">${
+          incidents.slice(0,14).map(eventHtml).join('')||
+          '<div class="guest-note">No activity yet.</div>'
+        }</div>
+      </div>
+
+      <div class="si-panel si-detail-tokens-panel" style="box-shadow:none;margin-top:12px">
+        <!-- SHADOW_ENTITY_OPEN_POSITIONS_V2429 -->
+        <div class="si-panel-head">
+          <span>OPEN POSITIONS</span>
+          <span>${tokens.length}</span>
+        </div>
+        ${entityTokenRows(tokens)}
+      </div>
+    </aside>
+
+    <section class="si-detail-map">
+      <div id="detailGraph" class="si-graph"></div>
+    </section>
+  </div>`);
+
+  state.detailGraph=new ShadowGraph($('#detailGraph'),model,{onSelect:openObject});
+  bindWalletAddressCopy($('#modalBody')||document);
+  hydrateEntityCopyControl(e.id);
+
+  $$('[data-entity-token]').forEach(row=>{
+    row.onclick=(event)=>{
+      if(event.target.closest('[data-pump-token-link]'))return;
+      const token=tokens[Number(row.dataset.entityToken)];
+      if(token)openObject('token',token);
+    };
+  });
+
+  const b=$('#syncEntity');
+  if(b)b.onclick=async()=>{
+    b.disabled=true;
+    try{
+      const r=await api(`/api/entities/${e.id}/sync`,{method:'POST',body:'{}'});
+      toast(`Sync complete · ${r.wallets?.reduce((n,x)=>n+(x.newActivity||0),0)||0} new activity`);
+      const nd=await api(`/api/entities/${e.id}`);
+      state.details.set(e.id,nd);
+      entityDetail(nd);
+    }catch(x){
+      toast(x.message);
+    }finally{
+      b.disabled=false;
+    }
+  };
+
+  const edit=$('#editEntity');
+  if(edit)edit.onclick=()=>entityEditModal({
+    entity:e,
+    wallets,
+    tokens,
+    incidents,
+    evidence:Array.isArray(d?.evidence)?d.evidence:[]
+  });
+
+  const del=$('#deleteEntity');
+  if(del)del.onclick=()=>entityDeleteModal(e);
+}
+/* SHADOW_ENTITY_TOKENS_V210_END */
+
+function walletDetail(w,items){const model={entities:state.entities.filter(e=>e.id===w.entity_id),wallets:[w],tokens:state.tokens.filter(t=>items.some(a=>a.mint===t.mint)).map(t=>({...t,entity_id:w.entity_id})),activity:items};modal(`<div class="si-detail-layout"><aside class="si-detail-side"><div class="si-panel" style="box-shadow:none">${avatar(w,'xl')}<h2>Wallet</h2><p>${short(w.address)}</p><div class="si-metrics"><div class="si-metric"><strong>${esc(w.sync_status||'pending')}</strong><small>Status</small></div><div class="si-metric"><strong>${items.length}</strong><small>Events</small></div><div class="si-metric"><strong>${esc(w.chain||'solana')}</strong><small>Chain</small></div></div></div><div class="si-panel" style="box-shadow:none;margin-top:12px"><div class="si-panel-head"><span>ACTIVITY</span></div>${items.slice(0,18).map(a=>eventHtml({type:a.type,title:(a.type||'activity').toUpperCase(),detail:a.mint?short(a.mint):'',createdAt:a.block_time})).join('')||'<div class="guest-note">No activity.</div>'}</div></aside><section class="si-detail-map"><div id="detailGraph" class="si-graph"></div></section></div>`);state.detailGraph=new ShadowGraph($('#detailGraph'),model,{onSelect:openObject})}
+function tokenDetail(t){const related=state.overview?.feed?.filter(x=>x.symbol===t.symbol||x.tokenName===t.name)||[];modal(`<div class="si-detail-layout"><aside class="si-detail-side"><div class="si-panel" style="box-shadow:none">${avatar(t,'xl')}<h2>${esc(t.symbol||'Token')}</h2><p>${esc(t.name||'Unknown')}</p><p>${tokenAddressCopyHtml(t.mint)}</p><div class="si-metrics"><div class="si-metric"><strong>${money(t.market_cap||0)}</strong><small>Market cap</small></div><div class="si-metric"><strong class="${Number(t.price_change)>=0?'pos':'neg'}">${Number(t.price_change)>=0?'+':''}${Number(t.price_change||0).toFixed(1)}%</strong><small>Change</small></div><div class="si-metric"><strong>${money(t.liquidity_usd||0)}</strong><small>Liquidity</small></div></div></div><div class="si-panel" style="box-shadow:none;margin-top:12px"><div class="si-panel-head"><span>RECENT SIGNALS</span></div>${related.slice(0,12).map(eventHtml).join('')||'<div class="guest-note">No recent incident records.</div>'}</div></aside><section class="si-detail-map"><div id="detailGraph" class="si-graph"></div></section></div>`);const entities=state.entities.filter(e=>related.some(x=>x.entityId===e.id));state.detailGraph=new ShadowGraph($('#detailGraph'),{entities:entities.length?entities:[state.overview?.selected].filter(Boolean),wallets:[],tokens:[t]},{onSelect:openObject});bindTokenAddressCopy($('#modalBody')||document)}
+/* SHADOW_ENTITY_UNIVERSAL_SOURCE_V270 */
+let entityWalletCheckTimer=null;
+
+async function checkEntityWalletAvailability(form){
+  const wallet=form?.elements?.wallet;
+  const status=$('#entityWalletStatus');
+  const submit=$('#entityCreateButton');
+  if(!wallet||!status||!submit)return;
+
+  const address=String(wallet.value||'').trim();
+  form.dataset.walletDuplicate='0';
+
+  if(!address){
+    status.innerHTML='';
+    submit.disabled=false;
+    return;
+  }
+
+  if(!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)){
+    status.innerHTML='<span style="color:#9ca3af">Enter the complete Solana wallet address.</span>';
+    submit.disabled=true;
+    return;
+  }
+
+  status.innerHTML='<span style="color:#9ca3af">Checking wallet…</span>';
+  submit.disabled=true;
+
+  try{
+    const result=await api(`/api/wallets/check?address=${encodeURIComponent(address)}`);
+    if(String(wallet.value||'').trim()!==address)return;
+
+    if(!result.valid){
+      status.innerHTML=`<span style="color:#ff6b6b">${esc(result.error||'Invalid Solana wallet address')}</span>`;
+      submit.disabled=true;
+      return;
+    }
+
+    if(result.exists){
+      form.dataset.walletDuplicate='1';
+      const entity=result.entity||{};
+      const handle=entity.profileHandle
+        ? `@${String(entity.profileHandle).replace(/^@/,'')}`
+        : (entity.xHandle||'');
+      const source=entity.profilePlatform&&entity.profilePlatform!=='auto'
+        ? entity.profilePlatform
+        : '';
+      const subtitle=[handle,source].filter(Boolean).join(' · ');
+      status.innerHTML=`
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid rgba(255,90,90,.35);border-radius:12px;background:rgba(255,70,70,.06)">
+          ${entity.avatar?`<img src="${esc(entity.avatar)}" alt="" style="width:34px;height:34px;border-radius:50%;object-fit:cover;flex:0 0 auto">`:''}
+          <div style="min-width:0">
+            <strong style="display:block;color:#ff6b6b">Already in Shadow — cannot add again</strong>
+            <span style="display:block;color:#9ca3af;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(entity.name||'Existing account')}${subtitle?` · ${esc(subtitle)}`:''}</span>
+          </div>
+        </div>`;
+      submit.disabled=true;
+      return;
+    }
+
+    status.innerHTML='<span style="color:#34d399">Wallet is not in Shadow yet.</span>';
+    submit.disabled=false;
+  }catch(error){
+    status.innerHTML=`<span style="color:#ff9f0a">${esc(error.message||'Wallet check failed')}</span>`;
+    submit.disabled=false;
+  }
+}
+
+function entityModal(){
+  modal(`<h2>Add entity</h2>
+    <form id="entityForm" class="si-modal-form" novalidate>
+      <label>Name
+        <input name="name" placeholder="Display name (optional if username is set)">
+      </label>
+
+      <label>Platform
+        <select name="profilePlatform">
+          <option value="auto">Auto</option>
+          <option value="fomo">Fomo</option>
+          <option value="pump.fun">Pump.fun</option>
+          <option value="x">X</option>
+          <option value="other">Other site</option>
+        </select>
+      </label>
+
+      <label>Username / handle
+        <input name="profileHandle" placeholder="@handle" autocapitalize="off" autocomplete="off">
+      </label>
+
+      <label>Profile URL
+        <input name="profileUrl" placeholder="Optional — for any other site" inputmode="url" autocapitalize="off" autocomplete="off">
+      </label>
+
+      <label>X handle
+        <input name="xHandle" placeholder="Optional — only for X monitoring" autocapitalize="off" autocomplete="off">
+      </label>
+
+      <label>Avatar URL
+        <input name="avatar" placeholder="Optional — auto from profile / wallet" inputmode="url">
+      </label>
+
+      <label>Initial wallet
+        <input name="wallet" placeholder="Solana address" autocapitalize="off" autocomplete="off" spellcheck="false">
+      </label>
+      <div id="entityWalletStatus" style="min-height:20px;margin-top:-6px;font-size:13px"></div>
+
+      <label>Notes
+        <textarea name="notes" rows="4"></textarea>
+      </label>
+
+      <button id="entityCreateButton" class="si-button primary" type="submit">Create entity</button>
+    </form>`);
+
+  const form=$('#entityForm');
+  const wallet=form?.elements?.wallet;
+
+  if(wallet){
+    wallet.addEventListener('input',()=>{
+      clearTimeout(entityWalletCheckTimer);
+      entityWalletCheckTimer=setTimeout(()=>checkEntityWalletAvailability(form),350);
+    });
+    wallet.addEventListener('blur',()=>checkEntityWalletAvailability(form));
+  }
+
+  form.onsubmit=async event=>{
+    event.preventDefault();
+
+    if(form.dataset.walletDuplicate==='1'){
+      toast('This wallet is already tracked');
+      return;
+    }
+
+    const body=Object.fromEntries(new FormData(form));
+    const handle=String(body.profileHandle||'').trim().replace(/^@+/,'');
+    if(!String(body.name||'').trim()&&handle)body.name=`@${handle}`;
+
+    if(!String(body.name||'').trim()){
+      toast('Add a name or username');
+      form.elements.name?.focus();
+      return;
+    }
+
+    const submit=$('#entityCreateButton');
+    submit.disabled=true;
+    const previous=submit.textContent;
+    submit.textContent='Creating…';
+
+    try{
+      await api('/api/entities',{method:'POST',body:JSON.stringify(body)});
+      closeModal();
+      toast('Entity created');
+      await refresh();
+      nav('entities');
+    }catch(error){
+      if(String(error.message||'').toLowerCase().includes('wallet already tracked')){
+        form.dataset.walletDuplicate='1';
+        await checkEntityWalletAvailability(form);
+      }
+      toast(error.message);
+      submit.disabled=form.dataset.walletDuplicate==='1';
+      submit.textContent=previous;
+    }
+  };
+}
+/* SHADOW_ENTITY_UNIVERSAL_SOURCE_V270_END */
+/* SHADOW_ADMIN_ENTITY_UI_V213_START */
+async function reloadEntityDetail(id){
+  const nd=await api(`/api/entities/${id}`);
+  state.details.set(id,nd);
+  const idx=state.entities.findIndex(x=>x.id===id);
+  if(idx>=0)state.entities[idx]={...state.entities[idx],...(nd.entity||{})};
+  entityDetail(nd);
+  return nd;
+}
+
+function entityEditModal(d){
+  if(!['owner','admin'].includes(state.user?.role)){
+    toast('Owner access required');
+    return;
+  }
+
+  const e=d?.entity||d||{};
+  const status=String(e.status||'watch');
+
+  modal(`<div class="si-admin-editor">
+    <h2>Edit entity</h2>
+    <p class="guest-note" style="margin-top:-4px">Admin only · ${esc(e.xHandle||e.x_handle||e.name||e.id||'entity')}</p>
+
+    <form id="entityEditForm" class="si-modal-form" novalidate>
+      <label>Name
+        <input name="name" required maxlength="80" value="${esc(e.name||'')}">
+      </label>
+
+      <label>X handle
+        <input name="xHandle" maxlength="50" placeholder="@handle" value="${esc(e.xHandle||e.x_handle||'')}">
+      </label>
+
+      <label>Avatar URL
+        <input name="avatar" maxlength="1400000" placeholder="https://…" value="${esc(e.avatar||'')}">
+      </label>
+
+      <label>Confidence
+        <input name="confidence" type="number" min="0" max="100" step="1" value="${esc(e.confidence??50)}">
+      </label>
+
+      <label>Signal
+        <input name="riskScore" type="number" min="0" max="100" step="1" value="${esc(e.riskScore??e.risk_score??0)}">
+      </label>
+
+      <label>Status
+        <select name="status">
+          ${['watch','monitoring','high','blocked','inactive'].map(v=>`<option value="${v}" ${status===v?'selected':''}>${v}</option>`).join('')}
+        </select>
+      </label>
+
+      <label>Notes
+        <textarea name="notes" rows="5" maxlength="500">${esc(e.notes||'')}</textarea>
+      </label>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <button id="entityEditCancel" class="si-button" type="button">Cancel</button>
+        <button id="entitySaveChanges" class="si-button primary" type="button">Save changes</button>
+      </div>
+    </form>
+  </div>`);
+
+  const cancel=$('#entityEditCancel');
+  if(cancel)cancel.onclick=()=>reloadEntityDetail(e.id).catch(x=>toast(x.message));
+
+  const form=$('#entityEditForm');
+  const save=$('#entitySaveChanges');
+
+  if(save&&form)save.onclick=async()=>{
+    const name=String(form.elements.name?.value||'').trim();
+    if(!name){
+      form.elements.name?.focus();
+      toast('Name is required');
+      return;
+    }
+
+    const confidence=Number(form.elements.confidence?.value);
+    const riskScore=Number(form.elements.riskScore?.value);
+
+    if(!Number.isFinite(confidence)||confidence<0||confidence>100){
+      toast('Confidence must be 0–100');
+      return;
+    }
+    if(!Number.isFinite(riskScore)||riskScore<0||riskScore>100){
+      toast('Signal must be 0–100');
+      return;
+    }
+
+    const originalText=save.textContent;
+    save.disabled=true;
+    save.textContent='Saving…';
+
+    try{
+      const body=Object.fromEntries(new FormData(form));
+      body.confidence=confidence;
+      body.riskScore=riskScore;
+
+      const result=await api(`/api/entities/${e.id}/update`,{
+        method:'POST',
+        body:JSON.stringify(body)
+      });
+
+      if(!result?.ok||result?.mutation!=='update'){
+        throw new Error('Server did not confirm the update');
+      }
+
+      state.details.delete(e.id);
+      await refresh();
+      await reloadEntityDetail(e.id);
+      toast('Changes saved');
+    }catch(x){
+      console.error('Entity save failed:',x);
+      toast(`Save failed: ${x.message}`);
+      save.disabled=false;
+      save.textContent=originalText;
+    }
+  };
+}
+
+function entityDeleteModal(e){
+  if(!['owner','admin'].includes(state.user?.role)){
+    toast('Owner access required');
+    return;
+  }
+
+  const label=String(e.xHandle||e.x_handle||e.name||e.id||'').trim();
+  const display=label||String(e.id||'entity');
+
+  modal(`<div class="si-admin-editor">
+    <h2>Delete entity</h2>
+    <p>This permanently removes <strong>${esc(display)}</strong> from Shadow Intelligence.</p>
+    <p class="guest-note">Linked wallets, wallet activity, incidents, social records and entity evidence will also be deleted. Orphan token records are cleaned up automatically.</p>
+
+    <form id="entityDeleteForm" class="si-modal-form" novalidate>
+      <label>Type <strong>${esc(display)}</strong> to confirm
+        <input name="confirm" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${esc(display)}">
+      </label>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <button id="entityDeleteCancel" class="si-button" type="button">Cancel</button>
+        <button id="entityDeletePermanent" class="si-button" type="button" style="border-color:rgba(255,75,75,.55);color:#ff5c5c">Delete permanently</button>
+      </div>
+    </form>
+  </div>`);
+
+  const cancel=$('#entityDeleteCancel');
+  if(cancel)cancel.onclick=()=>reloadEntityDetail(e.id).catch(x=>toast(x.message));
+
+  const form=$('#entityDeleteForm');
+  const del=$('#entityDeletePermanent');
+
+  if(del&&form)del.onclick=async()=>{
+    const typed=String(form.elements.confirm?.value||'').trim();
+    if(typed!==display){
+      form.elements.confirm?.focus();
+      toast(`Type ${display} exactly`);
+      return;
+    }
+
+    const originalText=del.textContent;
+    del.disabled=true;
+    del.textContent='Deleting…';
+
+    try{
+      const result=await api(`/api/entities/${e.id}/delete`,{
+        method:'POST',
+        body:'{}'
+      });
+
+      if(!result?.ok||result?.mutation!=='delete'||result?.deletedId!==e.id){
+        throw new Error('Server did not confirm the deletion');
+      }
+
+      state.details.delete(e.id);
+      state.entities=state.entities.filter(x=>x.id!==e.id);
+
+      if(state.overview?.selected?.id===e.id){
+        state.overview={...state.overview,selected:null};
+      }
+
+      graphEntityKey='';
+      closeModal();
+      await refresh();
+      nav('entities');
+      toast('Entity deleted permanently');
+    }catch(x){
+      console.error('Entity delete failed:',x);
+      toast(`Delete failed: ${x.message}`);
+      del.disabled=false;
+      del.textContent=originalText;
+    }
+  };
+}
+/* SHADOW_ADMIN_ENTITY_UI_V213_END */
+
+function evidenceModal(){modal(`<h2>Add evidence</h2><form id="evidenceForm" class="si-modal-form"><label>Title<input name="title" required></label><label>Entity<select name="entityId"><option value="">General</option>${state.entities.map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join('')}</select></label><label>Type<select name="kind"><option value="x_post">X post</option><option value="profile">Profile</option><option value="transaction">Transaction</option><option value="screenshot">Screenshot</option><option value="note">Research note</option></select></label><label>Source URL<input name="sourceUrl" type="url"></label><label>Note<textarea name="note" rows="5"></textarea></label><button class="si-button primary">Submit evidence</button></form>`);$('#evidenceForm').onsubmit=async e=>{e.preventDefault();try{await api('/api/evidence',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});closeModal();toast('Evidence saved');loadEvidence()}catch(x){toast(x.message)}}}
+async function loadEvidence(){try{const d=await api('/api/evidence');$('#evidenceGrid').innerHTML=d.items.map(e=>`<article class="si-panel"><div class="si-eyebrow">${esc(e.kind)}</div><h3>${esc(e.title)}</h3><p>${esc(e.entityName||'General')} · ${ago(e.created_at)}</p><p>${esc(e.note||e.source_url||'')}</p></article>`).join('')||'<div class="guest-note">No evidence yet.</div>'}catch(e){toast(e.message)}}
+let chatLoadSeq=0;
+
+async function loadChat(){
+  const box=$('#chatMessages');
+  if(!box)return;
+
+  const seq=++chatLoadSeq;
+  box.setAttribute('aria-busy','true');
+
+  if(!box.childElementCount){
+    box.innerHTML='<div class="si-chat-loading">Loading messages…</div>';
+  }
+
+  try{
+    const d=await api('/api/chat/messages');
+    if(seq!==chatLoadSeq)return;
+
+    const items=Array.isArray(d.items)?d.items:[];
+
+    box.innerHTML=items.map(m=>`<div class="si-chat-message">${avatar(m,'sm')}<div class="si-chat-bubble"><strong>${esc(m.displayName)}</strong><time>${ago(m.createdAt)}</time><p>${esc(m.body)}</p></div></div>`).join('')||'<div class="guest-note">Start the conversation.</div>';
+    box.removeAttribute('aria-busy');
+
+    const toLatest=()=>{ box.scrollTop=Math.max(0,box.scrollHeight-box.clientHeight); };
+    toLatest();
+    requestAnimationFrame(toLatest);
+    requestAnimationFrame(()=>requestAnimationFrame(toLatest));
+  }catch(e){
+    if(seq!==chatLoadSeq)return;
+    box.removeAttribute('aria-busy');
+    box.innerHTML=`<div class="guest-note">${esc(e.message)}</div>`;
+  }
+}
+
+async function sendChat(e){
+  e.preventDefault();
+
+  const i=$('#chatInput');
+  const box=$('#chatMessages');
+  const body=(i?.value||'').trim();
+
+  if(!body||!box)return;
+
+  // Render immediately. Do NOT wait for network / reload.
+  const tempId='chat_tmp_'+Date.now()+'_'+Math.random().toString(36).slice(2,8);
+  const me=state.user||{displayName:'You',avatar:''};
+
+  box.insertAdjacentHTML('beforeend',`
+    <div class="si-chat-message" data-chat-temp="${tempId}">
+      ${avatar(me,'sm')}
+      <div class="si-chat-bubble">
+        <strong>${esc(me.displayName||'You')}</strong>
+        <time>sending...</time>
+        <p>${esc(body)}</p>
+      </div>
+    </div>
+  `);
+
+  i.value='';
+
+  const optimistic=box.querySelector(`[data-chat-temp="${tempId}"]`);
+  const time=optimistic?.querySelector('time');
+
+  const toBottom=()=>{
+    box.scrollTop=Math.max(0,box.scrollHeight-box.clientHeight);
+  };
+  toBottom();
+  requestAnimationFrame(toBottom);
+
+  try{
+    const saved=await api('/api/chat/messages',{
+      method:'POST',
+      body:JSON.stringify({body})
+    });
+
+    // Server confirmation: keep the already-visible message.
+    if(optimistic){
+      optimistic.removeAttribute('data-chat-temp');
+      if(saved?.item?.id)optimistic.dataset.chatId=saved.item.id;
+    }
+    if(time)time.textContent='now';
+
+  }catch(x){
+    // Keep failed bubble visible and restore draft for retry.
+    if(time){
+      time.textContent='not sent';
+      time.style.color='var(--si-pink)';
+    }
+    optimistic?.setAttribute('data-chat-failed','true');
+
+    if(i && !i.value)i.value=body;
+    toast(x.message);
+  }
+}
+
+async function loadConversations(){try{const d=await api('/api/conversations');renderConversations(d.items)}catch(e){toast(e.message)}}
+function renderConversations(a){$('#conversationList').innerHTML=a.map(u=>`<div class="si-conversation" data-user="${u.id}">${avatar(u,'sm')}<div><strong>${esc(u.displayName)}</strong><small>${esc(u.lastBody||u.xHandle||'Start')}</small></div></div>`).join('')||'<div class="guest-note">No conversations.</div>';$$('[data-user]').forEach(x=>x.onclick=()=>openDm(x.dataset.user))}
+async function searchUsers(q){if(!q.trim())return loadConversations();try{const d=await api('/api/users?q='+encodeURIComponent(q));renderConversations(d.items)}catch(e){toast(e.message)}}
+async function openDm(id){try{const d=await api('/api/dm/'+id);state.activeDm=id;$('#dmHeader').innerHTML=`${avatar(d.user,'sm')} ${esc(d.user.displayName)} <small>${esc(d.user.xHandle||'')}</small>`;$('#dmMessages').innerHTML=d.items.map(m=>`<div class="si-dm-line ${m.senderId===state.user.id?'mine':''}"><div class="si-dm-text">${esc(m.body)}</div></div>`).join('');$('#dmInput').disabled=false;$('#dmForm button').disabled=false}catch(e){toast(e.message)}}
+async function sendDm(e){e.preventDefault();if(!state.activeDm)return;const i=$('#dmInput');if(!i.value.trim())return;try{await api('/api/dm/'+state.activeDm,{method:'POST',body:JSON.stringify({body:i.value})});i.value='';openDm(state.activeDm)}catch(x){toast(x.message)}}
+async function loadSettings(){
+  try{
+    const s=await api('/api/settings');
+    $('#setPlatformName').value=s.platform_name||'';
+    $('#setRegistration').checked=s.registration_enabled==='true';
+    $('#setChat').checked=s.community_chat_enabled==='true';
+    $('#setCopy').checked=s.copy_trading_enabled==='true';
+    $('#setRiskThreshold').value=s.risk_high_threshold||80;
+    $('#setDemo').checked=s.demo_mode==='true';
+    $('#setLiveMonitor').checked=s.live_monitor_enabled==='true';
+    $('#setWalletMonitorMode').value=s.wallet_monitor_mode==='solana_rpc'?'solana_rpc':'current';
+    $('#setPollSeconds').value=s.live_poll_seconds||60;
+    $('#setHistoryLimit').value=s.wallet_history_limit||30;
+    $('#setXMonitor').checked=s.x_monitor_enabled==='true';
+
+    const h=await api('/api/live/status');
+    const monitorMode=h.walletMonitoring?.mode||s.wallet_monitor_mode||'current';
+    const rpcLive=h.walletMonitoring?.realtime||{};
+    $('#providerStatus').textContent=monitorMode==='solana_rpc'
+      ? `Mode: Solana RPC · WebSocket: ${rpcLive.connected?'live':(rpcLive.connecting||rpcLive.reconnecting)?'reconnecting':'offline'} · ${rpcLive.subscriptions||0} wallets`
+      : `Mode: Current · Solana: ${h.solana?.status||'unknown'} · ${h.solana?.provider||''}`;
+
+    await renderWalletInventory('#walletsAdminTable');
+  }catch(e){
+    toast(e.message);
+  }
+}
+async function saveSettings(e){e.preventDefault();try{const b={platform_name:$('#setPlatformName').value,registration_enabled:$('#setRegistration').checked,community_chat_enabled:$('#setChat').checked,copy_trading_enabled:$('#setCopy').checked,risk_high_threshold:$('#setRiskThreshold').value,demo_mode:$('#setDemo').checked,live_monitor_enabled:$('#setLiveMonitor').checked,wallet_monitor_mode:$('#setWalletMonitorMode').value,live_poll_seconds:$('#setPollSeconds').value,wallet_history_limit:$('#setHistoryLimit').value,x_monitor_enabled:$('#setXMonitor').checked};const s=await api('/api/settings',{method:'PATCH',body:JSON.stringify(b)});document.querySelectorAll('[data-platform-name]').forEach(x=>x.textContent=s.platform_name);toast('Settings saved')}catch(e){toast(e.message)}}
+/* SHADOW_SEARCH_PAGE_V237_APP */
+function searchMatches(q){
+  const query=String(q||'').trim().toLowerCase();
+  if(!query)return [];
+
+  const rows=[];
+
+  for(const e of state.entities||[]){
+    const hay=[e.name,e.x_handle,e.xHandle,e.notes].filter(Boolean).join(' ').toLowerCase();
+    if(hay.includes(query)){
+      rows.push({
+        kind:'entity',
+        id:e.id,
+        item:e,
+        title:e.x_handle||e.xHandle||e.name||'Entity',
+        subtitle:e.name||'Tracked entity',
+        avatar:e
+      });
+    }
+  }
+
+  for(const t of state.tokens||[]){
+    const hay=[t.symbol,t.name,t.mint,t.address].filter(Boolean).join(' ').toLowerCase();
+    if(hay.includes(query)){
+      rows.push({
+        kind:'token',
+        mint:t.mint,
+        item:t,
+        title:t.symbol||t.name||'Token',
+        subtitle:t.name||short(t.mint||''),
+        meta:short(t.mint||''),
+        avatar:t
+      });
+    }
+  }
+
+  const seenWallets=new Set();
+
+  for(const entity of state.entities||[]){
+    for(const rawWallet of (Array.isArray(entity.linkedWallets)?entity.linkedWallets:[])){
+      const address=String(rawWallet?.address||'');
+      if(!address || seenWallets.has(address))continue;
+      const wallet={...rawWallet,entity_id:rawWallet.entity_id||entity.id};
+      seenWallets.add(address);
+      const hay=[address,wallet.label,entity.name,entity.x_handle,entity.xHandle].filter(Boolean).join(' ').toLowerCase();
+      if(hay.includes(query)){
+        rows.push({
+          kind:'wallet',
+          item:wallet,
+          title:short(address),
+          subtitle:entity.x_handle||entity.xHandle||entity.name||wallet.label||'Tracked wallet',
+          meta:wallet.label||'Wallet',
+          avatar:wallet.avatar?wallet:null
+        });
+      }
+    }
+  }
+
+  for(const d of state.details.values()){
+    for(const w of d?.wallets||[]){
+      const address=String(w.address||'');
+      if(!address || seenWallets.has(address))continue;
+      seenWallets.add(address);
+      const entity=d?.entity||{};
+      const hay=[address,w.label,entity.name,entity.x_handle].filter(Boolean).join(' ').toLowerCase();
+      if(hay.includes(query)){
+        rows.push({
+          kind:'wallet',
+          item:w,
+          title:short(address),
+          subtitle:entity.x_handle||entity.name||w.label||'Tracked wallet',
+          meta:w.label||'Wallet',
+          avatar:w.avatar?w:null
+        });
+      }
+    }
+  }
+
+  return rows.slice(0,40);
+}
+
+function renderSearchPageResults(q=''){
+  const root=$('#searchPageResults');
+  if(!root)return;
+
+  const query=String(q||'').trim();
+  if(!query){
+    root.innerHTML='<div class="si-search-empty">Start typing to search Shadow Intelligence.</div>';
+    return;
+  }
+
+  const rows=searchMatches(query);
+  if(!rows.length){
+    root.innerHTML=`<div class="si-search-empty">No results for "${esc(query)}".</div>`;
+    return;
+  }
+
+  root.innerHTML=rows.map((r,index)=>`
+    <button type="button" class="si-search-result" data-search-result="${index}">
+      ${r.avatar?avatar(r.avatar,'md'):'<span class="si-search-result-icon">Search</span>'}
+      <span class="si-search-result-copy">
+        <strong>${esc(r.title)}</strong>
+        <small>${esc(r.subtitle||'')}</small>
+      </span>
+      <span class="si-search-result-meta">${esc(r.meta||r.kind)}</span>
+    </button>
+  `).join('');
+
+  root.querySelectorAll('[data-search-result]').forEach(button=>{
+    button.onclick=()=>{
+      const row=rows[Number(button.dataset.searchResult)];
+      if(!row)return;
+      if(row.kind==='entity')return openObject('entity',{id:row.id});
+      if(row.kind==='token')return openObject('token',{mint:row.mint});
+      if(row.kind==='wallet')return openObject('wallet',row.item);
+    };
+  });
+}
+
+function openSearchPage(){
+  nav('search');
+  const input=$('#searchPageInput');
+  if(!input)return;
+  input.value='';
+  renderSearchPageResults('');
+  input.focus({preventScroll:true});
+  try{input.setSelectionRange(0,0)}catch{}
+}
+
+function bindSearchPage(){
+  const open=$('#openSearchPage');
+  const input=$('#searchPageInput');
+  const clear=$('#searchPageClear');
+
+  if(open)open.onclick=openSearchPage;
+
+  if(input){
+    input.oninput=()=>renderSearchPageResults(input.value);
+    input.onkeydown=e=>{
+      if(e.key==='Escape'){
+        e.preventDefault();
+        backPage();
+        return;
+      }
+      if(e.key==='Enter'){
+        e.preventDefault();
+        const first=$('#searchPageResults [data-search-result]');
+        if(first)first.click();
+      }
+    };
+  }
+
+  if(clear)clear.onclick=()=>{
+    if(!input)return;
+    input.value='';
+    renderSearchPageResults('');
+    input.focus({preventScroll:true});
+  };
+}
+/* SHADOW_SEARCH_PAGE_V237_APP_END */
+
+function searchGlobal(q){
+  const first=searchMatches(q)[0];
+  if(!first)return toast('Nothing found');
+  if(first.kind==='entity')return openObject('entity',{id:first.id});
+  if(first.kind==='token')return openObject('token',{mint:first.mint});
+  if(first.kind==='wallet')return openObject('wallet',first.item);
+}
+boot();
+
+/* SHADOW_VIEWPORT_LOCK_V193_START */
+function installShadowViewportLock193(){
+  if(window.__shadowViewportLock193)return;
+  window.__shadowViewportLock193=true;
+
+  for(const type of ['gesturestart','gesturechange','gestureend']){
+    document.addEventListener(type,e=>{
+      e.preventDefault();
+    },{passive:false});
+  }
+
+  document.addEventListener('dblclick',e=>{
+    if(!(e.target instanceof Element && e.target.closest('.si-graph'))){
+      e.preventDefault();
+    }
+  },{passive:false});
+
+  document.addEventListener('wheel',e=>{
+    if(e.ctrlKey||e.metaKey)e.preventDefault();
+  },{passive:false});
+}
+
+installShadowViewportLock193();
+/* SHADOW_VIEWPORT_LOCK_V193_END */

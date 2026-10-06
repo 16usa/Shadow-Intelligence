@@ -16,3 +16,6 @@ solana/shadow-delegated-vault/target/
 .shadow-toolchain/
 .shadow-ci/
 .shadow-build-diagnostic-*.txt
+/.shadow-program-keys/
+/.shadow-deployer/
+/.shadow-deployer-path

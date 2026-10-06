@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#090909">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <title>SYNC</title>
+  <link rel="icon" type="image/svg+xml" href="/sync-favicon.svg">
+  <link rel="stylesheet" href="/sync.css?v=1">
+</head>
+<body>
+  <div class="ambient ambient-a"></div>
+  <div class="ambient ambient-b"></div>
+
+  <header class="topbar">
+    <a class="brand" href="/sync" aria-label="SYNC home">
+      <img class="brand-logo" src="/sync-logo.svg" alt="">
+      <span>SYNC</span>
+    </a>
+    <a id="xLink" class="x-link" href="#" aria-label="X" title="X">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M18.244 2H21.5l-7.115 8.13L22.75 22h-6.55l-5.13-6.708L5.2 22H1.94l7.61-8.697L1.5 2h6.716l4.638 6.131L18.244 2Zm-1.142 17.912h1.804L7.235 3.984H5.3l11.802 15.928Z"/>
+      </svg>
+    </a>
+    <div id="roomState" class="room-state">
+      <span class="state-dot"></span>
+      <span>CONNECTING</span>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="hero">
+      <div id="leaderLine" class="leader-line">ONE LEADER · ONE SIGNAL</div>
+<h1>Trade together.</h1>
+      <p class="hero-copy">Connect your Solana wallet and follow the leader through the existing Shadow execution system.</p>
+
+      <div class="counter-wrap">
+        <div id="walletCount" class="wallet-count">0</div>
+        <div class="wallet-label">WALLETS SYNCED</div>
+      </div>
+
+      <div id="leaderCard" class="leader-card is-empty">
+        <div class="leader-avatar" id="leaderAvatar">S</div>
+        <div class="leader-meta">
+          <strong id="leaderName">Leader not configured</strong>
+          <span id="leaderWallet">Owner setup required</span>
+        </div>
+        <div id="leaderStatus" class="leader-live" aria-label="Leader status"><span class="leader-status-dot"></span></div>
+      </div>
+    </section>
+
+    <section class="action-shell">
+      <div id="guestActions" class="guest-actions">
+        <button id="connectButton" class="primary-button" type="button">CONNECT &amp; COPY</button>
+        <p class="microcopy">Your wallet stays under your control. Shadow never asks for a seed phrase or private key.</p>
+      </div>
+
+      <div id="walletBar" class="wallet-bar" hidden>
+        <div>
+          <span class="eyebrow">CONNECTED WALLET</span>
+          <strong id="connectedWallet">—</strong>
+        </div>
+        <button id="disconnectButton" class="text-button danger" type="button">Disconnect</button>
+      </div>
+
+      <form id="copyForm" class="copy-form" hidden>
+        <div class="form-head">
+          <div>
+            <span class="eyebrow">COPY SETTINGS</span>
+            <h2 id="copyStateTitle">Ready to sync</h2>
+          </div>
+          <div id="copyBadge" class="copy-badge">OFF</div>
+        </div>
+
+        <div class="amount-block">
+          <label for="amountUsd">Buy amount</label>
+          <div class="money-input">
+            <span>$</span>
+            <input id="amountUsd" name="amountUsd" type="number" min="1" step="1" inputmode="decimal" value="50">
+          </div>
+          <div class="quick-amounts">
+            <button type="button" data-amount="25">$25</button>
+            <button type="button" data-amount="50">$50</button>
+            <button type="button" data-amount="100">$100</button>
+          </div>
+        </div>
+
+        <div class="grid-two">
+          <label class="field">
+            <span>Max position</span>
+            <div class="compact-money"><span>$</span><input id="maxPositionUsd" type="number" min="1" step="1" inputmode="decimal" value="150"></div>
+          </label>
+          <label class="field">
+            <span>Daily cap</span>
+            <div class="compact-money"><span>$</span><input id="dailyCapUsd" type="number" min="1" step="1" inputmode="decimal" value="500"></div>
+          </label>
+        </div>
+
+        <div class="section-label">BUY MARKET CAP RANGE</div>
+        <div class="grid-two">
+          <label class="field">
+            <span>Minimum MC</span>
+            <div class="compact-money"><span>$</span><input id="minMc" type="number" min="0" step="1000" inputmode="numeric" value="0"></div>
+          </label>
+          <label class="field">
+            <span>Maximum MC</span>
+            <div class="compact-money"><span>$</span><input id="maxMc" type="number" min="0" step="1000" inputmode="numeric" value="0"></div>
+          </label>
+        </div>
+
+        <div class="switch-row">
+          <label class="switch-line">
+            <span>
+              <strong>Follow buys</strong>
+              <small>Copy leader BUY signals</small>
+            </span>
+            <input id="copyBuys" type="checkbox" checked>
+            <i></i>
+          </label>
+          <label class="switch-line">
+            <span>
+              <strong>Follow sells</strong>
+              <small>Exit when the leader sells</small>
+            </span>
+            <input id="copySells" type="checkbox" checked>
+            <i></i>
+          </label>
+          <label class="switch-line sync-alert-line">
+            <span>
+              <strong>Trade alerts</strong>
+              <small id="tradeAlertsHelp">Get leader BUY / SELL push notifications even when SYNC is closed</small>
+            </span>
+            <input id="tradeAlerts" type="checkbox">
+            <i></i>
+          </label>
+          <button id="tradeAlertsTest" class="sync-alert-test" type="button" hidden>Send test notification</button>
+        </div>
+
+        <details class="advanced">
+          <summary>Advanced</summary>
+          <label class="field single-field">
+            <span>Slippage</span>
+            <div class="percent-input"><input id="slippagePercent" type="number" min="0.1" max="30" step="0.1" inputmode="decimal" value="5"><span>%</span></div>
+          </label>
+        </details>
+
+        <div id="authorizationBox" class="authorization-box" hidden>
+          <div>
+            <strong>Execution authorization required</strong>
+            <span>Authorize the delegated execution wallet before copy trading can become active.</span>
+          </div>
+          <button id="authorizeButton" type="button" class="secondary-button">AUTHORIZE</button>
+        </div>
+
+        <button id="startButton" class="primary-button" type="submit">START COPYING</button>
+        <button id="stopButton" class="secondary-button danger-outline" type="button" hidden>STOP COPYING</button>
+        <p id="copyNote" class="microcopy">Amounts are converted to SOL when you activate or update the settings.</p>
+      </form>
+    </section>
+
+    <section class="activity-section">
+      <div class="section-head">
+        <div>
+          <h2>Live signals</h2>
+        </div>
+
+      </div>
+      <div id="activityList" class="activity-list">
+        <div class="empty-row">Waiting for leader activity.</div>
+      </div>
+    </section>
+
+    <section id="ownerPanel" class="owner-panel" hidden>
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">OWNER ONLY</span>
+          <h2>Room setup</h2>
+        </div>
+      </div>
+      <p class="owner-copy">Choose the single Shadow Entity whose Main Wallet is the leader for this public room.</p>
+      <label class="field single-field">
+        <span>Leader Entity</span>
+        <select id="leaderSelect"></select>
+      </label>
+      <label class="owner-toggle">
+        <input id="roomEnabled" type="checkbox" checked>
+        <span>Public room enabled</span>
+      </label>
+      <button id="saveRoomButton" class="secondary-button" type="button">SAVE ROOM</button>
+    </section>
+
+    <footer>
+      <span>Powered by Shadow execution</span>
+      <span>Copy trading is high risk. No guaranteed results.</span>
+    </footer>
+  </main>
+
+  <div id="walletSheet" class="sheet" hidden>
+    <button class="sheet-backdrop" data-close-sheet aria-label="Close"></button>
+    <div class="sheet-card">
+      <div class="sheet-handle"></div>
+      <h2>Connect Solana wallet</h2>
+      <p>On iPhone, you can open this page inside Phantom or Solflare.</p>
+      <div id="walletChoices" class="wallet-choices"></div>
+      <button id="openPhantom" class="secondary-button" type="button">OPEN IN PHANTOM</button>
+      <button id="openSolflare" class="secondary-button" type="button">OPEN IN SOLFLARE</button>
+      <button class="text-button" type="button" data-close-sheet>Cancel</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/sync.js?v=1"></script>
+</body>
+</html>

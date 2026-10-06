@@ -1,12 +1,42 @@
-# Shadow Delegated Vault build
+# Shadow Delegated Vault — Replit SBF build
 
-The canonical build is `.github/workflows/shadow-delegated-build.yml`.
+This Replit build path no longer depends on GitHub Actions.
 
-Why: Replit's Nix runtime was repeatedly failing on prebuilt SBF toolchains
-(GLIBC / GLIBCXX / patchelf issues). The canonical SBF compile therefore runs
-on a clean Ubuntu 24.04 GitHub runner with official Agave 4.3.0.
+GitHub Actions is not part of this build path.
 
-Replit remains the Shadow web/backend host.
+The Replit builder uses:
+- existing Agave/cargo-build-sbf 4.3.x already installed in the workspace;
+- platform-tools v1.57;
+- SBPFv3 (`--arch v3`);
+- cargo-build-sbf's own Nix ELF patching;
+- an isolated HOME/cache under `.shadow-sbf-home`;
+- a recent NixOS package set fetched from `channels.nixos.org`, not GitHub.
 
-This workflow builds and uploads the `.so`; it does NOT deploy it.
-Mainnet remains fail-closed until the security gate in `SECURITY.md` is met.
+The on-chain crate is pinned to Anchor 0.32.1 and intentionally does not add
+a separate legacy `solana-program = 1.18.x` dependency.
+
+Run diagnostics only:
+
+`npm run delegated:build:doctor`
+
+Build the `.so`:
+
+`npm run delegated:build:replit`
+
+Expected artifact:
+
+`solana/shadow-delegated-vault/target/deploy/shadow_delegated_vault.so`
+
+The builder validates:
+- Program ID integrity;
+- source/dependency compatibility;
+- Replit disk space;
+- cargo-build-sbf flags;
+- the Nix dependency set used by the official platform-tools patcher;
+- final ELF magic/size/hash;
+- SBPF ELF header where llvm-readelf is available.
+
+This does NOT deploy the program, does NOT set the mainnet approval flag,
+does NOT restart the Shadow server, and does NOT call GitHub.
+
+Public mainnet autonomous execution remains fail-closed.

@@ -4,29 +4,45 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#090909">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <title>SYNC</title>
-  <link rel="stylesheet" href="/sync.css?v=1">
+  <link rel="icon" type="image/svg+xml" href="/sync-favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/sync.css?v=pepe-ui-v1">
+
+  <link rel="stylesheet" href="/sync-pepe-theme.css?v=1">
+  <link rel="stylesheet" href="/sync-pepe-fix-v2.css?v=2">
 </head>
 <body>
-  <div class="ambient ambient-a"></div>
-  <div class="ambient ambient-b"></div>
-
+  <div class="sync-soft-glow" aria-hidden="true"></div>
   <header class="topbar">
-    <a class="brand" href="/sync" aria-label="SYNC home">
-      <span class="brand-mark"></span>
-      <span>SYNC</span>
+    <a class="brand" href="/sync" aria-label="SYNC home"><span>SYNC</span></a>
+    <a id="xLink" class="x-link" href="#" aria-label="X" title="X">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M18.244 2H21.5l-7.115 8.13L22.75 22h-6.55l-5.13-6.708L5.2 22H1.94l7.61-8.697L1.5 2h6.716l4.638 6.131L18.244 2Zm-1.142 17.912h1.804L7.235 3.984H5.3l11.802 15.928Z"/>
+      </svg>
     </a>
-    <div id="roomState" class="room-state">
-      <span class="state-dot"></span>
-      <span>CONNECTING</span>
-    </div>
-  </header>
+
+    <details class="sync-menu">
+      <summary aria-label="Open menu"><span></span></summary>
+      <nav class="sync-menu-panel" aria-label="SYNC menu">
+        <a href="/sync" aria-current="page">HOME</a>
+      </nav>
+    </details>
+</header>
 
   <main class="page">
     <section class="hero">
+      <div class="sync-pepe-art" aria-hidden="true">
+        <img src="/assets/sync-pepe-hero.png?v=1" alt="">
+      </div>
       <div id="leaderLine" class="leader-line">ONE LEADER · ONE SIGNAL</div>
-      <h1>Trade together.</h1>
-      <p class="hero-copy">Connect your Solana wallet and follow the leader through the existing Shadow execution system.</p>
+      <img class="pepe-hero" src="/sync-pepe-hero.png?v=1" alt="" aria-hidden="true">
+<h1>Trade together.</h1>
+      <p class="hero-copy">Connect your Solana wallet and follow the leader through SYNC execution.</p>
 
       <div class="counter-wrap">
         <div id="walletCount" class="wallet-count">0</div>
@@ -39,14 +55,14 @@
           <strong id="leaderName">Leader not configured</strong>
           <span id="leaderWallet">Owner setup required</span>
         </div>
-        <div id="leaderStatus" class="leader-live">OFFLINE</div>
+        <div id="leaderStatus" class="leader-live" aria-label="Leader status"><span class="leader-status-dot"></span></div>
       </div>
     </section>
 
     <section class="action-shell">
       <div id="guestActions" class="guest-actions">
         <button id="connectButton" class="primary-button" type="button">CONNECT &amp; COPY</button>
-        <p class="microcopy">Your wallet stays under your control. Shadow never asks for a seed phrase or private key.</p>
+        <p class="microcopy">Your wallet stays under your control. SYNC never asks for a seed phrase or private key.</p>
       </div>
 
       <div id="walletBar" class="wallet-bar" hidden>
@@ -58,6 +74,7 @@
       </div>
 
       <form id="copyForm" class="copy-form" hidden>
+        <div class="settings-card">
         <div class="form-head">
           <div>
             <span class="eyebrow">COPY SETTINGS</span>
@@ -119,6 +136,15 @@
             <input id="copySells" type="checkbox" checked>
             <i></i>
           </label>
+          <label class="switch-line sync-alert-line">
+            <span>
+              <strong>Trade alerts</strong>
+              <small id="tradeAlertsHelp">Get leader BUY / SELL push notifications even when SYNC is closed</small>
+            </span>
+            <input id="tradeAlerts" type="checkbox">
+            <i></i>
+          </label>
+          <button id="tradeAlertsTest" class="sync-alert-test" type="button" hidden>Send test notification</button>
         </div>
 
         <details class="advanced">
@@ -137,6 +163,8 @@
           <button id="authorizeButton" type="button" class="secondary-button">AUTHORIZE</button>
         </div>
 
+        </div>
+
         <button id="startButton" class="primary-button" type="submit">START COPYING</button>
         <button id="stopButton" class="secondary-button danger-outline" type="button" hidden>STOP COPYING</button>
         <p id="copyNote" class="microcopy">Amounts are converted to SOL when you activate or update the settings.</p>
@@ -146,10 +174,9 @@
     <section class="activity-section">
       <div class="section-head">
         <div>
-          <span class="eyebrow">LEADER ACTIVITY</span>
           <h2>Live signals</h2>
         </div>
-        <span id="activityPulse" class="activity-pulse">LIVE</span>
+
       </div>
       <div id="activityList" class="activity-list">
         <div class="empty-row">Waiting for leader activity.</div>
@@ -163,7 +190,7 @@
           <h2>Room setup</h2>
         </div>
       </div>
-      <p class="owner-copy">Choose the single Shadow Entity whose Main Wallet is the leader for this public room.</p>
+      <p class="owner-copy">Choose the SYNC leader for this public room.</p>
       <label class="field single-field">
         <span>Leader Entity</span>
         <select id="leaderSelect"></select>
@@ -176,7 +203,7 @@
     </section>
 
     <footer>
-      <span>Powered by Shadow execution</span>
+      <span>Powered by SYNC</span>
       <span>Copy trading is high risk. No guaranteed results.</span>
     </footer>
   </main>

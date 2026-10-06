@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{instruction::{AccountMeta, Instruction}, program::invoke_signed, pubkey};
 use anchor_spl::token::TokenAccount;
 
-declare_id!("H2LRaXnCHp5qc2MECPFLuAVWcFwYqQTi1TgJZJT3tDQc");
+declare_id!("HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA");
 
 const WSOL: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
 const JUPITER_V6: Pubkey = pubkey!("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4");
@@ -46,7 +46,7 @@ pub mod shadow_delegated_vault {
     /// signs the outer instruction; the vault PDA signs only the inner Jupiter
     /// transfer authority. Source/destination token accounts must belong to the
     /// vault and no other vault-owned writable token account may be supplied.
-    pub fn execute_swap(ctx: Context<ExecuteSwap>, side: u8, max_input_amount: u64, jupiter_ix_data: Vec<u8>) -> Result<()> {
+    pub fn execute_swap<'info>(ctx: Context<'_, '_, 'info, 'info, ExecuteSwap<'info>>, side: u8, max_input_amount: u64, jupiter_ix_data: Vec<u8>) -> Result<()> {
         let policy_key=ctx.accounts.policy.key();
         let p=&mut ctx.accounts.policy;let clock=Clock::get()?;
         require!(!p.revoked,ErrorCode::Revoked);require!(clock.unix_timestamp<=p.expires_at,ErrorCode::Expired);
@@ -77,7 +77,7 @@ pub mod shadow_delegated_vault {
         let ix=Instruction{program_id:JUPITER_V6,accounts:metas,data:jupiter_ix_data};
         let vault_bump=[p.vault_bump];
         let vault_seeds:&[&[u8]]=&[b"vault",policy_key.as_ref(),&vault_bump];
-        let mut infos:Vec<AccountInfo>=ctx.remaining_accounts.iter().cloned().collect();infos.push(ctx.accounts.jupiter_program.to_account_info());
+        let mut infos: Vec<AccountInfo<'info>> = ctx.remaining_accounts.iter().cloned().collect();infos.push(ctx.accounts.jupiter_program.to_account_info());
         invoke_signed(&ix,&infos,&[vault_seeds])?;
         ctx.accounts.source.reload()?;ctx.accounts.destination.reload()?;
         let actual=source_before.saturating_sub(ctx.accounts.source.amount);require!(actual<=max_input_amount,ErrorCode::InputExceeded);require!(ctx.accounts.destination.amount>=dest_before,ErrorCode::DestinationDecreased);

@@ -9,7 +9,9 @@
     execution:null,
     authorizationUrl:"",
     ownerConfig:null,
-    busy:false
+    busy:false,
+    tradeAlerts:false,
+    pushActive:false
   };
 
   function qs(selector){return document.querySelector(selector)}
@@ -65,8 +67,11 @@
     var room=state.room||{};
     var live=roomReady();
     var roomState=qs("#roomState");
-    roomState.classList.toggle("is-live",live);
-    roomState.querySelector("span:last-child").textContent=live?"LIVE":"SETUP";
+    if(roomState){
+      roomState.classList.toggle("is-live",live);
+      var roomStateLabel=roomState.querySelector("span:last-child");
+      if(roomStateLabel)roomStateLabel.textContent=live?"LIVE":"SETUP";
+    }
 
     qs("#walletCount").textContent=String(Number(room.counts&&room.counts.active||0));
 
@@ -81,7 +86,7 @@
       avatar.innerHTML="S";
       name.textContent="Leader not configured";
       wallet.textContent="Owner setup required";
-      status.textContent="OFFLINE";
+      status.setAttribute("aria-label","Leader offline");
       qs("#leaderLine").textContent="ONE LEADER · ONE SIGNAL";
       return;
     }
@@ -95,7 +100,7 @@
     }
     name.textContent=leader.xHandle||leader.name||"Leader";
     wallet.textContent=short(leader.mainWallet&&leader.mainWallet.address||"");
-    status.textContent="ONLINE";
+    status.setAttribute("aria-label","Leader online");
     qs("#leaderLine").textContent="ONE LEADER · "+Number(room.counts&&room.counts.connected||0)+" CONNECTED";
   }
 
@@ -169,6 +174,7 @@
     var pending=!!(sub&&!active&&sub.engineState&&sub.engineState!=="stopped"&&sub.engineState!=="draft");
     var badge=qs("#copyBadge");
     badge.classList.toggle("is-active",active);
+    badge.classList.toggle("is-pending",pending);
     badge.textContent=active?"SYNCED":pending?"PENDING":"OFF";
     qs("#copyStateTitle").textContent=active?"Synced with leader":pending?"Authorization pending":"Ready to sync";
     qs("#startButton").textContent=active?"UPDATE SETTINGS":"START COPYING";
@@ -181,6 +187,7 @@
       state.room=await api("/api/public-copy-room/status");
       renderHero();
       renderActivity();
+      renderTradeAlerts();
     }catch(error){
       toast(error.message);
     }
@@ -219,6 +226,7 @@
     }else{
       qs("#ownerPanel").hidden=true;
     }
+    await loadTradeAlerts();
   }
 
   async function loadCopyState(){
@@ -434,15 +442,222 @@
     }
   }
 
+
+  /* SHADOW_SYNC_PUSH_OPTION1_V4 */
+  function syncPushSupported(){
+    return !!(
+      state.user &&
+      "serviceWorker" in navigator &&
+      "PushManager" in window &&
+      "Notification" in window
+    );
+  }
+
+  function syncIsIos(){
+    return /iphone|ipad|ipod/i.test(navigator.userAgent||"");
+  }
+
+  function syncIsStandalone(){
+    return window.matchMedia&&window.matchMedia("(display-mode: standalone)").matches ||
+      window.navigator.standalone===true;
+  }
+
+  function syncVapidKeyBytes(value){
+    var padding="=".repeat((4-(value.length%4))%4);
+    var base64=(value+padding).replace(/-/g,"+").replace(/_/g,"/");
+    var raw=atob(base64);
+    return Uint8Array.from(raw,function(ch){return ch.charCodeAt(0)});
+  }
+
+  async function syncCurrentPushSubscription(){
+    if(!("serviceWorker" in navigator))return null;
+    var reg=await navigator.serviceWorker.getRegistration("/");
+    if(!reg||!reg.pushManager)return null;
+    return await reg.pushManager.getSubscription();
+  }
+
+  async function syncEnsurePushSubscription(){
+    if(!syncPushSupported())throw new Error("System push is not supported in this browser");
+    if(syncIsIos()&&!syncIsStandalone()){
+      throw new Error("On iPhone: Share → Add to Home Screen, then open SYNC from the Home Screen icon");
+    }
+
+    var permission=Notification.permission;
+    if(permission!=="granted"){
+      permission=await Notification.requestPermission();
+    }
+    if(permission!=="granted"){
+      throw new Error(permission==="denied"
+        ?"Notifications are blocked in iPhone Settings"
+        :"Notification permission was not granted");
+    }
+
+    await navigator.serviceWorker.register("/sw.js",{scope:"/"});
+    var status=await api("/api/push/status");
+    var registration=await navigator.serviceWorker.ready;
+    var subscription=await registration.pushManager.getSubscription();
+
+    if(!subscription){
+      subscription=await registration.pushManager.subscribe({
+        userVisibleOnly:true,
+        applicationServerKey:syncVapidKeyBytes(status.publicKey)
+      });
+    }
+
+    await api("/api/push/subscribe",{
+      method:"POST",
+      body:JSON.stringify({subscription:subscription.toJSON()})
+    });
+
+    return subscription;
+  }
+
+  function syncLeaderAlertEnabled(settings){
+    if(!settings||!roomReady())return false;
+    var id=String(state.room.leader.id||"");
+    var entityIds=Array.isArray(settings.entityIds)?settings.entityIds.map(String):[];
+    var muted=Array.isArray(settings.mutedEntityIds)?settings.mutedEntityIds.map(String):[];
+    var explicit=!!settings.entitiesEnabled && entityIds.indexOf(id)>=0;
+    var live=!!settings.liveEnabled && muted.indexOf(id)<0;
+    return explicit||live;
+  }
+
+  function renderTradeAlerts(){
+    var input=qs("#tradeAlerts");
+    var row=input&&input.closest(".switch-line");
+    var help=qs("#tradeAlertsHelp");
+    var test=qs("#tradeAlertsTest");
+    if(!input||!help)return;
+
+    var supported=syncPushSupported();
+    var iosInstall=syncIsIos()&&!syncIsStandalone();
+
+    input.checked=!!state.tradeAlerts;
+    input.disabled=!state.user||!roomReady()||!supported||iosInstall;
+    if(row){
+      row.classList.toggle("is-active",!!state.tradeAlerts);
+      row.classList.toggle("is-unavailable",input.disabled);
+    }
+
+    if(!state.user){
+      help.textContent="Connect a wallet first to enable leader alerts";
+    }else if(!roomReady()){
+      help.textContent="Leader must be configured before alerts can be enabled";
+    }else if(!supported){
+      help.textContent="System push is not supported in this browser";
+    }else if(iosInstall){
+      help.textContent="iPhone: Share → Add to Home Screen, then open SYNC from the Home Screen";
+    }else if(Notification.permission==="denied"){
+      help.textContent="Notifications are blocked in your phone settings";
+    }else if(state.tradeAlerts){
+      help.textContent="Leader BUY / SELL alerts are active on this device";
+    }else{
+      help.textContent="Get leader BUY / SELL push notifications even when SYNC is closed";
+    }
+
+    if(test)test.hidden=!(state.tradeAlerts&&state.pushActive);
+  }
+
+  async function loadTradeAlerts(){
+    state.tradeAlerts=false;
+    state.pushActive=false;
+    if(!state.user||!roomReady()){
+      renderTradeAlerts();
+      return;
+    }
+
+    try{
+      var settingsResult=await api("/api/notification-settings");
+      var subscription=await syncCurrentPushSubscription();
+      state.pushActive=!!subscription;
+      state.tradeAlerts=syncLeaderAlertEnabled(settingsResult.settings)&&state.pushActive;
+    }catch(error){
+      console.debug("SYNC alerts state unavailable",error);
+    }
+    renderTradeAlerts();
+  }
+
+  async function setTradeAlerts(enabled){
+    if(!state.user){
+      openWalletSheet();
+      return;
+    }
+    if(!roomReady())throw new Error("Leader room is not configured yet");
+
+    if(enabled){
+      await syncEnsurePushSubscription();
+      await api("/api/notification-entities/"+encodeURIComponent(state.room.leader.id),{
+        method:"PUT",
+        body:JSON.stringify({enabled:true})
+      });
+      state.pushActive=true;
+      state.tradeAlerts=true;
+      toast("Trade alerts enabled");
+    }else{
+      await api("/api/notification-entities/"+encodeURIComponent(state.room.leader.id),{
+        method:"PUT",
+        body:JSON.stringify({enabled:false})
+      });
+      state.tradeAlerts=false;
+      state.pushActive=!!(await syncCurrentPushSubscription());
+      toast("Trade alerts disabled");
+    }
+
+    renderTradeAlerts();
+  }
+
+  async function sendTradeAlertsTest(){
+    var button=qs("#tradeAlertsTest");
+    if(!button)return;
+    button.disabled=true;
+    var original=button.textContent;
+    button.textContent="Sending…";
+    try{
+      var result=await api("/api/push/test",{method:"POST",body:"{}"});
+      if(!result.sent)throw new Error("No active push device found");
+      toast("Test notification sent");
+    }catch(error){
+      toast(error.message||"Could not send test notification");
+    }finally{
+      button.disabled=false;
+      button.textContent=original;
+    }
+  }
+  /* SHADOW_SYNC_PUSH_OPTION1_V4_END */
+
   function bind(){
+    var xLink=qs("#xLink");
+    if(xLink)xLink.onclick=function(event){
+      if((xLink.getAttribute("href")||"#")==="#")event.preventDefault();
+    };
     qs("#connectButton").onclick=openWalletSheet;
     qs("#disconnectButton").onclick=disconnectWallet;
     qsa("[data-close-sheet]").forEach(function(button){button.onclick=closeWalletSheet});
     qs("#openPhantom").onclick=function(){location.href=mobileWalletUrl("phantom")};
     qs("#openSolflare").onclick=function(){location.href=mobileWalletUrl("solflare")};
     qsa("[data-amount]").forEach(function(button){
-      button.onclick=function(){qs("#amountUsd").value=button.dataset.amount};
+      button.onclick=function(){
+        qs("#amountUsd").value=button.dataset.amount;
+        qsa("[data-amount]").forEach(function(item){
+          item.classList.toggle("is-selected",item===button);
+        });
+      };
     });
+    var tradeAlerts=qs("#tradeAlerts");
+    if(tradeAlerts)tradeAlerts.onchange=async function(){
+      var requested=tradeAlerts.checked;
+      tradeAlerts.disabled=true;
+      try{
+        await setTradeAlerts(requested);
+      }catch(error){
+        tradeAlerts.checked=!requested;
+        toast(error.message||"Could not change trade alerts");
+      }finally{
+        renderTradeAlerts();
+      }
+    };
+    var tradeAlertsTest=qs("#tradeAlertsTest");
+    if(tradeAlertsTest)tradeAlertsTest.onclick=sendTradeAlertsTest;
     qs("#copyForm").onsubmit=function(event){event.preventDefault();saveCopy(true)};
     qs("#stopButton").onclick=function(){saveCopy(false)};
     qs("#authorizeButton").onclick=function(){

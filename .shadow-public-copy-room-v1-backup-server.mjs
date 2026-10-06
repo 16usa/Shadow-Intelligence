@@ -1,0 +1,3122 @@
+/* SHADOW_DELEGATED_NONCUSTODIAL_V340 */
+/* SHADOW_INTERNAL_COPY_ENGINE_V330 */
+import http from 'node:http';
+import crypto from 'node:crypto';
+import webPush from 'web-push';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { openDb, getAllSettings, getSetting } from './src/db.mjs';
+import { hashPassword, verifyPassword, createSession, deleteSession, getUserFromSession, setSessionCookie, clearSessionCookie } from './src/auth.mjs';
+import { clean, cleanEmail, isEmail, id, nowIso, json, parseCookies, readJson, maskWallet, isSafeHttpUrl, isSolanaAddress } from './src/utils.mjs';
+import { resolveWalletAvatar } from './src/adapters/pump-profile.mjs';
+import { resolveProfileAvatar, normalizeProfilePlatform, normalizeProfileHandle, isPublicProfileUrl } from './src/adapters/profile-avatar.mjs';
+import { syncCopyGroup, syncCopySubscription } from './src/adapters/copy-trading.mjs';
+import { ensureExecutionWalletSchema, mainCopyWalletRows, engineExecutionSnapshot, executionAuthorizationRow, persistExecutionAuthorization, markExecutionAuthorizationError, clearExecutionAuthorization } from './src/execution-wallet-24x7.mjs'; // SHADOW_EXECUTION_WALLET_24X7_V320
+import { createInternalCopyEngine } from './src/internal-copy-engine.mjs'; // SHADOW_INTERNAL_COPY_ENGINE_V330
+import { providerHealth } from './src/adapters/intelligence.mjs';
+import { createLiveIntelligence } from './src/live-intelligence.mjs';
+import { getTokenMarket, getTokenMetadataBatch, getTokenMarketsBatch, getPumpTokenMarket } from './src/adapters/token-market.mjs';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PUBLIC_DIR = path.join(__dirname, 'public');
+const MIME = { '.html':'text/html; charset=utf-8', '.css':'text/css; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.webmanifest':'application/manifest+json; charset=utf-8', '.svg':'image/svg+xml', '.png':'image/png', '.ico':'image/x-icon' };
+
+// === TOKEN PNL V13 START ===
+/* SHADOW_TRADE_ONLY_V239_SERVER */
+const WSOL_MINT = 'So11111111111111111111111111111111111111112';
+let solUsdCache = { value:0, at:0 };
+async function currentSolUsd(){
+  const now=Date.now();
+  if(solUsdCache.value>0 && now-solUsdCache.at<120000) return solUsdCache.value;
+  try{
+    const market=await Promise.race([
+      getTokenMarket(WSOL_MINT),
+      new Promise(resolve=>setTimeout(()=>resolve(null),2500))
+    ]);
+    const price=Number(market?.priceUsd||0);
+    if(Number.isFinite(price) && price>0) solUsdCache={value:price,at:now};
+  }catch{}
+  return solUsdCache.value||0;
+}
+function entityTokenPnlRows(db,entityId,limit=12,solUsd=0){
+  const rows=db.prepare(`
+    SELECT t.*,MAX(COALESCE(NULLIF(a.block_time,''),a.created_at)) AS lastActivity,
+      SUM(CASE WHEN a.type IN ('buy','swap') THEN ABS(COALESCE(a.token_amount,0)) ELSE 0 END) AS buyTokens,
+      SUM(CASE WHEN a.type='sell' THEN ABS(COALESCE(a.token_amount,0)) ELSE 0 END) AS sellTokens,
+
+      SUM(CASE WHEN a.type IN ('buy','swap') AND COALESCE(a.trade_usd,0)>0
+        THEN ABS(a.trade_usd) ELSE 0 END) AS buyTradeUsd,
+      SUM(CASE WHEN a.type='sell' AND COALESCE(a.trade_usd,0)>0
+        THEN ABS(a.trade_usd) ELSE 0 END) AS sellTradeUsd,
+
+      SUM(CASE WHEN a.type IN ('buy','swap') AND COALESCE(a.trade_usd,0)<=0
+                    AND ABS(COALESCE(a.sol_amount,0))>0
+        THEN ABS(a.sol_amount) ELSE 0 END) AS buyFallbackSol,
+      SUM(CASE WHEN a.type='sell' AND COALESCE(a.trade_usd,0)<=0
+                    AND ABS(COALESCE(a.sol_amount,0))>0
+        THEN ABS(a.sol_amount) ELSE 0 END) AS sellFallbackSol,
+
+      SUM(CASE WHEN a.type IN ('buy','swap') AND COALESCE(a.trade_usd,0)<=0
+                    AND ABS(COALESCE(a.sol_amount,0))<=1e-12
+                    AND COALESCE(a.price_usd,0)>0
+        THEN ABS(COALESCE(a.token_amount,0))*a.price_usd ELSE 0 END) AS buyObservedUsd,
+      SUM(CASE WHEN a.type='sell' AND COALESCE(a.trade_usd,0)<=0
+                    AND ABS(COALESCE(a.sol_amount,0))<=1e-12
+                    AND COALESCE(a.price_usd,0)>0
+        THEN ABS(COALESCE(a.token_amount,0))*a.price_usd ELSE 0 END) AS sellObservedUsd,
+
+      SUM(CASE WHEN a.type IN ('buy','swap') AND COALESCE(a.trade_usd,0)<=0
+                    AND ABS(COALESCE(a.sol_amount,0))<=1e-12
+                    AND COALESCE(a.price_usd,0)<=0 THEN 1 ELSE 0 END) AS unknownBuyRows,
+      SUM(CASE WHEN a.type='sell' AND COALESCE(a.trade_usd,0)<=0
+                    AND ABS(COALESCE(a.sol_amount,0))<=1e-12
+                    AND COALESCE(a.price_usd,0)<=0 THEN 1 ELSE 0 END) AS unknownSellRows
+    FROM tokens t
+    JOIN wallet_activity a ON a.mint=t.mint
+    WHERE a.entity_id=?
+      AND a.type IN ('buy','sell','swap')
+    GROUP BY t.id
+    HAVING
+      SUM(CASE WHEN a.type IN ('buy','swap') THEN ABS(COALESCE(a.token_amount,0)) ELSE 0 END)>1e-12
+      AND (
+        SUM(CASE WHEN a.type IN ('buy','swap') THEN ABS(COALESCE(a.token_amount,0)) ELSE 0 END)
+        -
+        SUM(CASE WHEN a.type='sell' THEN ABS(COALESCE(a.token_amount,0)) ELSE 0 END)
+      )>1e-12
+    ORDER BY lastActivity DESC
+    LIMIT ?
+  `).all(entityId,limit);
+
+  return rows.map(row=>{
+    const buyTokens=Math.abs(Number(row.buyTokens||0));
+    const sellTokens=Math.abs(Number(row.sellTokens||0));
+    const buyFallbackSol=Math.abs(Number(row.buyFallbackSol||0));
+    const sellFallbackSol=Math.abs(Number(row.sellFallbackSol||0));
+    const buyTradeUsd=Math.abs(Number(row.buyTradeUsd||0));
+    const sellTradeUsd=Math.abs(Number(row.sellTradeUsd||0));
+    const buyObservedUsd=Math.abs(Number(row.buyObservedUsd||0));
+    const sellObservedUsd=Math.abs(Number(row.sellObservedUsd||0));
+    const unknownBuyRows=Number(row.unknownBuyRows||0);
+    const unknownSellRows=Number(row.unknownSellRows||0);
+    const currentPriceUsd=Math.max(0,Number(row.price_usd||0));
+
+    const buyUsd=buyTradeUsd+buyObservedUsd+(buyFallbackSol*Math.max(0,solUsd));
+    const sellUsd=sellTradeUsd+sellObservedUsd+(sellFallbackSol*Math.max(0,solUsd));
+
+    const matchedSold=Math.min(buyTokens,sellTokens);
+    const avgBuyUsdPerToken=buyTokens>0?buyUsd/buyTokens:0;
+    const matchedSellUsd=sellTokens>0?sellUsd*(matchedSold/sellTokens):0;
+    const realizedCostUsd=matchedSold*avgBuyUsdPerToken;
+    const realizedPnlUsd=matchedSellUsd-realizedCostUsd;
+    const remainingKnown=Math.max(0,buyTokens-matchedSold);
+    const unrealizedValueUsd=remainingKnown*currentPriceUsd;
+    const unrealizedCostUsd=remainingKnown*avgBuyUsdPerToken;
+    const unrealizedPnlUsd=unrealizedValueUsd-unrealizedCostUsd;
+
+    const canValueSol=(buyFallbackSol+sellFallbackSol)<=1e-12 || solUsd>0;
+    const canValueOpen=remainingKnown<=1e-12 || currentPriceUsd>0;
+    const pnlKnown=buyTokens>0 && buyUsd>0 && canValueSol && canValueOpen
+      && unknownBuyRows===0 && unknownSellRows===0;
+    const pnlUsd=pnlKnown?realizedPnlUsd+unrealizedPnlUsd:null;
+    const pnlPercent=pnlKnown&&buyUsd>0?(pnlUsd/buyUsd)*100:null;
+    const pnlEstimated=!!(
+      buyFallbackSol>1e-12 || sellFallbackSol>1e-12 ||
+      buyObservedUsd>0 || sellObservedUsd>0
+    );
+
+    return {...row,
+      pnlKnown,
+      pnlEstimated,
+      pnlUsd:pnlKnown?Number(pnlUsd.toFixed(2)):null,
+      pnlPercent:pnlKnown?Number(pnlPercent.toFixed(2)):null,
+      realizedPnlUsd:pnlKnown?Number(realizedPnlUsd.toFixed(2)):null,
+      unrealizedPnlUsd:pnlKnown?Number(unrealizedPnlUsd.toFixed(2)):null,
+      positionTokens:remainingKnown,
+      costBasisUsd:pnlKnown?Number(buyUsd.toFixed(2)):null,
+      solUsd:solUsd>0?Number(solUsd.toFixed(4)):null
+    };
+  });
+}
+// === TOKEN PNL V13 END ===
+
+/* SHADOW_TOKEN_IMAGE_BACKFILL_V212_START */
+async function backfillMissingTokenImages(db,{limit=5000}={}){
+  if(!process.env.HELIUS_API_KEY){
+    return {ok:false,skipped:true,reason:'HELIUS_API_KEY not configured'};
+  }
+  const rows=db.prepare(`
+    SELECT id,mint,image
+    FROM tokens
+    WHERE COALESCE(TRIM(image),'')=''
+    ORDER BY COALESCE(last_market_at,created_at) DESC
+    LIMIT ?
+  `).all(Math.max(1,Math.min(Number(limit)||5000,10000)));
+  if(!rows.length)return {ok:true,checked:0,updated:0};
+  const metadata=await getTokenMetadataBatch(rows.map(r=>r.mint));
+  const update=db.prepare(`UPDATE tokens SET image=? WHERE id=? AND COALESCE(TRIM(image),'')=''`);
+  let updated=0;
+  db.exec('BEGIN IMMEDIATE');
+  try{
+    for(const row of rows){
+      const image=String(metadata.get(row.mint)?.image||'').trim();
+      if(!image)continue;
+      updated+=Number(update.run(image,row.id).changes||0);
+    }
+    db.exec('COMMIT');
+  }catch(error){
+    db.exec('ROLLBACK');
+    throw error;
+  }
+  return {ok:true,checked:rows.length,updated};
+}
+/* SHADOW_TOKEN_IMAGE_BACKFILL_V212_END */
+function userFor(req, db) {
+  return getUserFromSession(db, parseCookies(req).si_session);
+}
+function requireUser(req, res, db) {
+  const user = userFor(req, db);
+  if (!user) { json(res, 401, { error: 'Authentication required' }); return null; }
+  return user;
+}
+function requireOwner(req, res, db) {
+  const user = requireUser(req, res, db);
+  if (!user) return null;
+  if (user.role !== 'owner' && user.role !== 'admin') { json(res, 403, { error: 'Owner access required' }); return null; }
+  return user;
+}
+/* SHADOW_USER_COPY_TRADING_V230_SERVER_HELPERS */
+const BASE58_ALPHABET='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+function decodeBase58(value){
+  const text=String(value||'');
+  if(!text)return Buffer.alloc(0);
+  let bytes=[0];
+  for(const ch of text){
+    const digit=BASE58_ALPHABET.indexOf(ch);
+    if(digit<0)throw new Error('Invalid base58');
+    let carry=digit;
+    for(let i=0;i<bytes.length;i++){
+      const n=bytes[i]*58+carry;
+      bytes[i]=n&255;
+      carry=n>>8;
+    }
+    while(carry){
+      bytes.push(carry&255);
+      carry>>=8;
+    }
+  }
+  for(let i=0;i<text.length-1&&text[i]==='1';i++)bytes.push(0);
+  return Buffer.from(bytes.reverse());
+}
+
+function verifySolanaMessage(address,message,signatureBase64){
+  try{
+    const raw=decodeBase58(address);
+    if(raw.length!==32)return false;
+    const sig=Buffer.from(String(signatureBase64||''),'base64');
+    if(sig.length!==64)return false;
+    const der=Buffer.concat([
+      Buffer.from('302a300506032b6570032100','hex'),
+      raw
+    ]);
+    const key=crypto.createPublicKey({key:der,format:'der',type:'spki'});
+    return crypto.verify(null,Buffer.from(String(message||''),'utf8'),key,sig);
+  }catch{
+    return false;
+  }
+}
+
+function userWalletRows(db,userId){
+  return db.prepare(`
+    SELECT id,address,provider,verified_at AS verifiedAt,created_at AS createdAt
+    FROM user_wallets
+    WHERE user_id=?
+    ORDER BY verified_at DESC
+  `).all(userId);
+}
+
+function copySubscriptionRow(db,userId,entityId){
+  const row=db.prepare(`
+    SELECT s.*,uw.address AS walletAddress,uw.provider AS walletProvider,
+           e.name AS entityName,e.x_handle AS xHandle
+    FROM copy_subscriptions s
+    JOIN user_wallets uw ON uw.id=s.user_wallet_id
+    JOIN entities e ON e.id=s.entity_id
+    WHERE s.user_id=? AND s.entity_id=?
+  `).get(userId,entityId);
+  if(!row)return null;
+  return {
+    ...row,
+    enabled:!!row.enabled,
+    copyBuys:!!row.copy_buys,
+    copySells:!!row.copy_sells,
+    amountSol:row.amount_sol,
+    maxPositionSol:row.max_position_sol,
+    maxDailySol:row.max_daily_sol,
+    slippageBps:row.slippage_bps,
+    minMarketCapUsd:Number(row.min_market_cap_usd||0),
+    maxMarketCapUsd:Number(row.max_market_cap_usd||0),
+    sellPercent:row.sell_percent,
+    engineState:row.engine_state,
+    lastError:row.last_error,
+    walletAddress:row.walletAddress,
+    walletProvider:row.walletProvider
+  };
+}
+
+function numBetween(value,min,max,fallback){
+  const n=Number(value);
+  return Number.isFinite(n)?Math.max(min,Math.min(max,n)):fallback;
+}
+function shadowCopyEngineConfigured(){
+  return !!process.env.COPY_ENGINE_URL || typeof globalThis.__SHADOW_INTERNAL_COPY_ENGINE_SYNC==='function';
+}
+/* SHADOW_INTERNAL_COPY_ENGINE_V330_HELPERS */
+/* SHADOW_USER_COPY_TRADING_V230_SERVER_HELPERS_END */
+/* SHADOW_NOTIFICATIONS_V240_SERVER */
+function ensureNotificationPreferences(db,userId){
+  let row=db.prepare(`
+    SELECT * FROM user_notification_preferences WHERE user_id=?
+  `).get(userId);
+  if(!row){
+    const at=nowIso();
+    db.prepare(`
+      INSERT INTO user_notification_preferences
+        (user_id,entities_enabled,tokens_enabled,live_enabled,started_at,last_seen_at,updated_at)
+      VALUES (?,0,0,0,?,?,?)
+    `).run(userId,at,at,at);
+    row=db.prepare(`SELECT * FROM user_notification_preferences WHERE user_id=?`).get(userId);
+  }
+  return row;
+}
+
+function notificationSettingsRow(db,userId){
+  const row=ensureNotificationPreferences(db,userId);
+  const entityIds=db.prepare(`
+    SELECT entity_id AS id FROM user_notification_entities
+    WHERE user_id=? ORDER BY created_at,entity_id
+  `).all(userId).map(x=>x.id);
+  const tokenMints=db.prepare(`
+    SELECT mint FROM user_notification_tokens
+    WHERE user_id=? ORDER BY created_at,mint
+  `).all(userId).map(x=>x.mint);
+  const mutedEntityIds=db.prepare(`
+    SELECT entity_id AS id FROM user_notification_entity_mutes
+    WHERE user_id=? ORDER BY created_at,entity_id
+  `).all(userId).map(x=>x.id);
+  return {
+    entitiesEnabled:!!row.entities_enabled,
+    tokensEnabled:!!row.tokens_enabled,
+    liveEnabled:!!row.live_enabled,
+    entityIds,tokenMints,mutedEntityIds,
+    startedAt:row.started_at,lastSeenAt:row.last_seen_at,updatedAt:row.updated_at
+  };
+}
+
+const NOTIFICATION_MATCH_SQL=`
+  a.type IN ('buy','sell','swap')
+  AND COALESCE(NULLIF(a.block_time,''),a.created_at) >= p.started_at
+  AND (
+    (
+      p.live_enabled=1
+      AND NOT EXISTS (
+        SELECT 1 FROM user_notification_entity_mutes nm
+        WHERE nm.user_id=p.user_id AND nm.entity_id=a.entity_id
+      )
+    )
+    OR (
+      p.entities_enabled=1
+      AND EXISTS (
+        SELECT 1 FROM user_notification_entities ne
+        WHERE ne.user_id=p.user_id AND ne.entity_id=a.entity_id
+      )
+    )
+    OR (
+      p.tokens_enabled=1
+      AND EXISTS (
+        SELECT 1 FROM user_notification_tokens nt
+        WHERE nt.user_id=p.user_id AND nt.mint=a.mint
+      )
+    )
+  )
+`;
+
+function notificationRows(db,userId,limit=60){
+  ensureNotificationPreferences(db,userId);
+  const safeLimit=Math.max(1,Math.min(Number(limit)||60,100));
+  const items=db.prepare(`
+    SELECT
+      a.id,a.type,a.entity_id AS entityId,a.mint AS tokenMint,
+      ABS(COALESCE(a.token_amount,0)) AS tokenAmount,
+      ABS(COALESCE(a.sol_amount,0)) AS solAmount,
+      ABS(COALESCE(a.trade_usd,0)) AS tradeUsd,
+      ABS(COALESCE(a.price_usd,0)) AS eventTokenPriceUsd,
+      COALESCE(NULLIF(a.block_time,''),a.created_at) AS eventAt,
+      e.name AS entityName,e.x_handle AS xHandle,e.avatar AS entityAvatar,
+      t.symbol,t.name AS tokenName,t.image AS tokenImage,
+      COALESCE(t.market_cap,0) AS marketCap,
+      COALESCE(t.price_usd,0) AS tokenPriceUsd
+    FROM wallet_activity a
+    JOIN user_notification_preferences p ON p.user_id=?
+    LEFT JOIN entities e ON e.id=a.entity_id
+    LEFT JOIN tokens t ON t.mint=a.mint
+    WHERE ${NOTIFICATION_MATCH_SQL}
+    ORDER BY COALESCE(NULLIF(a.block_time,''),a.created_at) DESC
+    LIMIT ?
+  `).all(userId,safeLimit);
+  const countRow=db.prepare(`
+    SELECT COUNT(*) AS n
+    FROM wallet_activity a
+    JOIN user_notification_preferences p ON p.user_id=?
+    WHERE ${NOTIFICATION_MATCH_SQL}
+      AND COALESCE(NULLIF(a.block_time,''),a.created_at)
+          > COALESCE(NULLIF(p.last_seen_at,''),p.started_at)
+  `).get(userId);
+  return {items,unread:Number(countRow?.n||0)};
+}
+/* SHADOW_NOTIFICATIONS_V240_SERVER_END */
+
+/* SHADOW_WEB_PUSH_IOS_V100_SERVER */
+const SHADOW_PUSH_VAPID_SUBJECT='mailto:push@shadow-intelligence.app';
+let shadowPushConfiguredKey='';
+
+function shadowPushKeys(db){
+  let row=db.prepare(`SELECT public_key AS publicKey,private_key AS privateKey FROM web_push_config WHERE singleton=1`).get();
+  if(!row?.publicKey||!row?.privateKey){
+    const keys=webPush.generateVAPIDKeys();
+    db.prepare(`INSERT OR REPLACE INTO web_push_config (singleton,public_key,private_key,created_at) VALUES (1,?,?,?)`)
+      .run(keys.publicKey,keys.privateKey,nowIso());
+    row={publicKey:keys.publicKey,privateKey:keys.privateKey};
+  }
+  const publicKey=row.publicKey;
+  const privateKey=row.privateKey;
+  const configKey=`${publicKey}:${privateKey}`;
+  if(shadowPushConfiguredKey!==configKey){
+    webPush.setVapidDetails(SHADOW_PUSH_VAPID_SUBJECT,publicKey,privateKey);
+    shadowPushConfiguredKey=configKey;
+  }
+  return {publicKey,privateKey};
+}
+
+function shadowPushDeviceRows(db,userId){
+  return db.prepare(`
+    SELECT id,user_id AS userId,endpoint,p256dh,auth,user_agent AS userAgent,
+           last_activity_rowid AS lastActivityRowid,last_event_at AS lastEventAt,created_at AS createdAt,updated_at AS updatedAt
+    FROM web_push_subscriptions
+    WHERE user_id=?
+    ORDER BY updated_at DESC
+  `).all(userId);
+}
+
+/* SHADOW_PUSH_MC_FIX_V130 */
+function shadowPushPendingRows(db,userId,afterRowid,limit=12){
+  ensureNotificationPreferences(db,userId);
+  const safeLimit=Math.max(1,Math.min(Number(limit)||12,25));
+  return db.prepare(`
+    SELECT
+      a.rowid AS activityRowid,a.id,a.type,a.entity_id AS entityId,a.mint AS tokenMint,
+      ABS(COALESCE(a.token_amount,0)) AS tokenAmount,
+      ABS(COALESCE(a.sol_amount,0)) AS solAmount,
+      ABS(COALESCE(a.trade_usd,0)) AS tradeUsd,
+      ABS(COALESCE(a.price_usd,0)) AS eventTokenPriceUsd,
+      COALESCE(NULLIF(a.block_time,''),a.created_at) AS eventAt,
+      e.name AS entityName,e.x_handle AS xHandle,e.avatar AS entityAvatar,
+      t.id AS tokenId,t.symbol,t.name AS tokenName,t.image AS tokenImage,
+      COALESCE(t.market_cap,0) AS marketCap,
+      COALESCE(t.price_usd,0) AS tokenPriceUsd,
+      COALESCE(t.last_market_at,'') AS lastMarketAt,
+      COALESCE((
+        SELECT ms.market_cap
+        FROM market_snapshots ms
+        WHERE ms.token_id=t.id AND COALESCE(ms.market_cap,0)>0
+        ORDER BY ms.created_at DESC
+        LIMIT 1
+      ),0) AS snapshotMarketCap
+    FROM wallet_activity a
+    JOIN user_notification_preferences p ON p.user_id=?
+    LEFT JOIN entities e ON e.id=a.entity_id
+    LEFT JOIN tokens t ON t.mint=a.mint
+    WHERE ${NOTIFICATION_MATCH_SQL}
+      AND a.rowid>?
+    ORDER BY a.rowid ASC
+    LIMIT ?
+  `).all(userId,Math.max(0,Number(afterRowid)||0),safeLimit);
+}
+
+const shadowPushMarketCache=new Map();
+
+async function shadowPushMarketData(row,db){
+  const mint=String(row?.tokenMint||'').trim();
+  let marketCap=Math.abs(Number(row?.marketCap||0));
+  if(!(marketCap>0))marketCap=Math.abs(Number(row?.snapshotMarketCap||0));
+
+  let priceUsd=Math.abs(Number(row?.tokenPriceUsd||0));
+  if(!(priceUsd>0))priceUsd=Math.abs(Number(row?.eventTokenPriceUsd||0));
+
+  if(!mint)return {marketCap,priceUsd};
+
+  const cached=shadowPushMarketCache.get(mint);
+  const now=Date.now();
+  if(cached && now-cached.at<15000){
+    return {
+      marketCap:Math.abs(Number(cached.marketCap||marketCap)),
+      priceUsd:Math.abs(Number(cached.priceUsd||priceUsd))
+    };
+  }
+
+  try{
+    const live=await getTokenMarket(mint);
+    const liveMc=Math.abs(Number(live?.marketCap||0));
+    const livePrice=Math.abs(Number(live?.priceUsd||0));
+    if(liveMc>0)marketCap=liveMc;
+    if(livePrice>0)priceUsd=livePrice;
+
+    if(live && row?.tokenId){
+      db.prepare(`
+        UPDATE tokens
+        SET market_cap=CASE WHEN ?>0 THEN ? ELSE market_cap END,
+            price_usd=CASE WHEN ?>0 THEN ? ELSE price_usd END,
+            last_market_at=?
+        WHERE id=?
+      `).run(
+        marketCap,marketCap,
+        priceUsd,priceUsd,
+        nowIso(),
+        row.tokenId
+      );
+    }
+  }catch(error){
+    console.debug('Push market refresh skipped:',String(error?.message||error));
+  }
+
+  shadowPushMarketCache.set(mint,{at:now,marketCap,priceUsd});
+  return {marketCap,priceUsd};
+}
+/* SHADOW_PUSH_MC_FIX_V130_QUERY_END */
+
+function shadowPushEntityLabel(row){
+  const handle=String(row?.xHandle||'').trim();
+  if(handle)return handle.startsWith('@')?handle:`@${handle}`;
+  return String(row?.entityName||'Entity').trim()||'Entity';
+}
+function shadowPushTokenLabel(row){
+  const raw=String(row?.symbol||row?.tokenName||'Token').trim()||'Token';
+  return raw.startsWith('$')?raw:`$${raw}`;
+}
+function shadowPushAction(row){
+  const type=String(row?.type||'').toLowerCase();
+  return type==='sell'?'sold':type==='swap'?'swapped into':'bought';
+}
+/* SHADOW_PUSH_TRADE_CARD_V120 */
+function shadowPushUsd(value){
+  const n=Math.abs(Number(value||0));
+  if(!(n>0))return '';
+  const maximumFractionDigits=n<1?2:n<100?2:0;
+  return new Intl.NumberFormat('en-US',{
+    style:'currency',
+    currency:'USD',
+    minimumFractionDigits:0,
+    maximumFractionDigits
+  }).format(n);
+}
+
+function shadowPushMarketCap(value){
+  const n=Math.abs(Number(value||0));
+  if(!(n>0))return 'MC —';
+  const units=[
+    [1e12,'T'],
+    [1e9,'B'],
+    [1e6,'M'],
+    [1e3,'K']
+  ];
+  for(const [size,suffix] of units){
+    if(n>=size){
+      const scaled=n/size;
+      const digits=scaled>=100?0:scaled>=10?1:2;
+      return `MC $${scaled.toFixed(digits).replace(/\.0+$|(\.\d*[1-9])0+$/,'$1')}${suffix}`;
+    }
+  }
+  return `MC $${Math.round(n).toLocaleString('en-US')}`;
+}
+
+async function shadowPushTradeUsd(row,market={}){
+  let usd=Math.abs(Number(row?.tradeUsd||0));
+  if(usd>0)return usd;
+
+  const tokenAmount=Math.abs(Number(row?.tokenAmount||0));
+  const eventTokenPrice=Math.abs(Number(row?.eventTokenPriceUsd||0));
+  const tokenPrice=eventTokenPrice||Math.abs(Number(market?.priceUsd||0));
+  if(tokenAmount>0&&tokenPrice>0){
+    usd=tokenAmount*tokenPrice;
+    if(usd>0)return usd;
+  }
+
+  const solAmount=Math.abs(Number(row?.solAmount||0));
+  if(solAmount>0){
+    const solUsd=await currentSolUsd();
+    if(solUsd>0)return solAmount*solUsd;
+  }
+  return 0;
+}
+
+async function shadowPushPayload(row,db){
+  const market=await shadowPushMarketData(row,db);
+  const tradeUsd=await shadowPushTradeUsd(row,market);
+  const entity=shadowPushEntityLabel(row);
+  const action=shadowPushAction(row);
+  const token=shadowPushTokenLabel(row);
+  const amountText=shadowPushUsd(tradeUsd);
+  const marketCap=Number(market?.marketCap||row?.marketCap||row?.snapshotMarketCap||0);
+  const mcText=marketCap>0?shadowPushMarketCap(marketCap):'';
+  const detail=[amountText,mcText].filter(Boolean).join(' · ');
+
+  return {
+    title:`${entity} ${action} ${token}`,
+    body:detail||'Confirmed on-chain trade',
+    tag:`shadow-trade-${String(row?.id||'event')}`,
+    url:'/',
+    avatar:String(row?.entityAvatar||'').trim(),
+    eventId:String(row?.id||''),
+    entityId:String(row?.entityId||''),
+    tokenMint:String(row?.tokenMint||'')
+  };
+}
+/* SHADOW_PUSH_TRADE_CARD_V120_END */
+function shadowPushSubscriptionObject(row){
+  return {endpoint:row.endpoint,keys:{p256dh:row.p256dh,auth:row.auth}};
+}
+
+async function shadowSendPush(row,payload){
+  return webPush.sendNotification(
+    shadowPushSubscriptionObject(row),
+    JSON.stringify(payload),
+    {TTL:120,urgency:'high'}
+  );
+}
+
+async function shadowPushDispatchOnce(db){
+  shadowPushKeys(db);
+  const subscriptions=db.prepare(`
+    SELECT id,user_id AS userId,endpoint,p256dh,auth,last_activity_rowid AS lastActivityRowid,last_event_at AS lastEventAt
+    FROM web_push_subscriptions
+    ORDER BY updated_at ASC
+  `).all();
+
+  for(const subscription of subscriptions){
+    const events=shadowPushPendingRows(db,subscription.userId,subscription.lastActivityRowid,12);
+    let cursor=Math.max(0,Number(subscription.lastActivityRowid)||0);
+    for(const event of events){
+      try{
+        await shadowSendPush(subscription,await shadowPushPayload(event,db));
+        cursor=Math.max(cursor,Number(event.activityRowid)||0);
+        db.prepare(`UPDATE web_push_subscriptions SET last_activity_rowid=?,last_event_at=?,updated_at=? WHERE id=?`)
+          .run(cursor,String(event.eventAt||nowIso()),nowIso(),subscription.id);
+      }catch(error){
+        const status=Number(error?.statusCode||0);
+        if(status===404||status===410){
+          db.prepare('DELETE FROM web_push_subscriptions WHERE id=?').run(subscription.id);
+        }else{
+          console.warn('Web Push delivery failed:',error?.message||error);
+        }
+        break;
+      }
+    }
+  }
+}
+
+function startShadowPushDispatcher(db){
+  shadowPushKeys(db);
+  let busy=false;
+  const run=async()=>{
+    if(busy)return;
+    busy=true;
+    try{await shadowPushDispatchOnce(db);}catch(error){console.warn('Web Push dispatcher failed:',error?.message||error);}finally{busy=false;}
+  };
+  const timer=setInterval(run,2500);
+  timer.unref?.();
+  setTimeout(run,800).unref?.();
+  return ()=>clearInterval(timer);
+}
+/* SHADOW_WEB_PUSH_IOS_V100_SERVER_END */
+
+
+
+/* SHADOW_TOP_24H_MOVERS_V250_SERVER */
+const TOP_MOVERS_CACHE_MS=45000;
+let topMovers24hCache={at:0,payload:null,promise:null};
+
+function moverSparkline1h(db,tokenId,currentPrice,change1h){
+  const cutoff=new Date(Date.now()-60*60*1000).toISOString();
+  const rows=db.prepare(`
+    SELECT price_usd AS price,created_at AS at
+    FROM market_snapshots
+    WHERE token_id=? AND created_at>=? AND price_usd>0
+    ORDER BY created_at ASC
+    LIMIT 200
+  `).all(tokenId,cutoff);
+
+  let values=rows.map(row=>Number(row.price)).filter(n=>Number.isFinite(n)&&n>0);
+  const current=Number(currentPrice||0);
+  if(current>0 && (!values.length || Math.abs(values[values.length-1]-current)>Math.max(1e-12,current*1e-9))){
+    values.push(current);
+  }
+
+  if(values.length<2 && current>0){
+    const change=Number(change1h||0);
+    const divisor=1+(change/100);
+    const open=divisor>0?current/divisor:0;
+    if(Number.isFinite(open)&&open>0)values=[open,current];
+  }
+
+  if(values.length<=32)return values;
+  const out=[];
+  const last=values.length-1;
+  for(let i=0;i<32;i++){
+    const index=Math.round((i/31)*last);
+    out.push(values[index]);
+  }
+  return out;
+}
+
+async function buildTopMovers24h(db){
+  const candidates=db.prepare(`
+    SELECT t.*,
+      (
+        SELECT MAX(COALESCE(NULLIF(a.block_time,''),a.created_at))
+        FROM wallet_activity a
+        WHERE a.mint=t.mint AND a.type IN ('buy','sell','swap')
+      ) AS lastActivity
+    FROM tokens t
+    WHERE COALESCE(TRIM(t.mint),'')<>''
+    ORDER BY
+      CASE WHEN COALESCE(t.liquidity_usd,0)>=1000 THEN 0 ELSE 1 END,
+      COALESCE(lastActivity,t.last_market_at,t.created_at) DESC
+    LIMIT 36
+  `).all();
+
+  if(!candidates.length)return {items:[],asOf:nowIso(),windowHours:1};
+
+  const markets=await getTokenMarketsBatch(candidates.map(row=>row.mint));
+  const now=nowIso();
+  const update=db.prepare(`
+    UPDATE tokens SET
+      symbol=?,name=?,
+      image=CASE WHEN ?<>'' THEN ? ELSE image END,
+      price_change=?,price_usd=?,market_cap=?,liquidity_usd=?,
+      dex_id=?,external_url=?,last_market_at=?,is_pump=?
+    WHERE id=?
+  `);
+  const insertSnapshot=db.prepare(`
+    INSERT INTO market_snapshots
+      (id,token_id,price_usd,price_change,market_cap,liquidity_usd,created_at)
+    VALUES (?,?,?,?,?,?,?)
+  `);
+  const latestSnapshot=db.prepare(`
+    SELECT created_at FROM market_snapshots
+    WHERE token_id=? ORDER BY created_at DESC LIMIT 1
+  `);
+
+  const fresh=[];
+  for(const row of candidates){
+    const market=markets.get(String(row.mint));
+    if(!market)continue;
+
+    const price=Number(market.priceUsd||0);
+    const change1h=Number(market.priceChange1h||0);
+    const liquidityUsd=Number(market.liquidityUsd||0);
+
+    if(!Number.isFinite(price)||price<=0)continue;
+    if(!Number.isFinite(change1h)||change1h<=0)continue;
+    if(liquidityUsd<1000)continue;
+
+    update.run(
+      market.symbol||row.symbol,
+      market.name||row.name,
+      market.image||'',
+      market.image||'',
+      Number(market.priceChange||0),
+      price,
+      Number(market.marketCap||0),
+      liquidityUsd,
+      market.dexId||'',
+      market.externalUrl||'',
+      now,
+      market.isPump?1:Number(row.is_pump||0),
+      row.id
+    );
+
+    const last=latestSnapshot.get(row.id);
+    const lastAt=last?.created_at?new Date(last.created_at).getTime():0;
+    if(!lastAt || Date.now()-lastAt>=5*60*1000){
+      insertSnapshot.run(
+        id('mkt_'),
+        row.id,
+        price,
+        Number(market.priceChange||0),
+        Number(market.marketCap||0),
+        liquidityUsd,
+        now
+      );
+    }
+
+    fresh.push({
+      id:row.id,
+      mint:row.mint,
+      symbol:market.symbol||row.symbol,
+      name:market.name||row.name,
+      image:market.image||row.image||'',
+      priceUsd:price,
+      change1h,
+      volume24h:Number(market.volume24h||0),
+      marketCap:Number(market.marketCap||0),
+      liquidityUsd,
+      dexId:market.dexId||row.dex_id||'',
+      externalUrl:market.externalUrl||row.external_url||'',
+      isPump:!!market.isPump
+    });
+  }
+
+  const leader=fresh.sort((a,b)=>b.change1h-a.change1h)[0];
+  if(!leader)return {items:[],asOf:now,windowHours:1};
+
+  const items=[{
+    ...leader,
+    sparkline:moverSparkline1h(db,leader.id,leader.priceUsd,leader.change1h)
+  }];
+
+  return {items,asOf:now,windowHours:1};
+}
+
+async function topMovers24h(db){
+  const age=Date.now()-Number(topMovers24hCache.at||0);
+  if(topMovers24hCache.payload && age<TOP_MOVERS_CACHE_MS)return topMovers24hCache.payload;
+  if(topMovers24hCache.promise)return topMovers24hCache.promise;
+
+  topMovers24hCache.promise=buildTopMovers24h(db)
+    .then(payload=>{
+      topMovers24hCache={at:Date.now(),payload,promise:null};
+      return payload;
+    })
+    .catch(error=>{
+      topMovers24hCache.promise=null;
+      if(topMovers24hCache.payload)return topMovers24hCache.payload;
+      throw error;
+    });
+
+  return topMovers24hCache.promise;
+}
+/* SHADOW_TOP_24H_MOVERS_V250_SERVER_END */
+
+/* SHADOW_ENTITY_PROFIT_V2413_SERVER */
+function entityPerformanceMap(db,{solUsd=0}={}) {
+  const rows=db.prepare(`
+    SELECT
+      a.entity_id AS entityId,
+      a.mint,
+      a.type,
+      ABS(COALESCE(a.token_amount,0)) AS tokenAmount,
+      ABS(COALESCE(a.sol_amount,0)) AS solAmount,
+      ABS(COALESCE(a.trade_usd,0)) AS storedTradeUsd,
+      COALESCE(a.trade_usd_source,'') AS tradeUsdSource,
+      ABS(COALESCE(a.price_usd,0)) AS observedPriceUsd,
+      COALESCE(t.price_usd,0) AS currentPriceUsd,
+      COALESCE(NULLIF(a.block_time,''),a.created_at) AS activityAt
+    FROM wallet_activity a
+    LEFT JOIN tokens t ON t.mint=a.mint
+    WHERE a.entity_id IS NOT NULL
+      AND COALESCE(a.mint,'')<>''
+      AND a.type IN ('buy','sell','swap')
+      AND ABS(COALESCE(a.token_amount,0))>1e-12
+    ORDER BY a.entity_id,a.mint,activityAt,a.created_at,a.id
+  `).all();
+
+  const eps=1e-12;
+  const fallbackSolUsd=Math.max(0,Number(solUsd)||0);
+  const byToken=new Map();
+
+  for(const row of rows){
+    const entityId=String(row.entityId||'');
+    const mint=String(row.mint||'');
+    if(!entityId||!mint)continue;
+
+    const key=`${entityId}\u0000${mint}`;
+    let p=byToken.get(key);
+    if(!p){
+      p={
+        entityId,mint,
+        buyTokens:0,buyUsd:0,
+        sellTokens:0,sellUsd:0,
+        currentPriceUsd:Math.max(0,Number(row.currentPriceUsd)||0),
+        unknown:false,estimated:false
+      };
+      byToken.set(key,p);
+    }else{
+      p.currentPriceUsd=Math.max(p.currentPriceUsd,Math.max(0,Number(row.currentPriceUsd)||0));
+    }
+
+    const type=String(row.type||'').toLowerCase();
+    const tokenAmount=Math.abs(Number(row.tokenAmount)||0);
+    const solAmount=Math.abs(Number(row.solAmount)||0);
+    const storedTradeUsd=Math.abs(Number(row.storedTradeUsd)||0);
+    const observedPriceUsd=Math.max(0,Number(row.observedPriceUsd)||0);
+
+    let tradeUsd=null;
+    if(storedTradeUsd>0){
+      tradeUsd=storedTradeUsd;
+      if(String(row.tradeUsdSource||'')!=='stable')p.estimated=true;
+    }else if(solAmount>0 && fallbackSolUsd>0){
+      tradeUsd=solAmount*fallbackSolUsd;
+      p.estimated=true;
+    }else if(observedPriceUsd>0){
+      tradeUsd=tokenAmount*observedPriceUsd;
+      p.estimated=true;
+    }
+
+    if(type==='buy'||type==='swap'){
+      p.buyTokens+=tokenAmount;
+      if(tradeUsd==null)p.unknown=true;
+      else p.buyUsd+=tradeUsd;
+    }else if(type==='sell'){
+      p.sellTokens+=tokenAmount;
+      if(tradeUsd==null)p.unknown=true;
+      else p.sellUsd+=tradeUsd;
+    }
+  }
+
+  const byEntity=new Map();
+  for(const p of byToken.values()){
+    if(p.buyTokens<=eps)continue;
+
+    let perf=byEntity.get(p.entityId);
+    if(!perf){
+      perf={tokens:0,pricedTokens:0,profitUsd:0,estimated:false,partial:false};
+      byEntity.set(p.entityId,perf);
+    }
+    perf.tokens++;
+
+    if(p.unknown || p.buyUsd<=0){
+      perf.partial=true;
+      continue;
+    }
+
+    const matchedSold=Math.min(p.buyTokens,p.sellTokens);
+    const avgBuyUsdPerToken=p.buyUsd/p.buyTokens;
+    const matchedSellUsd=p.sellTokens>eps
+      ? p.sellUsd*(matchedSold/p.sellTokens)
+      : 0;
+    const realizedPnlUsd=matchedSellUsd-(matchedSold*avgBuyUsdPerToken);
+    const remainingTokens=Math.max(0,p.buyTokens-matchedSold);
+
+    if(remainingTokens>eps && p.currentPriceUsd<=0){
+      perf.partial=true;
+      continue;
+    }
+
+    const openPnlUsd=remainingTokens>eps
+      ? (remainingTokens*p.currentPriceUsd)-(remainingTokens*avgBuyUsdPerToken)
+      : 0;
+
+    perf.profitUsd+=realizedPnlUsd+openPnlUsd;
+    perf.pricedTokens++;
+    perf.estimated=perf.estimated||p.estimated;
+  }
+
+  for(const perf of byEntity.values()){
+    perf.profitKnown=perf.pricedTokens>0;
+    perf.avgProfitUsd=perf.pricedTokens>0?perf.profitUsd/perf.pricedTokens:null;
+    perf.profitUsd=perf.profitKnown?Number(perf.profitUsd.toFixed(2)):null;
+    perf.avgProfitUsd=perf.avgProfitUsd==null?null:Number(perf.avgProfitUsd.toFixed(2));
+    perf.profitEstimated=!!(perf.estimated||perf.partial);
+  }
+
+  return byEntity;
+}
+
+
+/* SHADOW_ENTITY_PERFORMANCE_V2420_SERVER */
+function entityConsistencyMap(db,{solUsd=0}={}) {
+  const rows=db.prepare(`
+    SELECT
+      a.entity_id AS entityId,
+      a.mint,
+      a.type,
+      ABS(COALESCE(a.token_amount,0)) AS tokenAmount,
+      ABS(COALESCE(a.sol_amount,0)) AS solAmount,
+      ABS(COALESCE(a.trade_usd,0)) AS storedTradeUsd,
+      COALESCE(a.trade_usd_source,'') AS tradeUsdSource,
+      ABS(COALESCE(a.price_usd,0)) AS observedPriceUsd,
+      COALESCE(t.price_usd,0) AS currentPriceUsd,
+      COALESCE(NULLIF(a.block_time,''),a.created_at) AS activityAt
+    FROM wallet_activity a
+    LEFT JOIN tokens t ON t.mint=a.mint
+    WHERE a.entity_id IS NOT NULL
+      AND COALESCE(a.mint,'')<>''
+      AND a.type IN ('buy','sell','swap')
+      AND ABS(COALESCE(a.token_amount,0))>1e-12
+    ORDER BY a.entity_id,a.mint,activityAt,a.created_at,a.id
+  `).all();
+
+  const eps=1e-12;
+  const fallbackSolUsd=Math.max(0,Number(solUsd)||0);
+  const byToken=new Map();
+
+  for(const row of rows){
+    const entityId=String(row.entityId||'');
+    const mint=String(row.mint||'');
+    if(!entityId||!mint)continue;
+
+    const key=`${entityId}\u0000${mint}`;
+    let p=byToken.get(key);
+    if(!p){
+      p={
+        entityId,mint,
+        buyTokens:0,buyUsd:0,
+        sellTokens:0,sellUsd:0,
+        currentPriceUsd:Math.max(0,Number(row.currentPriceUsd)||0),
+        unknown:false
+      };
+      byToken.set(key,p);
+    }else{
+      p.currentPriceUsd=Math.max(p.currentPriceUsd,Math.max(0,Number(row.currentPriceUsd)||0));
+    }
+
+    const type=String(row.type||'').toLowerCase();
+    const tokenAmount=Math.abs(Number(row.tokenAmount)||0);
+    const solAmount=Math.abs(Number(row.solAmount)||0);
+    const storedTradeUsd=Math.abs(Number(row.storedTradeUsd)||0);
+    const observedPriceUsd=Math.max(0,Number(row.observedPriceUsd)||0);
+
+    let tradeUsd=null;
+    if(storedTradeUsd>0)tradeUsd=storedTradeUsd;
+    else if(solAmount>0 && fallbackSolUsd>0)tradeUsd=solAmount*fallbackSolUsd;
+    else if(observedPriceUsd>0)tradeUsd=tokenAmount*observedPriceUsd;
+
+    if(type==='buy'||type==='swap'){
+      p.buyTokens+=tokenAmount;
+      if(tradeUsd==null)p.unknown=true;
+      else p.buyUsd+=tradeUsd;
+    }else if(type==='sell'){
+      p.sellTokens+=tokenAmount;
+      if(tradeUsd==null)p.unknown=true;
+      else p.sellUsd+=tradeUsd;
+    }
+  }
+
+  const result=new Map();
+
+  for(const p of byToken.values()){
+    if(p.buyTokens<=eps)continue;
+
+    let stats=result.get(p.entityId);
+    if(!stats){
+      stats={
+        wins:0,
+        losses:0,
+        flat:0,
+        open:0,
+        closedTokens:0,
+        winRateKnown:false,
+        winRate:null,
+        medianProfitUsd:null,
+        tokenPnls:[]
+      };
+      result.set(p.entityId,stats);
+    }
+
+    const matchedSold=Math.min(p.buyTokens,p.sellTokens);
+    const remainingTokens=Math.max(0,p.buyTokens-matchedSold);
+    const isOpen=remainingTokens>eps;
+    if(isOpen)stats.open++;
+
+    if(p.unknown||p.buyUsd<=0)continue;
+
+    const avgBuyUsdPerToken=p.buyUsd/p.buyTokens;
+    const matchedSellUsd=p.sellTokens>eps
+      ? p.sellUsd*(matchedSold/p.sellTokens)
+      : 0;
+    const realizedPnlUsd=matchedSellUsd-(matchedSold*avgBuyUsdPerToken);
+
+    if(isOpen&&p.currentPriceUsd<=0)continue;
+
+    const openPnlUsd=isOpen
+      ? (remainingTokens*p.currentPriceUsd)-(remainingTokens*avgBuyUsdPerToken)
+      : 0;
+    const tokenPnlUsd=realizedPnlUsd+openPnlUsd;
+
+    stats.tokenPnls.push(tokenPnlUsd);
+
+    /* SHADOW_ENTITY_REMOVE_FLAT_V2428_SERVER */
+    // Every fully closed token is either a Win or a Loss.
+    // Open positions remain excluded from Win Rate until fully closed.
+    if(!isOpen){
+      if(tokenPnlUsd>=0)stats.wins++;
+      else stats.losses++;
+    }
+    /* SHADOW_ENTITY_REMOVE_FLAT_V2428_SERVER_END */
+  }
+
+  for(const stats of result.values()){
+    const closed=stats.wins+stats.losses;
+    stats.closedTokens=closed;
+    stats.winRateKnown=closed>0;
+    stats.winRate=closed>0?Number(((stats.wins/closed)*100).toFixed(1)):null;
+
+    const ordered=stats.tokenPnls.slice().sort((a,b)=>a-b);
+    if(ordered.length){
+      const middle=Math.floor(ordered.length/2);
+      const median=ordered.length%2
+        ? ordered[middle]
+        : (ordered[middle-1]+ordered[middle])/2;
+      stats.medianProfitUsd=Number(median.toFixed(2));
+    }
+
+    delete stats.tokenPnls;
+  }
+
+  return result;
+}
+/* SHADOW_ENTITY_PERFORMANCE_V2420_SERVER_END */
+
+function entityRows(db,{solUsd=0}={}) {
+  const performance=entityPerformanceMap(db,{solUsd});
+  const consistency=entityConsistencyMap(db,{solUsd});
+  return db.prepare(`
+    SELECT e.*,
+      (SELECT COUNT(*) FROM wallets w WHERE w.entity_id=e.id) AS walletCount
+    FROM entities e ORDER BY e.risk_score DESC, e.incidents DESC
+  `).all().map(e=>{
+    const perf=performance.get(e.id)||{
+      tokens:0,pricedTokens:0,profitKnown:false,
+      profitUsd:null,avgProfitUsd:null,profitEstimated:false
+    };
+    const consistencyStats=consistency.get(e.id)||{
+      wins:0,losses:0,flat:0,open:0,closedTokens:0,
+      winRateKnown:false,winRate:null,medianProfitUsd:null
+    };
+    return {
+      ...e,
+      riskScore:e.risk_score,
+      followerLosses:e.follower_losses,
+      xHandle:e.x_handle,
+      profileHandle:e.profile_handle,
+      profilePlatform:e.profile_platform,
+      profileUrl:e.profile_url,
+      walletCount:e.walletCount,
+      createdAt:e.created_at,
+      performanceTokens:perf.tokens,
+      pricedTokens:perf.pricedTokens,
+      profitKnown:perf.profitKnown,
+      profitUsd:perf.profitUsd,
+      avgProfitUsd:perf.avgProfitUsd,
+      medianProfitUsd:consistencyStats.medianProfitUsd,
+      profitEstimated:perf.profitEstimated,
+      wins:consistencyStats.wins,
+      losses:consistencyStats.losses,
+      flat:consistencyStats.flat,
+      openTokens:consistencyStats.open,
+      closedTokens:consistencyStats.closedTokens,
+      winRateKnown:consistencyStats.winRateKnown,
+      winRate:consistencyStats.winRate
+    };
+  });
+}
+/* SHADOW_ENTITY_PROFIT_V2413_SERVER_END */
+
+/* SHADOW_TOKENS_REAL_AGE_V265 */
+const TOKENS_PERIOD_CACHE_MS=20000;
+let tokensPeriodCache={at:0,key:'',byMint:new Map()};
+
+function pctFromPrices(nowPrice,oldPrice){
+  const a=Number(nowPrice),b=Number(oldPrice);
+  if(!Number.isFinite(a)||a<=0||!Number.isFinite(b)||b<=0)return null;
+  return ((a-b)/b)*100;
+}
+
+function oneMinuteChange(db,tokenId,currentPrice,nowMs){
+  const newestAllowed=new Date(nowMs-55000).toISOString();
+  const oldestAllowed=new Date(nowMs-180000).toISOString();
+  const row=db.prepare(`
+    SELECT price_usd AS price
+    FROM market_snapshots
+    WHERE token_id=?
+      AND created_at>=?
+      AND created_at<=?
+      AND price_usd>0
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).get(tokenId,oldestAllowed,newestAllowed);
+  return row?pctFromPrices(currentPrice,row.price):null;
+}
+
+function normalizeCreationMs(value){
+  if(value==null||value==='')return null;
+
+  const numeric=Number(value);
+  if(Number.isFinite(numeric)&&numeric>0){
+    const ms=numeric<1e12?numeric*1000:numeric;
+    if(ms>=1230768000000 && ms<=Date.now()+86400000)return ms;
+  }
+
+  const parsed=Date.parse(String(value));
+  if(Number.isFinite(parsed) && parsed>=1230768000000 && parsed<=Date.now()+86400000){
+    return parsed;
+  }
+
+  return null;
+}
+
+function sleep(ms){
+  return new Promise(resolve=>setTimeout(resolve,ms));
+}
+
+async function pumpTokenCreatedAt(mint){
+  const market=await getPumpTokenMarket(mint,{
+    maxAgeMs:2000,
+    timeoutMs:3500
+  });
+  return normalizeCreationMs(market?.createdAtMs);
+}
+
+async function mapLimit(items,limit,worker){
+  if(!items.length)return [];
+  const out=new Array(items.length);
+  let cursor=0;
+
+  async function run(){
+    while(true){
+      const index=cursor++;
+      if(index>=items.length)return;
+      out[index]=await worker(items[index],index);
+    }
+  }
+
+  await Promise.all(
+    Array.from({length:Math.min(Math.max(1,limit),items.length)},run)
+  );
+  return out;
+}
+
+function isPumpToken(row,market){
+  return !!row?.is_pump ||
+    !!market?.isPump ||
+    String(row?.mint||'').toLowerCase().endsWith('pump');
+}
+
+async function resolveTokenCreationTimes(db,rows,markets){
+  const result=new Map();
+  const update=db.prepare(`
+    UPDATE tokens
+    SET token_created_at=?,token_age_source=?
+    WHERE id=?
+  `);
+
+  const unresolved=[];
+
+  for(const row of rows){
+    const mint=String(row?.mint||'').trim();
+    if(!mint)continue;
+
+    const market=markets.get(mint);
+    const pump=isPumpToken(row,market);
+
+    const saved=String(row?.token_created_at||'').trim();
+    const savedMs=Date.parse(saved);
+    const savedSource=String(row?.token_age_source||'').trim();
+
+    // Pump tokens: ONLY trust Pump's actual coin creation timestamp.
+    // Never trust a PumpSwap/Raydium pair timestamp as the token's age.
+    if(
+      pump &&
+      savedSource==='pump_created_timestamp' &&
+      saved &&
+      Number.isFinite(savedMs)
+    ){
+      result.set(mint,{createdAt:saved,source:savedSource});
+      continue;
+    }
+
+    // Non-Pump assets may use the persisted earliest-market timestamp.
+    if(
+      !pump &&
+      saved &&
+      Number.isFinite(savedMs) &&
+      savedSource!=='shadow_observed'
+    ){
+      result.set(mint,{createdAt:saved,source:savedSource||'saved'});
+      continue;
+    }
+
+    unresolved.push({row,market,pump});
+  }
+
+  // Conservative concurrency so Pump API does not get hammered/rate-limited.
+  await mapLimit(unresolved,4,async item=>{
+    const {row,market,pump}=item;
+    const mint=String(row?.mint||'').trim();
+
+    let createdMs=null;
+    let source='';
+
+    if(pump){
+      createdMs=await pumpTokenCreatedAt(mint);
+
+      if(createdMs){
+        source='pump_created_timestamp';
+      }else{
+        // IMPORTANT:
+        // do NOT fall back to PumpSwap/Raydium pairCreatedAt for Pump tokens.
+        // That timestamp can be the migration/pool age, not the coin age.
+        result.set(mint,{createdAt:null,source:'pump_age_unavailable'});
+        try{update.run('', 'pump_age_unavailable', row.id)}catch{}
+        return;
+      }
+    }else{
+      const pairMs=normalizeCreationMs(market?.marketCreatedAtMs);
+      if(pairMs){
+        createdMs=pairMs;
+        source='earliest_market_pair';
+      }
+    }
+
+    if(createdMs){
+      const iso=new Date(createdMs).toISOString();
+      result.set(mint,{createdAt:iso,source});
+      try{update.run(iso,source,row.id)}catch{}
+    }else{
+      result.set(mint,{createdAt:null,source:''});
+    }
+  });
+
+  return result;
+}
+
+async function tokensWithMarketPeriods(db,items){
+  const rows=Array.isArray(items)?items:[];
+  const mints=[...new Set(rows.map(row=>String(row?.mint||'').trim()).filter(Boolean))];
+  if(!mints.length)return rows;
+
+  const key=mints.slice().sort().join(',');
+  const nowMs=Date.now();
+  const age=nowMs-Number(tokensPeriodCache.at||0);
+
+  if(tokensPeriodCache.key!==key || age>=TOKENS_PERIOD_CACHE_MS){
+    const markets=await getTokenMarketsBatch(mints);
+    const creation=await resolveTokenCreationTimes(db,rows,markets);
+    const byMint=new Map();
+
+    const latestSnapshot=db.prepare(`
+      SELECT created_at
+      FROM market_snapshots
+      WHERE token_id=?
+      ORDER BY created_at DESC
+      LIMIT 1
+    `);
+
+    const insertSnapshot=db.prepare(`
+      INSERT INTO market_snapshots
+        (id,token_id,price_usd,price_change,market_cap,liquidity_usd,created_at)
+      VALUES (?,?,?,?,?,?,?)
+    `);
+
+    const nowIsoValue=new Date(nowMs).toISOString();
+    const updatePumpMarketCap=db.prepare(`
+      UPDATE tokens
+      SET market_cap=?,last_market_at=?
+      WHERE id=?
+    `);
+
+    for(const row of rows){
+      const mint=String(row?.mint||'').trim();
+      if(!mint)continue;
+
+      const market=markets.get(mint);
+      const created=creation.get(mint)||{createdAt:null,source:''};
+
+      if(!market){
+        byMint.set(mint,{
+          m1:null,m5:null,h1:null,h6:null,h24:null,
+          marketCap:null,
+          marketCapSource:'',
+          createdAt:created.createdAt,
+          ageSource:created.source
+        });
+        continue;
+      }
+
+      const strict=value=>{
+        if(value==null)return null;
+        const n=Number(value);
+        return Number.isFinite(n)?n:null;
+      };
+
+      const pumpMarketCap=Number(market.marketCap);
+      if(
+        row.id &&
+        Number.isFinite(pumpMarketCap) &&
+        pumpMarketCap>0 &&
+        market.marketCapSource==='pump.fun'
+      ){
+        updatePumpMarketCap.run(pumpMarketCap,nowIsoValue,row.id);
+      }
+
+      const price=Number(market.priceUsd||0);
+      let m1=null;
+
+      if(row.id && Number.isFinite(price) && price>0){
+        m1=oneMinuteChange(db,row.id,price,nowMs);
+
+        const last=latestSnapshot.get(row.id);
+        const lastAt=last?.created_at?new Date(last.created_at).getTime():0;
+
+        if(!lastAt || nowMs-lastAt>=55000){
+          insertSnapshot.run(
+            id('mkt_'),
+            row.id,
+            price,
+            strict(market.priceChange1h),
+            Number(market.marketCap||0),
+            Number(market.liquidityUsd||0),
+            nowIsoValue
+          );
+        }
+      }
+
+      byMint.set(mint,{
+        m1,
+        m5:strict(market.priceChange5m),
+        h1:strict(market.priceChange1h),
+        h6:strict(market.priceChange6h),
+        h24:strict(market.priceChange24h),
+        marketCap:Number.isFinite(Number(market.marketCap)) && Number(market.marketCap)>0
+          ? Number(market.marketCap)
+          : null,
+        marketCapSource:Number.isFinite(Number(market.marketCap)) && Number(market.marketCap)>0
+          ? 'pump.fun'
+          : '',
+        createdAt:created.createdAt,
+        ageSource:created.source
+      });
+    }
+
+    tokensPeriodCache={at:nowMs,key,byMint};
+  }
+
+  return rows.map(row=>{
+    const p=tokensPeriodCache.byMint.get(String(row.mint))||{};
+    const hasCreatedAt=Object.prototype.hasOwnProperty.call(p,'createdAt');
+
+    return {
+      ...row,
+      price_change_1m:p.m1??null,
+      price_change_5m:p.m5??null,
+      price_change_1h:p.h1??null,
+      price_change_6h:p.h6??null,
+      price_change_24h:p.h24??null,
+      price_change:p.h1??row.price_change??null,
+      market_cap:Object.prototype.hasOwnProperty.call(p,'marketCap')
+        ? p.marketCap
+        : null,
+      market_cap_source:p.marketCapSource||'',
+      market_cap_live_at:p.marketCapSource==='pump.fun'
+        ? new Date(tokensPeriodCache.at).toISOString()
+        : null,
+
+      // If Pump lookup failed, return null instead of reviving an old
+      // incorrect pair/migration timestamp from the DB row.
+      token_created_at:hasCreatedAt?p.createdAt:(row.token_created_at||null),
+      token_age_source:p.ageSource??row.token_age_source??'',
+
+      price_change_live_at:new Date(tokensPeriodCache.at).toISOString()
+    };
+  });
+}
+/* SHADOW_TOKENS_REAL_AGE_V265_END */
+
+function feedRows(db, limit = 30) {
+  return db.prepare(`
+    SELECT i.id,i.type,i.title,i.detail,i.severity,i.value,i.created_at AS createdAt,
+      e.id AS entityId,e.name AS entityName,e.x_handle AS xHandle,e.avatar,e.risk_score AS riskScore,
+      w.address AS walletAddress,t.symbol,t.name AS tokenName,t.mint AS tokenMint,t.price_change AS priceChange
+    FROM incidents i
+    LEFT JOIN entities e ON e.id=i.entity_id
+    LEFT JOIN wallets w ON w.id=i.wallet_id
+    LEFT JOIN tokens t ON t.id=i.token_id
+    ORDER BY i.created_at DESC LIMIT ?
+  `).all(limit).map(r => ({...r, walletAddress: r.walletAddress ? maskWallet(r.walletAddress) : ''}));
+}
+function groups(db) {
+  return db.prepare(`
+    SELECT g.id,g.name,g.mode,g.enabled,g.created_at AS createdAt,COUNT(cgw.wallet_id) AS walletCount
+    FROM copy_groups g LEFT JOIN copy_group_wallets cgw ON cgw.group_id=g.id
+    GROUP BY g.id ORDER BY g.created_at
+  `).all().map(g => ({...g, enabled:!!g.enabled}));
+}
+function parseRoute(urlPath) { return urlPath.split('/').filter(Boolean); }
+
+
+/* SHADOW_REPAIR_AUTO_PROFILE_AVATARS_V352 */
+async function repairDuplicateAutoProfileAvatars(db){
+  /*
+   * v351 repaired only rows whose avatar URL was byte-for-byte duplicated.
+   * Fomo can serve the same generic artwork through different URLs/query
+   * strings, so visually duplicated avatars escaped that filter.
+   *
+   * v352 re-resolves every legacy Auto Entity with a handle unless its avatar
+   * was set manually. Once a real platform is detected, profile_platform is
+   * changed away from "auto", so that Entity drops out of future repair runs.
+   */
+  const rows=db.prepare(`
+    SELECT e.*
+    FROM entities e
+    WHERE COALESCE(e.profile_platform,'auto')='auto'
+      AND COALESCE(TRIM(e.profile_handle),'')<>''
+      AND COALESCE(e.avatar_source,'')<>'manual'
+    ORDER BY e.created_at,e.id
+  `).all();
+
+  if(!rows.length)return {checked:0,updated:0,failed:0};
+
+  const mainWallet=db.prepare(`
+    SELECT address
+    FROM wallets
+    WHERE entity_id=?
+    ORDER BY created_at
+    LIMIT 1
+  `);
+
+  const updateEntity=db.prepare(`
+    UPDATE entities
+    SET avatar=?,avatar_source=?,profile_platform=?,profile_url=?
+    WHERE id=?
+  `);
+
+  const updateWallets=db.prepare(`
+    UPDATE wallets
+    SET avatar=?,avatar_source=?
+    WHERE entity_id=? AND avatar_source<>'manual'
+  `);
+
+  let updated=0;
+  let failed=0;
+
+  for(const entity of rows){
+    const handle=String(entity.profile_handle||'').trim();
+    const wallet=String(mainWallet.get(entity.id)?.address||'').trim();
+    if(!handle)continue;
+
+    let resolved=null;
+    try{
+      resolved=await resolveProfileAvatar({
+        platform:'auto',
+        handle,
+        profileUrl:'',
+        wallet
+      });
+    }catch(error){
+      console.warn(`Profile avatar re-resolve failed for ${entity.name||entity.id}:`,error.message);
+    }
+
+    let avatar=String(resolved?.avatar||'').trim();
+    let source=String(resolved?.source||'pending');
+    let detected=normalizeProfilePlatform(resolved?.platform||'auto');
+    let newProfileUrl=String(resolved?.profileUrl||'').trim();
+
+    if(!avatar && wallet){
+      try{
+        const fallback=await resolveWalletAvatar(wallet);
+        avatar=String(fallback?.avatar||'').trim();
+        source=String(fallback?.source||'generated');
+        if(source==='pump.fun')detected='pump.fun';
+        else detected='auto';
+        if(source!=='pump.fun')newProfileUrl='';
+      }catch(error){
+        console.warn(`Wallet avatar fallback failed for ${entity.name||entity.id}:`,error.message);
+      }
+    }
+
+    if(!avatar){
+      failed++;
+      updateEntity.run('', 'pending', 'auto', '', entity.id);
+      updateWallets.run('', 'pending', entity.id);
+      console.log(`Profile avatar repair cleared stale avatar: ${entity.name||entity.id}`);
+      continue;
+    }
+
+    updateEntity.run(
+      avatar,
+      source,
+      detected,
+      newProfileUrl,
+      entity.id
+    );
+    updateWallets.run(
+      avatar,
+      source,
+      entity.id
+    );
+
+    updated++;
+    console.log(
+      `Profile avatar repair: ${entity.name||entity.id} -> ${detected} (${source})`
+    );
+  }
+
+  return {checked:rows.length,updated,failed};
+}
+/* SHADOW_REPAIR_AUTO_PROFILE_AVATARS_V352_END */
+
+async function api(req, res, db, url, live) {
+  const method = req.method || 'GET';
+  const parts = parseRoute(url.pathname);
+  const route = '/' + parts.join('/');
+
+  /* SHADOW_REALTIME_HELIUS_V300_SERVER */
+  if (route === '/api/webhooks/helius' && method === 'POST') {
+    if(!live.webhookAuthorized(req.headers.authorization||''))return json(res,401,{error:'Unauthorized webhook'});
+    const payload=await readJson(req);
+    const accepted=live.enqueueWebhook(payload);
+    // Helius recommends acknowledging quickly and doing business logic asynchronously.
+    return json(res,200,{ok:true,...accepted});
+  }
+  if (route === '/api/live/realtime-refresh' && method === 'POST') {
+    if (!requireOwner(req,res,db)) return;
+    return json(res,200,await live.refreshRealtimeWebhook());
+  }
+
+  if (route === '/api/health' && method === 'GET') {
+    const [intel, liveStatus] = await Promise.all([providerHealth(), live.health()]);
+    return json(res, 200, { ok:true, time:nowIso(), intelligence:intel, live:liveStatus, copyEngineConfigured:!!process.env.COPY_ENGINE_URL, pumpAvatarConfigured:!!process.env.PUMP_PROFILE_LOOKUP_URL });
+  }
+  if (route === '/api/live/status' && method === 'GET') return json(res,200,await live.health());
+  if (route === '/api/live/wallet-status' && method === 'GET') {
+    if (!requireOwner(req,res,db)) return;
+    return json(res,200,{walletMonitoring:live.walletMonitoringStatus?.()||null});
+  }
+  if (route === '/api/live/sync-all' && method === 'POST') {
+    if (!requireOwner(req,res,db)) return;
+    return json(res,200,await live.syncAll());
+  }
+  if (route === '/api/me' && method === 'GET') return json(res, 200, { user:userFor(req, db), settings:{ platformName:getSetting(db,'platform_name','Shadow Intelligence') } });
+  /* SHADOW_NOTIFICATIONS_V240_ROUTES */
+  if (route === '/api/notification-settings' && method === 'GET') {
+    const user=requireUser(req,res,db); if(!user)return;
+    return json(res,200,{settings:notificationSettingsRow(db,user.id)});
+  }
+  if (route === '/api/notification-settings' && method === 'PUT') {
+    const user=requireUser(req,res,db); if(!user)return;
+    const b=await readJson(req);
+    ensureNotificationPreferences(db,user.id);
+    const entityIds=[...new Set((Array.isArray(b.entityIds)?b.entityIds:[]).map(x=>clean(x,120)).filter(Boolean))].slice(0,100);
+    const tokenMints=[...new Set((Array.isArray(b.tokenMints)?b.tokenMints:[]).map(x=>clean(x,120)).filter(Boolean))].slice(0,200);
+    const entityExists=db.prepare('SELECT 1 FROM entities WHERE id=?');
+    const tokenExists=db.prepare('SELECT 1 FROM tokens WHERE mint=?');
+    const validEntityIds=entityIds.filter(value=>entityExists.get(value));
+    const validTokenMints=tokenMints.filter(value=>tokenExists.get(value));
+    const at=nowIso();
+    db.exec('BEGIN IMMEDIATE');
+    try{
+      db.prepare(`
+        UPDATE user_notification_preferences
+        SET entities_enabled=?,tokens_enabled=?,live_enabled=?,started_at=?,last_seen_at=?,updated_at=?
+        WHERE user_id=?
+      `).run(b.entitiesEnabled?1:0,b.tokensEnabled?1:0,b.liveEnabled?1:0,at,at,at,user.id);
+      db.prepare('DELETE FROM user_notification_entities WHERE user_id=?').run(user.id);
+      db.prepare('DELETE FROM user_notification_tokens WHERE user_id=?').run(user.id);
+      const addEntity=db.prepare(`INSERT OR IGNORE INTO user_notification_entities (user_id,entity_id,created_at) VALUES (?,?,?)`);
+      const clearEntityMute=db.prepare(`DELETE FROM user_notification_entity_mutes WHERE user_id=? AND entity_id=?`);
+      for(const entityId of validEntityIds){
+        addEntity.run(user.id,entityId,at);
+        clearEntityMute.run(user.id,entityId);
+      }
+      const addToken=db.prepare(`INSERT OR IGNORE INTO user_notification_tokens (user_id,mint,created_at) VALUES (?,?,?)`);
+      for(const mint of validTokenMints)addToken.run(user.id,mint,at);
+      db.exec('COMMIT');
+    }catch(error){db.exec('ROLLBACK');throw error;}
+    return json(res,200,{settings:notificationSettingsRow(db,user.id)});
+  }
+  /* SHADOW_ENTITY_NOTIFICATION_BELL_V100_ROUTES */
+  if (parts[0]==='api' && parts[1]==='notification-entities' && parts[2] && parts.length===3 && method==='PUT') {
+    const user=requireUser(req,res,db); if(!user)return;
+    const entityId=clean(parts[2],120);
+    if(!entityId || !db.prepare('SELECT 1 FROM entities WHERE id=?').get(entityId))return json(res,404,{error:'Entity not found'});
+    const body=await readJson(req);
+    const enabled=!!body.enabled;
+    const pref=ensureNotificationPreferences(db,user.id);
+    const liveEnabled=!!pref.live_enabled;
+    const at=nowIso();
+
+    db.exec('BEGIN IMMEDIATE');
+    try{
+      if(enabled){
+        db.prepare('DELETE FROM user_notification_entity_mutes WHERE user_id=? AND entity_id=?').run(user.id,entityId);
+        if(!liveEnabled){
+          db.prepare(`INSERT OR IGNORE INTO user_notification_entities (user_id,entity_id,created_at) VALUES (?,?,?)`).run(user.id,entityId,at);
+          db.prepare('UPDATE user_notification_preferences SET entities_enabled=1,updated_at=? WHERE user_id=?').run(at,user.id);
+        }
+      }else{
+        db.prepare('DELETE FROM user_notification_entities WHERE user_id=? AND entity_id=?').run(user.id,entityId);
+        if(liveEnabled){
+          db.prepare(`INSERT OR IGNORE INTO user_notification_entity_mutes (user_id,entity_id,created_at) VALUES (?,?,?)`).run(user.id,entityId,at);
+        }else{
+          db.prepare('DELETE FROM user_notification_entity_mutes WHERE user_id=? AND entity_id=?').run(user.id,entityId);
+        }
+        const selectedCount=Number(db.prepare('SELECT COUNT(*) AS n FROM user_notification_entities WHERE user_id=?').get(user.id)?.n||0);
+        db.prepare('UPDATE user_notification_preferences SET entities_enabled=?,updated_at=? WHERE user_id=?').run(selectedCount>0?1:0,at,user.id);
+      }
+      db.exec('COMMIT');
+    }catch(error){db.exec('ROLLBACK');throw error;}
+
+    return json(res,200,{ok:true,entityId,settings:notificationSettingsRow(db,user.id)});
+  }
+  /* SHADOW_ENTITY_NOTIFICATION_BELL_V100_ROUTES_END */
+
+  if (route === '/api/notifications' && method === 'GET') {
+    const user=requireUser(req,res,db); if(!user)return;
+    const limit=Math.min(Number(url.searchParams.get('limit'))||60,100);
+    const result=notificationRows(db,user.id,limit);
+    return json(res,200,{...result,settings:notificationSettingsRow(db,user.id)});
+  }
+  if (route === '/api/notifications/read' && method === 'POST') {
+    const user=requireUser(req,res,db); if(!user)return;
+    ensureNotificationPreferences(db,user.id);
+    const at=nowIso();
+    db.prepare(`UPDATE user_notification_preferences SET last_seen_at=?,updated_at=? WHERE user_id=?`).run(at,at,user.id);
+    return json(res,200,{ok:true,lastSeenAt:at});
+  }
+
+  /* SHADOW_WEB_PUSH_IOS_V100_ROUTES */
+  if (route === '/api/push/status' && method === 'GET') {
+    const user=requireUser(req,res,db); if(!user)return;
+    const keys=shadowPushKeys(db);
+    return json(res,200,{
+      available:true,
+      publicKey:keys.publicKey,
+      deviceCount:shadowPushDeviceRows(db,user.id).length
+    });
+  }
+  if (route === '/api/push/subscribe' && method === 'POST') {
+    const user=requireUser(req,res,db); if(!user)return;
+    const body=await readJson(req);
+    const sub=body?.subscription||{};
+    const endpoint=String(sub?.endpoint||'').trim();
+    const p256dh=String(sub?.keys?.p256dh||'').trim();
+    const auth=String(sub?.keys?.auth||'').trim();
+    if(!endpoint.startsWith('https://')||!p256dh||!auth)return json(res,400,{error:'Invalid push subscription'});
+    if(endpoint.length>4096||p256dh.length>1024||auth.length>512)return json(res,413,{error:'Push subscription is too large'});
+    shadowPushKeys(db);
+    ensureNotificationPreferences(db,user.id);
+    const at=nowIso();
+    const activityCursor=Number(db.prepare('SELECT COALESCE(MAX(rowid),0) AS n FROM wallet_activity').get()?.n||0);
+    const existing=db.prepare('SELECT id,created_at AS createdAt FROM web_push_subscriptions WHERE endpoint=?').get(endpoint);
+    const subscriptionId=existing?.id||id('push_');
+    db.prepare(`
+      INSERT INTO web_push_subscriptions
+        (id,user_id,endpoint,p256dh,auth,user_agent,last_activity_rowid,last_event_at,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(endpoint) DO UPDATE SET
+        user_id=excluded.user_id,p256dh=excluded.p256dh,auth=excluded.auth,
+        user_agent=excluded.user_agent,last_activity_rowid=excluded.last_activity_rowid,last_event_at=excluded.last_event_at,updated_at=excluded.updated_at
+    `).run(subscriptionId,user.id,endpoint,p256dh,auth,String(req.headers['user-agent']||'').slice(0,500),activityCursor,at,existing?.createdAt||at,at);
+    return json(res,200,{ok:true,deviceCount:shadowPushDeviceRows(db,user.id).length});
+  }
+  if (route === '/api/push/subscribe' && method === 'DELETE') {
+    const user=requireUser(req,res,db); if(!user)return;
+    const body=await readJson(req);
+    const endpoint=String(body?.endpoint||'').trim();
+    if(endpoint)db.prepare('DELETE FROM web_push_subscriptions WHERE user_id=? AND endpoint=?').run(user.id,endpoint);
+    return json(res,200,{ok:true,deviceCount:shadowPushDeviceRows(db,user.id).length});
+  }
+  if (route === '/api/push/test' && method === 'POST') {
+    const user=requireUser(req,res,db); if(!user)return;
+    shadowPushKeys(db);
+    const devices=shadowPushDeviceRows(db,user.id);
+    let sent=0;
+    for(const device of devices){
+      try{
+        await shadowSendPush(device,{
+          title:'Push connected',
+          body:'Shadow notifications are ready.',
+          tag:`shadow-push-test-${Date.now()}`,
+          url:'/'
+        });
+        sent++;
+      }catch(error){
+        const status=Number(error?.statusCode||0);
+        if(status===404||status===410)db.prepare('DELETE FROM web_push_subscriptions WHERE id=?').run(device.id);
+      }
+    }
+    return json(res,200,{ok:sent>0,sent,deviceCount:shadowPushDeviceRows(db,user.id).length});
+  }
+  /* SHADOW_WEB_PUSH_IOS_V100_ROUTES_END */
+  /* SHADOW_NOTIFICATIONS_V240_ROUTES_END */
+  if (route === '/api/auth/register' && method === 'POST') {
+    if (getSetting(db,'registration_enabled','true') !== 'true') return json(res,403,{error:'Registration is disabled'});
+    const body = await readJson(req);
+    const email = cleanEmail(body.email); const password = String(body.password || ''); const displayName = clean(body.displayName,60);
+    if (!isEmail(email)) return json(res,400,{error:'Enter a valid email'});
+    if (password.length < 8) return json(res,400,{error:'Password must be at least 8 characters'});
+    if (!displayName) return json(res,400,{error:'Display name is required'});
+    if (db.prepare('SELECT 1 FROM users WHERE email=?').get(email)) return json(res,409,{error:'Account already exists'});
+    const totalUsers = db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
+    const role = totalUsers === 0 ? 'owner' : 'user';
+    const userId = id('usr_');
+    db.prepare('INSERT INTO users (id,email,password_hash,display_name,role,created_at) VALUES (?,?,?,?,?,?)').run(userId,email,hashPassword(password),displayName,role,nowIso());
+    const session = createSession(db,userId); setSessionCookie(res,session.token);
+    return json(res,201,{user:getUserFromSession(db,session.token)});
+  }
+  if (route === '/api/auth/login' && method === 'POST') {
+    const body = await readJson(req); const email = cleanEmail(body.email);
+    const row = db.prepare('SELECT * FROM users WHERE email=?').get(email);
+    if (!row || !verifyPassword(body.password,row.password_hash)) return json(res,401,{error:'Invalid email or password'});
+    const session = createSession(db,row.id); setSessionCookie(res,session.token);
+    return json(res,200,{user:getUserFromSession(db,session.token)});
+  }
+  if (route === '/api/auth/logout' && method === 'POST') {
+    deleteSession(db,parseCookies(req).si_session); clearSessionCookie(res); return json(res,200,{ok:true});
+  }
+  if (route === '/api/profile' && method === 'PATCH') {
+    const user = requireUser(req,res,db); if (!user) return;
+    const body = await readJson(req);
+    const displayName = clean(body.displayName,60) || user.displayName;
+    const bio = clean(body.bio,220); const xHandle = clean(body.xHandle,40);
+    let avatar = String(body.avatar || '').trim();
+    if (avatar && !(avatar.startsWith('data:image/') || isSafeHttpUrl(avatar))) return json(res,400,{error:'Avatar must be an image upload or safe URL'});
+    if (avatar.length > 1_400_000) return json(res,413,{error:'Avatar is too large'});
+    db.prepare('UPDATE users SET display_name=?,bio=?,x_handle=?,avatar=? WHERE id=?').run(displayName,bio,xHandle,avatar,user.id);
+    return json(res,200,{user:userFor(req,db)});
+  }
+  if (route === '/api/overview' && method === 'GET') {
+    const tracked = db.prepare('SELECT COUNT(*) AS n FROM entities').get().n;
+    const alerts = db.prepare("SELECT COUNT(*) AS n FROM incidents WHERE severity IN ('high','critical')").get().n;
+    const losses = db.prepare('SELECT COALESCE(SUM(follower_losses),0) AS n FROM entities').get().n;
+    const wallets = db.prepare('SELECT COUNT(*) AS n FROM wallets').get().n;
+    const solUsd=await currentSolUsd();
+    const entities=entityRows(db,{solUsd}); const selected=entities[0]||null;
+    const selectedWallets=selected?db.prepare('SELECT * FROM wallets WHERE entity_id=? ORDER BY created_at').all(selected.id):[];
+    const selectedTokens=selected?entityTokenPnlRows(db,selected.id,8,solUsd):[];
+    return json(res,200,{ stats:{trackedEntities:tracked,activeAlerts:alerts,estimatedFollowerLosses:losses,linkedWallets:wallets}, feed:feedRows(db,20), leaderboard:entities.slice(0,8), groups:groups(db), selected, selectedWallets, selectedTokens });
+  }
+  if (route === '/api/feed' && method === 'GET') return json(res,200,{items:feedRows(db,Math.min(Number(url.searchParams.get('limit'))||50,100))});
+  /* SHADOW_WALLET_DUPLICATE_CHECK_V270 */
+  if (route === '/api/wallets/check' && method === 'GET') {
+    if (!requireOwner(req,res,db)) return;
+    const address=clean(url.searchParams.get('address'),120);
+    if(!address)return json(res,200,{valid:false,exists:false,error:'Wallet address required'});
+    if(!isSolanaAddress(address))return json(res,200,{valid:false,exists:false,error:'Invalid Solana wallet address'});
+
+    const row=db.prepare(`
+      SELECT
+        w.id AS walletId,w.address,w.label,
+        e.id AS entityId,e.name,e.x_handle AS xHandle,
+        e.profile_handle AS profileHandle,e.profile_platform AS profilePlatform,
+        e.profile_url AS profileUrl,e.avatar
+      FROM wallets w
+      LEFT JOIN entities e ON e.id=w.entity_id
+      WHERE w.address=?
+      LIMIT 1
+    `).get(address);
+
+    if(!row)return json(res,200,{valid:true,exists:false,address});
+
+    return json(res,200,{
+      valid:true,
+      exists:true,
+      address,
+      wallet:{id:row.walletId,address:row.address,label:row.label||''},
+      entity:row.entityId?{
+        id:row.entityId,
+        name:row.name||'',
+        xHandle:row.xHandle||'',
+        profileHandle:row.profileHandle||'',
+        profilePlatform:row.profilePlatform||'auto',
+        profileUrl:row.profileUrl||'',
+        avatar:row.avatar||''
+      }:null
+    });
+  }
+  /* SHADOW_WALLET_DUPLICATE_CHECK_V270_END */
+
+  /* SHADOW_ENTITIES_CARD_INFO_V2417_SERVER */
+  if (route === '/api/entities' && method === 'GET') {
+    const solUsd=await currentSolUsd();
+    const viewer=userFor(req,db);
+
+    const copyByEntity=new Map(
+      viewer
+        ? db.prepare(`
+            SELECT entity_id AS entityId,enabled,engine_state AS engineState
+            FROM copy_subscriptions
+            WHERE user_id=?
+          `).all(viewer.id).map(row=>[row.entityId,row])
+        : []
+    );
+
+    const linkedWalletsStmt=db.prepare(`
+      SELECT id,entity_id,address,label,avatar,avatar_source,chain,
+             sync_status,monitoring_enabled,last_scanned_at,created_at
+      FROM wallets
+      WHERE entity_id=?
+      ORDER BY created_at ASC
+    `);
+
+    const items=entityRows(db,{solUsd}).map(entity=>{
+      const linkedWallets=linkedWalletsStmt.all(entity.id).map(wallet=>({
+        ...wallet,
+        syncStatus:wallet.sync_status||'pending',
+        monitoringEnabled:!!wallet.monitoring_enabled
+      }));
+      const mainWallet=linkedWallets[0];
+      const copy=copyByEntity.get(entity.id);
+      return {
+        ...entity,
+        mainWalletAddress:mainWallet?.address||'',
+        linkedWallets,
+        walletAddresses:linkedWallets.map(wallet=>wallet.address),
+        copyTradingActive:!!copy?.enabled,
+        copyTradingState:copy?.engineState||''
+      };
+    });
+
+    return json(res,200,{items});
+  }
+  /* SHADOW_ENTITIES_CARD_INFO_V2417_SERVER_END */
+  /* SHADOW_PROFILE_SOURCE_V270_CREATE */
+  if (route === '/api/entities' && method === 'POST') {
+    if (!requireOwner(req,res,db)) return;
+
+    const b=await readJson(req);
+    let profilePlatform=normalizeProfilePlatform(b.profilePlatform||b.platform||'auto');
+    const profileHandle=normalizeProfileHandle(b.profileHandle||b.handle||'');
+    let profileUrl=clean(b.profileUrl,1000);
+    const name=clean(b.name,80)||(profileHandle?`@${profileHandle}`:'');
+    if(!name)return json(res,400,{error:'Name or username required'});
+
+    if(profileUrl&&!isPublicProfileUrl(profileUrl)){
+      return json(res,400,{error:'Profile URL must be a public HTTPS URL'});
+    }
+
+    const wallet=clean(b.wallet,120);
+    if(wallet&&!isSolanaAddress(wallet)){
+      return json(res,400,{error:'Invalid Solana wallet address'});
+    }
+
+    const duplicateWallet=wallet?db.prepare(`
+      SELECT w.id AS walletId,e.id AS entityId,e.name,e.x_handle AS xHandle,
+             e.profile_handle AS profileHandle,e.profile_platform AS profilePlatform,e.avatar
+      FROM wallets w LEFT JOIN entities e ON e.id=w.entity_id
+      WHERE w.address=? LIMIT 1
+    `).get(wallet):null;
+
+    if(duplicateWallet){
+      return json(res,409,{
+        error:'Wallet already tracked',
+        code:'wallet_exists',
+        entity:duplicateWallet.entityId?{
+          id:duplicateWallet.entityId,
+          name:duplicateWallet.name||'',
+          xHandle:duplicateWallet.xHandle||'',
+          profileHandle:duplicateWallet.profileHandle||'',
+          profilePlatform:duplicateWallet.profilePlatform||'auto',
+          avatar:duplicateWallet.avatar||''
+        }:null
+      });
+    }
+
+    let xHandle=clean(b.xHandle,50);
+    if(!xHandle&&profilePlatform==='x'&&profileHandle)xHandle=`@${profileHandle}`;
+
+    let avatar=String(b.avatar||'').trim();
+    if(avatar&&!(avatar.startsWith('data:image/')||isSafeHttpUrl(avatar))){
+      return json(res,400,{error:'Avatar must be an image upload or safe URL'});
+    }
+    if(avatar.length>1_400_000)return json(res,413,{error:'Avatar is too large'});
+
+    let avatarSource=avatar?'manual':'pending';
+
+    if(!avatar&&(profileHandle||profileUrl)){
+      const resolved=await resolveProfileAvatar({
+        platform:profilePlatform,
+        handle:profileHandle,
+        profileUrl,
+        wallet
+      });
+      if(!profileUrl&&resolved.profileUrl)profileUrl=clean(resolved.profileUrl,1000);
+      if(profilePlatform==='auto' && resolved.platform && resolved.platform!=='auto'){
+        profilePlatform=normalizeProfilePlatform(resolved.platform);
+      }
+      if(resolved.avatar){
+        avatar=resolved.avatar;
+        avatarSource=resolved.source||'profile';
+      }
+    }
+
+    if(!avatar&&wallet){
+      const resolved=await resolveWalletAvatar(wallet);
+      avatar=resolved.avatar||'';
+      avatarSource=resolved.source||'generated';
+    }
+
+    const entityId=id('ent_');
+    let walletId='';
+
+    db.exec('BEGIN IMMEDIATE');
+    try{
+      if(wallet&&db.prepare('SELECT 1 FROM wallets WHERE address=?').get(wallet)){
+        db.exec('ROLLBACK');
+        return json(res,409,{error:'Wallet already tracked',code:'wallet_exists'});
+      }
+
+      db.prepare(`
+        INSERT INTO entities
+          (id,name,x_handle,profile_platform,profile_handle,profile_url,avatar,avatar_source,
+           risk_score,confidence,incidents,follower_losses,status,notes,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      `).run(
+        entityId,
+        name,
+        xHandle,
+        profilePlatform,
+        profileHandle,
+        profileUrl,
+        avatar,
+        avatarSource,
+        Math.max(0,Math.min(100,Number.isFinite(Number(b.riskScore))?Number(b.riskScore):0)),
+        Math.max(0,Math.min(100,Number.isFinite(Number(b.confidence))?Number(b.confidence):50)),
+        0,
+        0,
+        clean(b.status,20)||'watch',
+        clean(b.notes,500),
+        nowIso()
+      );
+
+      if(wallet){
+        walletId=id('wal_');
+        db.prepare(`
+          INSERT INTO wallets
+            (id,entity_id,address,label,avatar,avatar_source,sync_status,monitoring_enabled,created_at)
+          VALUES (?,?,?,?,?,?,?,?,?)
+        `).run(
+          walletId,
+          entityId,
+          wallet,
+          clean(b.walletLabel,80)||'Main wallet',
+          avatar,
+          avatarSource,
+          'pending',
+          1,
+          nowIso()
+        );
+      }
+
+      db.exec('COMMIT');
+    }catch(error){
+      try{db.exec('ROLLBACK')}catch{}
+      throw error;
+    }
+
+    if(walletId){
+      setTimeout(()=>live.syncWallet(walletId).catch(err=>console.warn('Initial wallet sync failed:',err.message)),0).unref?.();
+    }
+
+    return json(res,201,{
+      id:entityId,
+      walletId:walletId||null,
+      avatar,
+      avatarSource,
+      profilePlatform,
+      profileHandle,
+      profileUrl
+    });
+  }
+  /* SHADOW_PROFILE_SOURCE_V270_CREATE_END */
+  /* SHADOW_ADMIN_ENTITY_V213_START */
+  // Admin entity mutations.
+  // POST aliases are the canonical UI path because they are reliable through
+  // mobile browsers / preview proxies. PATCH + DELETE remain supported.
+  const entityUpdateRoute =
+    parts[0]==='api' && parts[1]==='entities' && parts[2] && (
+      (parts.length===3 && method==='PATCH') ||
+      (parts.length===4 && parts[3]==='update' && method==='POST')
+    );
+
+  if (entityUpdateRoute) {
+    if (!requireOwner(req,res,db)) return;
+
+    const current=db.prepare('SELECT * FROM entities WHERE id=?').get(parts[2]);
+    if(!current)return json(res,404,{error:'Entity not found'});
+
+    const b=await readJson(req);
+    const has=(key)=>Object.hasOwn(b,key);
+
+    const name=has('name')?clean(b.name,80):current.name;
+    if(!name)return json(res,400,{error:'Name required'});
+
+    const xHandle=has('xHandle')?clean(b.xHandle,50):current.x_handle;
+
+    let avatar=has('avatar')?String(b.avatar||'').trim():String(current.avatar||'');
+    if(avatar && !(avatar.startsWith('data:image/') || isSafeHttpUrl(avatar))){
+      return json(res,400,{error:'Avatar must be an image upload or safe URL'});
+    }
+    if(avatar.length>1_400_000)return json(res,413,{error:'Avatar is too large'});
+
+    const clamp100=(value,fallback)=>{
+      const n=Number(value);
+      return Number.isFinite(n)?Math.max(0,Math.min(100,n)):fallback;
+    };
+
+    const riskScore=has('riskScore')?clamp100(b.riskScore,current.risk_score):current.risk_score;
+    const confidence=has('confidence')?clamp100(b.confidence,current.confidence):current.confidence;
+    const status=has('status')?(clean(b.status,20)||current.status):current.status;
+    const notes=has('notes')?clean(b.notes,500):current.notes;
+    const avatarSource=has('avatar')?(avatar?'manual':'pending'):current.avatar_source;
+
+    const changed=db.prepare(`
+      UPDATE entities
+      SET name=?,x_handle=?,avatar=?,avatar_source=?,risk_score=?,confidence=?,status=?,notes=?
+      WHERE id=?
+    `).run(
+      name,xHandle,avatar,avatarSource,riskScore,confidence,status,notes,current.id
+    ).changes;
+
+    if(!changed)return json(res,409,{error:'Entity was not updated'});
+
+    const updated=db.prepare('SELECT * FROM entities WHERE id=?').get(current.id);
+    const walletCount=db.prepare('SELECT COUNT(*) AS n FROM wallets WHERE entity_id=?').get(current.id).n;
+
+    return json(res,200,{
+      ok:true,
+      mutation:'update',
+      version:'2.1.3',
+      entity:{
+        ...updated,
+        riskScore:updated.risk_score,
+        followerLosses:updated.follower_losses,
+        xHandle:updated.x_handle,
+        walletCount
+      }
+    });
+  }
+
+  const entityDeleteRoute =
+    parts[0]==='api' && parts[1]==='entities' && parts[2] && (
+      (parts.length===3 && method==='DELETE') ||
+      (parts.length===4 && parts[3]==='delete' && method==='POST')
+    );
+
+  if (entityDeleteRoute) {
+    if (!requireOwner(req,res,db)) return;
+
+    const entity=db.prepare('SELECT * FROM entities WHERE id=?').get(parts[2]);
+    if(!entity)return json(res,404,{error:'Entity not found'});
+
+    const affectedTokens=db.prepare(`
+      SELECT DISTINCT t.id,t.mint
+      FROM tokens t
+      WHERE t.id IN (
+        SELECT token_id FROM incidents
+        WHERE entity_id=? AND token_id IS NOT NULL
+      )
+      OR t.mint IN (
+        SELECT mint FROM wallet_activity
+        WHERE (entity_id=? OR wallet_id IN (SELECT id FROM wallets WHERE entity_id=?))
+          AND mint<>''
+      )
+      OR t.mint IN (
+        SELECT token_mint FROM evidence
+        WHERE entity_id=? AND token_mint<>''
+      )
+    `).all(entity.id,entity.id,entity.id,entity.id);
+
+    let removed={wallets:0,activity:0,evidence:0,incidents:0,social:0,orphanTokens:0};
+
+    db.exec('BEGIN IMMEDIATE');
+    try{
+      removed.evidence=db.prepare('DELETE FROM evidence WHERE entity_id=?').run(entity.id).changes;
+      removed.social=db.prepare('DELETE FROM social_posts WHERE entity_id=?').run(entity.id).changes;
+      removed.incidents=db.prepare('DELETE FROM incidents WHERE entity_id=?').run(entity.id).changes;
+
+      removed.activity=db.prepare(`
+        DELETE FROM wallet_activity
+        WHERE entity_id=?
+           OR wallet_id IN (SELECT id FROM wallets WHERE entity_id=?)
+      `).run(entity.id,entity.id).changes;
+
+      db.prepare(`
+        DELETE FROM copy_group_wallets
+        WHERE wallet_id IN (SELECT id FROM wallets WHERE entity_id=?)
+      `).run(entity.id);
+
+      removed.wallets=db.prepare('DELETE FROM wallets WHERE entity_id=?').run(entity.id).changes;
+
+      const deleted=db.prepare('DELETE FROM entities WHERE id=?').run(entity.id).changes;
+      if(deleted!==1)throw new Error('Entity delete did not remove exactly one record');
+
+      db.exec('COMMIT');
+    }catch(error){
+      try{db.exec('ROLLBACK')}catch{}
+      throw error;
+    }
+
+    let cleanupWarning='';
+    try{
+      for(const token of affectedTokens){
+        const stillUsed=db.prepare(`
+          SELECT
+            EXISTS(SELECT 1 FROM wallet_activity a WHERE a.mint=?) AS inActivity,
+            EXISTS(SELECT 1 FROM incidents i WHERE i.token_id=?) AS inIncidents,
+            EXISTS(SELECT 1 FROM evidence ev WHERE ev.token_mint=?) AS inEvidence
+        `).get(token.mint,token.id,token.mint);
+
+        if(!stillUsed.inActivity && !stillUsed.inIncidents && !stillUsed.inEvidence){
+          removed.orphanTokens+=db.prepare('DELETE FROM tokens WHERE id=?').run(token.id).changes;
+        }
+      }
+    }catch(error){
+      cleanupWarning=String(error?.message||error);
+      console.warn('Post-delete orphan token cleanup failed:',cleanupWarning);
+    }
+
+    const stillThere=db.prepare('SELECT 1 FROM entities WHERE id=?').get(entity.id);
+    if(stillThere)return json(res,500,{error:'Entity still exists after delete transaction'});
+
+    return json(res,200,{
+      ok:true,
+      mutation:'delete',
+      version:'2.1.3',
+      deletedId:entity.id,
+      deletedName:entity.name,
+      removed,
+      cleanupWarning
+    });
+  }
+  /* SHADOW_ADMIN_ENTITY_V213_END */
+
+  if (parts[0]==='api' && parts[1]==='entities' && parts[2] && parts.length===3 && method==='GET') {
+    const e=db.prepare('SELECT * FROM entities WHERE id=?').get(parts[2]); if(!e)return json(res,404,{error:'Entity not found'});
+    const wallets=db.prepare('SELECT * FROM wallets WHERE entity_id=? ORDER BY created_at').all(e.id);
+    const incidents=feedRows(db,100).filter(x=>x.entityId===e.id);
+    const solUsd=await currentSolUsd();
+    const tokens=entityTokenPnlRows(db,e.id,12,solUsd);
+    const evidence=db.prepare('SELECT * FROM evidence WHERE entity_id=? ORDER BY created_at DESC').all(e.id);
+    return json(res,200,{entity:{...e,riskScore:e.risk_score,followerLosses:e.follower_losses,xHandle:e.x_handle},wallets,tokens,incidents,evidence});
+  }
+  if (parts[0]==='api' && parts[1]==='entities' && parts[2] && parts[3]==='wallets' && method==='POST') {
+    if (!requireOwner(req,res,db)) return;
+    const b=await readJson(req); const address=clean(b.address,120); if(!address)return json(res,400,{error:'Wallet address required'});
+    if(!isSolanaAddress(address))return json(res,400,{error:'Invalid Solana wallet address'});
+    if(!db.prepare('SELECT id FROM entities WHERE id=?').get(parts[2]))return json(res,404,{error:'Entity not found'});
+    if(db.prepare('SELECT 1 FROM wallets WHERE address=?').get(address))return json(res,409,{error:'Wallet already tracked'});
+    const av=await resolveWalletAvatar(address); const walletId=id('wal_');
+    db.prepare('INSERT INTO wallets (id,entity_id,address,label,avatar,avatar_source,sync_status,monitoring_enabled,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(walletId,parts[2],address,clean(b.label,80),av.avatar,av.source,'pending',1,nowIso());
+    if(!db.prepare('SELECT avatar FROM entities WHERE id=?').get(parts[2])?.avatar) db.prepare('UPDATE entities SET avatar=?,avatar_source=? WHERE id=?').run(av.avatar,av.source,parts[2]);
+    setTimeout(()=>live.syncWallet(walletId).catch(err=>console.warn('Initial wallet sync failed:',err.message)),0).unref?.();
+    setTimeout(()=>live.refreshRealtimeWebhook().catch(err=>console.warn('Realtime webhook refresh failed:',err.message)),0).unref?.();
+    setTimeout(()=>live.refreshMonitoringMode?.(),50).unref?.();
+    return json(res,201,{id:walletId,avatarSource:av.source,syncStatus:'pending'});
+  }
+  if (parts[0]==='api' && parts[1]==='wallets' && parts[2] && parts[3]==='sync-avatar' && method==='POST') {
+    if (!requireOwner(req,res,db)) return;
+    const w=db.prepare('SELECT * FROM wallets WHERE id=?').get(parts[2]); if(!w)return json(res,404,{error:'Wallet not found'});
+    const av=await resolveWalletAvatar(w.address); db.prepare('UPDATE wallets SET avatar=?,avatar_source=? WHERE id=?').run(av.avatar,av.source,w.id);
+    if(w.entity_id) db.prepare('UPDATE entities SET avatar=?,avatar_source=? WHERE id=?').run(av.avatar,av.source,w.entity_id);
+    return json(res,200,av);
+  }
+  if (parts[0]==='api' && parts[1]==='wallets' && parts[2] && parts[3]==='sync' && method==='POST') {
+    if (!requireOwner(req,res,db)) return;
+    try { return json(res,200,await live.syncWallet(parts[2],{forceMarket:true})); }
+    catch(error){ return json(res,502,{error:error.message}); }
+  }
+  if (parts[0]==='api' && parts[1]==='wallets' && parts[2] && parts[3]==='activity' && method==='GET') {
+    const w=db.prepare('SELECT id FROM wallets WHERE id=?').get(parts[2]); if(!w)return json(res,404,{error:'Wallet not found'});
+    const items=db.prepare(`SELECT * FROM wallet_activity WHERE wallet_id=? ORDER BY block_time DESC LIMIT ?`).all(parts[2],Math.min(Number(url.searchParams.get('limit'))||100,300));
+    return json(res,200,{items});
+  }
+  if (parts[0]==='api' && parts[1]==='entities' && parts[2] && parts[3]==='sync' && method==='POST') {
+    if (!requireOwner(req,res,db)) return;
+    try { return json(res,200,await live.syncEntity(parts[2])); }
+    catch(error){ return json(res,502,{error:error.message}); }
+  }
+  /* SHADOW_TOP_24H_MOVERS_V250_API */
+  if (route === '/api/market/movers' && method === 'GET') {
+    try {
+      return json(res,200,await topMovers24h(db));
+    } catch(error) {
+      console.error('Top 24H movers failed:',error);
+      return json(res,200,{items:[],asOf:nowIso(),windowHours:1,error:'Market mover temporarily unavailable'});
+    }
+  }
+  /* SHADOW_TOP_24H_MOVERS_V250_API_END */
+
+  /* SHADOW_PUMP_LIVE_MC_V394_API */
+  if (
+    parts[0]==='api' &&
+    parts[1]==='tokens' &&
+    parts[2] &&
+    parts[3]==='pump-market' &&
+    parts.length===4 &&
+    method==='GET'
+  ) {
+    const mint=clean(parts[2],120);
+
+    if(!mint || !isSolanaAddress(mint)){
+      return json(res,400,{error:'Invalid Solana token mint'});
+    }
+
+    const pump=await getPumpTokenMarket(mint,{
+      fetchImpl:fetch,
+      maxAgeMs:1000,
+      timeoutMs:2500
+    });
+
+    const marketCap=Number(pump?.marketCap);
+
+    if(!(Number.isFinite(marketCap)&&marketCap>0)){
+      return json(res,503,{
+        mint,
+        marketCap:null,
+        source:'pump.fun',
+        error:'Live Pump.fun market cap unavailable'
+      });
+    }
+
+    const asOf=nowIso();
+
+    db.prepare(`
+      UPDATE tokens
+      SET market_cap=?,last_market_at=?
+      WHERE mint=?
+    `).run(marketCap,asOf,mint);
+
+    return json(res,200,{
+      mint,
+      marketCap,
+      source:'pump.fun',
+      asOf
+    });
+  }
+  /* SHADOW_PUMP_LIVE_MC_V394_API_END */
+
+  /* SHADOW_TOKEN_ENTITY_GRAPH_V350_API */
+  if (
+    parts[0]==='api' &&
+    parts[1]==='tokens' &&
+    parts[2] &&
+    parts[3]==='entities' &&
+    parts.length===4 &&
+    method==='GET'
+  ) {
+    const mint=clean(parts[2],120);
+    if(!mint || !isSolanaAddress(mint)){
+      return json(res,400,{error:'Invalid Solana token mint'});
+    }
+
+    const token=db.prepare('SELECT id,mint FROM tokens WHERE mint=?').get(mint);
+    if(!token)return json(res,404,{error:'Token not found'});
+
+    const items=db.prepare(`
+      WITH linked_entity_ids(entity_id) AS (
+        SELECT COALESCE(h.entity_id,w.entity_id)
+        FROM wallet_holdings h
+        LEFT JOIN wallets w ON w.id=h.wallet_id
+        WHERE h.mint=?
+          AND COALESCE(h.amount,0)>1e-12
+          AND COALESCE(h.entity_id,w.entity_id) IS NOT NULL
+
+        UNION
+
+        SELECT COALESCE(a.entity_id,w.entity_id)
+        FROM wallet_activity a
+        LEFT JOIN wallets w ON w.id=a.wallet_id
+        WHERE a.mint=?
+          AND COALESCE(a.entity_id,w.entity_id) IS NOT NULL
+
+        UNION
+
+        SELECT i.entity_id
+        FROM incidents i
+        WHERE i.token_id=?
+          AND i.entity_id IS NOT NULL
+
+        UNION
+
+        SELECT ev.entity_id
+        FROM evidence ev
+        WHERE ev.token_mint=?
+          AND ev.entity_id IS NOT NULL
+
+        UNION
+
+        SELECT sp.entity_id
+        FROM social_posts sp
+        WHERE sp.token_mint=?
+          AND sp.entity_id IS NOT NULL
+      )
+      SELECT
+        e.*,
+        (SELECT COUNT(*) FROM wallets w WHERE w.entity_id=e.id) AS walletCount
+      FROM entities e
+      JOIN linked_entity_ids linked ON linked.entity_id=e.id
+      ORDER BY LOWER(COALESCE(e.name,'')),e.created_at
+    `).all(mint,mint,token.id,mint,mint).map(e=>({
+      ...e,
+      riskScore:e.risk_score,
+      followerLosses:e.follower_losses,
+      xHandle:e.x_handle,
+      walletCount:Number(e.walletCount||0)
+    }));
+
+    return json(res,200,{
+      mint,
+      items,
+      count:items.length,
+      relationship:'all-known-token-links',
+      authoritative:true
+    });
+  }
+  /* SHADOW_TOKEN_ENTITY_GRAPH_V350_API_END */
+
+  /* SHADOW_CURRENT_HOLDINGS_V219_API */
+  if (route === '/api/tokens' && method === 'GET') {
+    const items=db.prepare(`
+      WITH current_positions AS (
+        SELECT
+          h.wallet_id,
+          h.entity_id,
+          h.mint,
+          h.amount
+        FROM wallet_holdings h
+        JOIN wallets w ON w.id=h.wallet_id
+        JOIN wallet_holdings_state s ON s.wallet_id=h.wallet_id
+        WHERE w.entity_id IS NOT NULL
+          AND COALESCE(s.last_success_at,'')<>''
+          AND h.amount>1e-12
+
+        UNION ALL
+
+        -- Startup fallback only. Once a wallet has one successful on-chain
+        -- snapshot, this branch is permanently disabled for that wallet.
+        SELECT
+          a.wallet_id,
+          a.entity_id,
+          a.mint,
+          SUM(COALESCE(a.token_amount,0)) AS amount
+        FROM wallet_activity a
+        JOIN wallets w ON w.id=a.wallet_id
+        LEFT JOIN wallet_holdings_state s ON s.wallet_id=a.wallet_id
+        WHERE w.entity_id IS NOT NULL
+          AND COALESCE(s.last_success_at,'')=''
+          AND COALESCE(a.mint,'')<>''
+        GROUP BY a.wallet_id,a.entity_id,a.mint
+        HAVING SUM(COALESCE(a.token_amount,0))>1e-12
+      ),
+      held AS (
+        SELECT
+          mint,
+          SUM(amount) AS held_amount,
+          COUNT(DISTINCT wallet_id) AS holder_wallets,
+          COUNT(DISTINCT entity_id) AS holder_entities
+        FROM current_positions
+        GROUP BY mint
+        HAVING SUM(amount)>1e-12
+      )
+      SELECT
+        t.*,
+        held.held_amount AS held_amount,
+        held.holder_wallets AS holder_wallets,
+        held.holder_entities AS holder_entities,
+        (
+          SELECT MAX(h.updated_at)
+          FROM wallet_holdings h
+          WHERE h.mint=t.mint
+        ) AS holdings_updated_at
+      FROM tokens t
+      JOIN held ON held.mint=t.mint
+      ORDER BY COALESCE(t.last_market_at,t.created_at) DESC
+    `).all();
+
+    /* SHADOW_TOKEN_HOLDER_ENTITIES_V390_API */
+    const holderRows=db.prepare(`
+      WITH current_positions AS (
+        SELECT
+          h.wallet_id,
+          COALESCE(h.entity_id,w.entity_id) AS entity_id,
+          h.mint,
+          h.amount
+        FROM wallet_holdings h
+        JOIN wallets w ON w.id=h.wallet_id
+        JOIN wallet_holdings_state s ON s.wallet_id=h.wallet_id
+        WHERE w.entity_id IS NOT NULL
+          AND COALESCE(s.last_success_at,'')<>''
+          AND h.amount>1e-12
+
+        UNION ALL
+
+        SELECT
+          a.wallet_id,
+          COALESCE(a.entity_id,w.entity_id) AS entity_id,
+          a.mint,
+          SUM(COALESCE(a.token_amount,0)) AS amount
+        FROM wallet_activity a
+        JOIN wallets w ON w.id=a.wallet_id
+        LEFT JOIN wallet_holdings_state s ON s.wallet_id=a.wallet_id
+        WHERE w.entity_id IS NOT NULL
+          AND COALESCE(s.last_success_at,'')=''
+          AND COALESCE(a.mint,'')<>''
+        GROUP BY a.wallet_id,COALESCE(a.entity_id,w.entity_id),a.mint
+        HAVING SUM(COALESCE(a.token_amount,0))>1e-12
+      )
+      SELECT
+        cp.mint,
+        e.id,
+        e.name,
+        e.avatar,
+        e.x_handle,
+        SUM(cp.amount) AS amount
+      FROM current_positions cp
+      JOIN entities e ON e.id=cp.entity_id
+      WHERE cp.entity_id IS NOT NULL
+      GROUP BY cp.mint,e.id,e.name,e.avatar,e.x_handle
+      HAVING SUM(cp.amount)>1e-12
+      ORDER BY cp.mint,LOWER(COALESCE(e.name,'')),e.created_at
+    `).all();
+
+    const holdersByMint=new Map();
+    for(const row of holderRows){
+      const mint=String(row.mint||'');
+      if(!holdersByMint.has(mint))holdersByMint.set(mint,[]);
+      holdersByMint.get(mint).push({
+        id:row.id,
+        name:row.name,
+        avatar:row.avatar||'',
+        xHandle:row.x_handle||'',
+        amount:Number(row.amount||0)
+      });
+    }
+
+    const strict1hItems=(await tokensWithMarketPeriods(db,items)).map(token=>({
+      ...token,
+      holderEntities:holdersByMint.get(String(token.mint||''))||[]
+    }));
+    /* SHADOW_TOKEN_HOLDER_ENTITIES_V390_API_END */
+
+    return json(res,200,{
+      items:strict1hItems,
+      mode:'current-entity-holdings',
+      authoritative:true
+    });
+  }
+  /* SHADOW_CURRENT_HOLDINGS_V219_API_END */
+  if (route === '/api/evidence' && method === 'GET') return json(res,200,{items:db.prepare(`SELECT e.*,u.display_name AS userName,en.name AS entityName FROM evidence e LEFT JOIN users u ON u.id=e.user_id LEFT JOIN entities en ON en.id=e.entity_id ORDER BY e.created_at DESC LIMIT 100`).all()});
+  if (route === '/api/evidence' && method === 'POST') {
+    const user=requireUser(req,res,db); if(!user)return; const b=await readJson(req);
+    const title=clean(b.title,120); if(!title)return json(res,400,{error:'Title required'});
+    let image=String(b.image||''); if(image.length>1_400_000)return json(res,413,{error:'Image too large'});
+    const entityId=clean(b.entityId,80)||null; const kind=clean(b.kind,30)||'note'; const tokenMint=clean(b.tokenMint,80); const tokenSymbol=clean(b.tokenSymbol,30); const observedAt=clean(b.observedAt,50)||nowIso();
+    if(tokenMint && !isSolanaAddress(tokenMint))return json(res,400,{error:'Token mint is not a valid Solana address'});
+    const evidenceId=id('ev_');
+    db.prepare('INSERT INTO evidence (id,user_id,entity_id,title,kind,source_url,image,note,created_at,observed_at,token_mint,token_symbol) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run(evidenceId,user.id,entityId,title,kind,clean(b.sourceUrl,500),image,clean(b.note,1000),nowIso(),observedAt,tokenMint,tokenSymbol);
+    if(entityId && (kind==='x_post'||kind==='social') && (clean(b.sourceUrl,500)||clean(b.note,1000))){
+      const external=`evidence:${evidenceId}`; const text=clean(b.note,1200)||title;
+      db.prepare('INSERT OR IGNORE INTO social_posts (id,entity_id,external_id,source,text,url,token_mint,token_symbol,posted_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)').run(id('post_'),entityId,external,'evidence',text,clean(b.sourceUrl,500),tokenMint,tokenSymbol,observedAt,nowIso());
+      live.recomputeEntity(entityId);
+    }
+    return json(res,201,{ok:true,id:evidenceId});
+  }
+  if (route === '/api/chat/messages' && method === 'GET') {
+    if(getSetting(db,'community_chat_enabled','true')!=='true')return json(res,403,{error:'Community chat disabled'});
+    return json(res,200,{items:db.prepare(`SELECT c.id,c.body,c.created_at AS createdAt,u.id AS userId,u.display_name AS displayName,u.avatar,u.role FROM chat_messages c JOIN users u ON u.id=c.user_id ORDER BY c.created_at DESC LIMIT 80`).all().reverse()});
+  }
+  if (route === '/api/chat/messages' && method === 'POST') {
+    if(getSetting(db,'community_chat_enabled','true')!=='true')return json(res,403,{error:'Community chat disabled'});
+    const user=requireUser(req,res,db); if(!user)return;
+    const b=await readJson(req);
+    const body=clean(b.body,800);
+    if(!body)return json(res,400,{error:'Message cannot be empty'});
+
+    const chatId=id('chat_');
+    const createdAt=nowIso();
+
+    db.prepare('INSERT INTO chat_messages (id,user_id,body,created_at) VALUES (?,?,?,?)')
+      .run(chatId,user.id,body,createdAt);
+
+    return json(res,201,{
+      ok:true,
+      item:{
+        id:chatId,
+        body,
+        createdAt,
+        userId:user.id,
+        displayName:user.displayName,
+        avatar:user.avatar||'',
+        role:user.role
+      }
+    });
+  }
+  if (route === '/api/users' && method === 'GET') {
+    const user=requireUser(req,res,db); if(!user)return; const q=`%${clean(url.searchParams.get('q'),80)}%`;
+    const rows=db.prepare('SELECT id,display_name AS displayName,avatar,bio,x_handle AS xHandle,role FROM users WHERE id<>? AND (display_name LIKE ? OR email LIKE ? OR x_handle LIKE ?) ORDER BY display_name LIMIT 30').all(user.id,q,q,q);
+    return json(res,200,{items:rows});
+  }
+  if (route === '/api/conversations' && method === 'GET') {
+    const user=requireUser(req,res,db); if(!user)return;
+    const rows=db.prepare(`SELECT u.id,u.display_name AS displayName,u.avatar,u.x_handle AS xHandle,MAX(d.created_at) AS lastAt,
+      (SELECT body FROM direct_messages x WHERE ((x.sender_id=? AND x.recipient_id=u.id) OR (x.sender_id=u.id AND x.recipient_id=?)) ORDER BY x.created_at DESC LIMIT 1) AS lastBody
+      FROM users u JOIN direct_messages d ON (d.sender_id=u.id OR d.recipient_id=u.id)
+      WHERE u.id<>? AND (d.sender_id=? OR d.recipient_id=?) GROUP BY u.id ORDER BY lastAt DESC`).all(user.id,user.id,user.id,user.id,user.id);
+    return json(res,200,{items:rows});
+  }
+  if (parts[0]==='api' && parts[1]==='dm' && parts[2] && method==='GET') {
+    const user=requireUser(req,res,db); if(!user)return; const other=parts[2];
+    const otherUser=db.prepare('SELECT id,display_name AS displayName,avatar,x_handle AS xHandle FROM users WHERE id=?').get(other); if(!otherUser)return json(res,404,{error:'User not found'});
+    const items=db.prepare(`SELECT id,sender_id AS senderId,recipient_id AS recipientId,body,created_at AS createdAt FROM direct_messages WHERE (sender_id=? AND recipient_id=?) OR (sender_id=? AND recipient_id=?) ORDER BY created_at LIMIT 200`).all(user.id,other,other,user.id);
+    return json(res,200,{user:otherUser,items});
+  }
+  if (parts[0]==='api' && parts[1]==='dm' && parts[2] && method==='POST') {
+    const user=requireUser(req,res,db); if(!user)return; const b=await readJson(req); const body=clean(b.body,1200); if(!body)return json(res,400,{error:'Message cannot be empty'});
+    if(!db.prepare('SELECT 1 FROM users WHERE id=?').get(parts[2]))return json(res,404,{error:'User not found'});
+    db.prepare('INSERT INTO direct_messages (id,sender_id,recipient_id,body,created_at) VALUES (?,?,?,?,?)').run(id('dm_'),user.id,parts[2],body,nowIso()); return json(res,201,{ok:true});
+  }
+  /* SHADOW_USER_COPY_TRADING_V230_ROUTES */
+  /* SHADOW_WALLET_AUTH_V235_SERVER */
+  if (route === '/api/wallet-auth/challenge' && method === 'POST') {
+    const b=await readJson(req);
+    const address=clean(b.address,120);
+    if(!isSolanaAddress(address))return json(res,400,{error:'Invalid Solana wallet address'});
+
+    const challengeId=id('wlogin_');
+    const expiresAt=new Date(Date.now()+5*60*1000).toISOString();
+    const nonce=crypto.randomBytes(24).toString('hex');
+    const host=String(req.headers.host||'Shadow Intelligence');
+
+    const message=[
+      'Shadow Intelligence wallet verification',
+      `Domain: ${host}`,
+      `Wallet: ${address}`,
+      `Nonce: ${nonce}`,
+      `Expires: ${expiresAt}`,
+      '',
+      'This signature proves wallet ownership. It does not authorize a transaction.'
+    ].join('\n');
+
+    // Keep the challenge table bounded.
+    db.prepare("DELETE FROM wallet_login_challenges WHERE used_at<>'' OR expires_at<?")
+      .run(nowIso());
+
+    db.prepare(`
+      INSERT INTO wallet_login_challenges
+        (id,address,message,expires_at,used_at,created_at)
+      VALUES (?,?,?,?,'',?)
+    `).run(challengeId,address,message,expiresAt,nowIso());
+
+    return json(res,200,{challengeId,message,expiresAt});
+  }
+
+  if (route === '/api/wallet-auth/verify' && method === 'POST') {
+    const b=await readJson(req);
+    const challengeId=clean(b.challengeId,120);
+    const address=clean(b.address,120);
+    const provider=clean(b.provider,40)||'solana';
+    const signature=String(b.signature||'');
+
+    if(!isSolanaAddress(address))return json(res,400,{error:'Invalid Solana wallet address'});
+
+    const ch=db.prepare(`
+      SELECT * FROM wallet_login_challenges
+      WHERE id=? AND address=?
+    `).get(challengeId,address);
+
+    if(!ch)return json(res,404,{error:'Wallet verification challenge not found'});
+    if(ch.used_at)return json(res,409,{error:'Wallet verification challenge already used'});
+    if(new Date(ch.expires_at).getTime()<Date.now())return json(res,410,{error:'Wallet verification challenge expired'});
+    if(!verifySolanaMessage(address,ch.message,signature)){
+      return json(res,401,{error:'Wallet signature verification failed'});
+    }
+
+    const at=nowIso();
+    const current=userFor(req,db);
+    const linked=db.prepare(`
+      SELECT uw.*,u.role,u.email
+      FROM user_wallets uw
+      JOIN users u ON u.id=uw.user_id
+      WHERE uw.address=?
+      ORDER BY uw.verified_at DESC
+      LIMIT 1
+    `).get(address);
+
+    let userId='';
+
+    if(current){
+      // A signed-in account can attach the wallet unless another account owns it.
+      if(linked && linked.user_id!==current.id){
+        return json(res,409,{error:'This wallet is already linked to another account'});
+      }
+      userId=current.id;
+    }else if(linked){
+      // Never let a public wallet-only login silently elevate into owner/admin.
+      if(linked.role==='owner'||linked.role==='admin'){
+        return json(res,403,{error:'Admin wallet requires normal account sign-in first'});
+      }
+      userId=linked.user_id;
+    }else{
+      // Wallet is the login identity. Create a normal user account with an
+      // unreachable random password; no email/password flow is required.
+      const digest=crypto.createHash('sha256').update(address).digest('hex').slice(0,24);
+      const syntheticEmail=`wallet.${digest}@wallet.shadow.local`;
+      const existingSynthetic=db.prepare('SELECT id FROM users WHERE email=?').get(syntheticEmail);
+
+      userId=existingSynthetic?.id||id('usr_');
+
+      if(!existingSynthetic){
+        const displayName=`Wallet ${address.slice(0,4)}…${address.slice(-4)}`;
+        const unusablePassword=crypto.randomBytes(48).toString('hex');
+        db.prepare(`
+          INSERT INTO users
+            (id,email,password_hash,display_name,role,created_at)
+          VALUES (?,?,?,?, 'user', ?)
+        `).run(
+          userId,
+          syntheticEmail,
+          hashPassword(unusablePassword),
+          displayName,
+          at
+        );
+      }
+    }
+
+    const existingWallet=db.prepare(`
+      SELECT * FROM user_wallets
+      WHERE user_id=? AND address=?
+    `).get(userId,address);
+
+    const walletId=existingWallet?.id||id('uw_');
+
+    if(existingWallet){
+      db.prepare('UPDATE user_wallets SET provider=?,verified_at=? WHERE id=?')
+        .run(provider,at,walletId);
+    }else{
+      db.prepare(`
+        INSERT INTO user_wallets
+          (id,user_id,address,provider,verified_at,created_at)
+        VALUES (?,?,?,?,?,?)
+      `).run(walletId,userId,address,provider,at,at);
+    }
+
+    db.prepare('UPDATE wallet_login_challenges SET used_at=? WHERE id=?')
+      .run(at,ch.id);
+
+    // Wallet verification itself logs normal users in.
+    let sessionToken=parseCookies(req).si_session||'';
+    let sessionUser=sessionToken?getUserFromSession(db,sessionToken):null;
+
+    if(!sessionUser || sessionUser.id!==userId){
+      const session=createSession(db,userId);
+      sessionToken=session.token;
+      setSessionCookie(res,session.token);
+    }
+
+    const user=getUserFromSession(db,sessionToken);
+    const wallet=userWalletRows(db,userId).find(w=>w.id===walletId);
+
+    return json(res,200,{
+      ok:true,
+      user,
+      wallet,
+      walletLogin:!current
+    });
+  }
+  /* SHADOW_WALLET_AUTH_V235_SERVER_END */
+
+  if (route === '/api/user-wallets' && method === 'GET') {
+    const user=requireUser(req,res,db); if(!user)return;
+    return json(res,200,{items:userWalletRows(db,user.id)});
+  }
+
+  if (route === '/api/user-wallets/challenge' && method === 'POST') {
+    const user=requireUser(req,res,db); if(!user)return;
+    const b=await readJson(req);
+    const address=clean(b.address,120);
+    if(!isSolanaAddress(address))return json(res,400,{error:'Invalid Solana wallet address'});
+
+    const challengeId=id('wch_');
+    const expiresAt=new Date(Date.now()+5*60*1000).toISOString();
+    const nonce=crypto.randomBytes(24).toString('hex');
+    const message=[
+      'Shadow Intelligence wallet verification',
+      `Wallet: ${address}`,
+      `Nonce: ${nonce}`,
+      `Expires: ${expiresAt}`,
+      '',
+      'This signature proves wallet ownership. It does not authorize a transaction.'
+    ].join('\n');
+
+    db.prepare('DELETE FROM wallet_connect_challenges WHERE user_id=? AND (used_at<>? OR expires_at<?)')
+      .run(user.id,'',nowIso());
+    db.prepare(`
+      INSERT INTO wallet_connect_challenges
+        (id,user_id,address,message,expires_at,used_at,created_at)
+      VALUES (?,?,?,?,?,'',?)
+    `).run(challengeId,user.id,address,message,expiresAt,nowIso());
+
+    return json(res,200,{challengeId,message,expiresAt});
+  }
+
+  if (route === '/api/user-wallets/verify' && method === 'POST') {
+    const user=requireUser(req,res,db); if(!user)return;
+    const b=await readJson(req);
+    const challengeId=clean(b.challengeId,120);
+    const address=clean(b.address,120);
+    const provider=clean(b.provider,40)||'solana';
+    const signature=String(b.signature||'');
+
+    if(!isSolanaAddress(address))return json(res,400,{error:'Invalid Solana wallet address'});
+    const ch=db.prepare(`
+      SELECT * FROM wallet_connect_challenges
+      WHERE id=? AND user_id=? AND address=?
+    `).get(challengeId,user.id,address);
+
+    if(!ch)return json(res,404,{error:'Wallet verification challenge not found'});
+    if(ch.used_at)return json(res,409,{error:'Wallet verification challenge already used'});
+    if(new Date(ch.expires_at).getTime()<Date.now())return json(res,410,{error:'Wallet verification challenge expired'});
+    if(!verifySolanaMessage(address,ch.message,signature))return json(res,401,{error:'Wallet signature verification failed'});
+
+    const existing=db.prepare('SELECT * FROM user_wallets WHERE user_id=? AND address=?').get(user.id,address);
+    const walletId=existing?.id||id('uw_');
+    const at=nowIso();
+
+    if(existing){
+      db.prepare('UPDATE user_wallets SET provider=?,verified_at=? WHERE id=?')
+        .run(provider,at,walletId);
+    }else{
+      db.prepare(`
+        INSERT INTO user_wallets (id,user_id,address,provider,verified_at,created_at)
+        VALUES (?,?,?,?,?,?)
+      `).run(walletId,user.id,address,provider,at,at);
+    }
+
+    db.prepare('UPDATE wallet_connect_challenges SET used_at=? WHERE id=?').run(at,ch.id);
+    return json(res,200,{ok:true,wallet:userWalletRows(db,user.id).find(w=>w.id===walletId)});
+  }
+
+  if (parts[0]==='api' && parts[1]==='user-wallets' && parts[2] && parts.length===3 && method==='DELETE') {
+    const user=requireUser(req,res,db); if(!user)return;
+    const row=db.prepare('SELECT id FROM user_wallets WHERE id=? AND user_id=?').get(parts[2],user.id);
+    if(!row)return json(res,404,{error:'Wallet not found'});
+    db.prepare('DELETE FROM user_wallets WHERE id=? AND user_id=?').run(parts[2],user.id);
+    return json(res,200,{ok:true});
+  }
+
+  if (route === '/api/copy-subscriptions' && method === 'GET') {
+    const user=requireUser(req,res,db); if(!user)return;
+    const rows=db.prepare(`
+      SELECT entity_id FROM copy_subscriptions
+      WHERE user_id=? ORDER BY updated_at DESC
+    `).all(user.id);
+    return json(res,200,{items:rows.map(r=>copySubscriptionRow(db,user.id,r.entity_id))});
+  }
+
+  if (parts[0]==='api' && parts[1]==='entities' && parts[2] && parts[3]==='copy' && parts.length===4 && method==='GET') {
+    const user=requireUser(req,res,db); if(!user)return;
+    if(!db.prepare('SELECT 1 FROM entities WHERE id=?').get(parts[2]))return json(res,404,{error:'Entity not found'});
+    return json(res,200,{
+      subscription:copySubscriptionRow(db,user.id,parts[2]),
+      wallets:userWalletRows(db,user.id),
+      engineConfigured:shadowCopyEngineConfigured(),
+      copyTradingEnabled:getSetting(db,'copy_trading_enabled','true')==='true'
+    });
+  }
+
+  if (parts[0]==='api' && parts[1]==='entities' && parts[2] && parts[3]==='copy' && parts.length===4 && method==='PUT') {
+    const user=requireUser(req,res,db); if(!user)return;
+    if(getSetting(db,'copy_trading_enabled','true')!=='true')return json(res,403,{error:'Copy trading is disabled'});
+
+    const entity=db.prepare('SELECT * FROM entities WHERE id=?').get(parts[2]);
+    if(!entity)return json(res,404,{error:'Entity not found'});
+
+    const b=await readJson(req);
+    const walletId=clean(b.walletId,120);
+    const wallet=db.prepare('SELECT * FROM user_wallets WHERE id=? AND user_id=?').get(walletId,user.id);
+    if(!wallet)return json(res,400,{error:'Connect and verify your Solana wallet first'});
+
+    const amountSol=numBetween(b.amountSol,0.001,100,0.05);
+    const maxPositionSol=numBetween(b.maxPositionSol,amountSol,1000,Math.max(0.5,amountSol));
+    const maxDailySol=numBetween(b.maxDailySol,amountSol,10000,Math.max(1,amountSol));
+    const slippageBps=Math.round(numBetween(b.slippageBps,10,3000,500));
+    const minMarketCapUsd=numBetween(b.minMarketCapUsd,0,1_000_000_000_000,0);
+    const rawMaxMarketCapUsd=Number(b.maxMarketCapUsd);
+    const maxMarketCapUsd=Number.isFinite(rawMaxMarketCapUsd)&&rawMaxMarketCapUsd>0
+      ? Math.min(1_000_000_000_000,rawMaxMarketCapUsd)
+      : 0;
+    if(maxMarketCapUsd>0 && maxMarketCapUsd<minMarketCapUsd){
+      return json(res,400,{error:'Maximum market cap must be greater than or equal to minimum market cap'});
+    }
+    const copyBuys=b.copyBuys!==false?1:0;
+    const copySells=b.copySells!==false?1:0;
+    const sellPercent=Math.round(numBetween(b.sellPercent,1,100,100));
+    const requestedEnabled=!!b.enabled;
+    const at=nowIso();
+
+    let sub=db.prepare('SELECT * FROM copy_subscriptions WHERE user_id=? AND entity_id=?').get(user.id,entity.id);
+    const subId=sub?.id||id('cps_');
+
+    if(sub){
+      db.prepare(`
+        UPDATE copy_subscriptions SET
+          user_wallet_id=?,amount_sol=?,max_position_sol=?,max_daily_sol=?,
+          slippage_bps=?,min_market_cap_usd=?,max_market_cap_usd=?,
+          copy_buys=?,copy_sells=?,sell_percent=?,updated_at=?
+        WHERE id=? AND user_id=?
+      `).run(
+        wallet.id,amountSol,maxPositionSol,maxDailySol,
+        slippageBps,minMarketCapUsd,maxMarketCapUsd,
+        copyBuys,copySells,sellPercent,at,subId,user.id
+      );
+    }else{
+      db.prepare(`
+        INSERT INTO copy_subscriptions
+          (id,user_id,user_wallet_id,entity_id,enabled,amount_sol,max_position_sol,max_daily_sol,
+           slippage_bps,min_market_cap_usd,max_market_cap_usd,copy_buys,copy_sells,sell_percent,
+           engine_state,last_error,created_at,updated_at)
+        VALUES (?,?,?,?,0,?,?,?,?,?,?,?,?,?,'draft','',?,?)
+      `).run(
+        subId,user.id,wallet.id,entity.id,
+        amountSol,maxPositionSol,maxDailySol,slippageBps,
+        minMarketCapUsd,maxMarketCapUsd,copyBuys,copySells,sellPercent,
+        at,at
+      );
+    }
+
+    sub=db.prepare('SELECT * FROM copy_subscriptions WHERE id=?').get(subId);
+    const entityWallets=mainCopyWalletRows(db,entity.id); // Main Wallet only · Linked Wallets are intelligence-only
+
+    if(!requestedEnabled){
+      let engine={configured:shadowCopyEngineConfigured(),ok:true,active:false,mode:'local'};
+      if(shadowCopyEngineConfigured()){
+        try{
+          engine=await syncCopySubscription({...sub,enabled:false,walletAddress:wallet.address},entityWallets,'disable');
+        }catch(error){
+          engine={configured:true,ok:false,active:false,error:String(error.message||error)};
+        }
+      }
+      db.prepare("UPDATE copy_subscriptions SET enabled=0,engine_state='stopped',last_error='',updated_at=? WHERE id=?")
+        .run(nowIso(),subId);
+      return json(res,200,{ok:true,subscription:copySubscriptionRow(db,user.id,entity.id),engine});
+    }
+
+    if(!shadowCopyEngineConfigured()){
+      db.prepare("UPDATE copy_subscriptions SET enabled=0,engine_state='engine_required',last_error=?,updated_at=? WHERE id=?")
+        .run('COPY_ENGINE_URL is not configured',nowIso(),subId);
+      return json(res,409,{
+        error:'Automatic copy execution is not configured yet',
+        code:'COPY_ENGINE_REQUIRED',
+        subscription:copySubscriptionRow(db,user.id,entity.id)
+      });
+    }
+
+    let engine;
+    try{
+      engine=await syncCopySubscription({
+        ...sub,
+        enabled:true,
+        walletAddress:wallet.address,
+        userId:user.id,
+        entityId:entity.id,
+        entityName:entity.name,
+        executionMode:'dedicated_wallet',
+        requireDedicatedExecutionWallet:true,
+        statusOnly:false
+      },entityWallets,'upsert');
+    }catch(error){
+      db.prepare("UPDATE copy_subscriptions SET enabled=0,engine_state='error',last_error=?,updated_at=? WHERE id=?")
+        .run(String(error.message||error).slice(0,500),nowIso(),subId);
+      return json(res,502,{error:`Copy engine: ${error.message||error}`,code:'COPY_ENGINE_ERROR'});
+    }
+
+    const executionSnapshot=engineExecutionSnapshot(engine);
+    const active=executionSnapshot.dedicatedReady===true;
+    const engineState=active
+      ?'active'
+      :executionSnapshot.state==='execution_wallet_required'
+        ?'execution_wallet_required'
+        :engine?.authorizationUrl?'authorization_required':'pending';
+    db.prepare('UPDATE copy_subscriptions SET enabled=?,engine_state=?,last_error=?,updated_at=? WHERE id=?')
+      .run(active?1:0,engineState,active?'':'Execution engine has not activated this subscription yet',nowIso(),subId);
+
+    return json(res,200,{
+      ok:true,
+      subscription:copySubscriptionRow(db,user.id,entity.id),
+      engine,
+      requiresAuthorization:!active&&!!engine?.authorizationUrl,
+      authorizationUrl:engine?.authorizationUrl||''
+    });
+  }
+  /* SHADOW_DELEGATED_COPY_ENGINE_V340_ROUTES */
+  if(route==='/api/copy-engine/status' && method==='GET'){
+    const user=requireUser(req,res,db); if(!user)return;
+    const engine=globalThis.__SHADOW_INTERNAL_COPY_ENGINE;
+    return json(res,200,engine?engine.status():{configured:false,mode:'noncustodial_delegated_vault'});
+  }
+  if(route==='/api/copy-engine/authorization' && method==='GET'){
+    const user=requireUser(req,res,db); if(!user)return;
+    const token=String(url.searchParams.get('token')||'');
+    const action=String(url.searchParams.get('action')||'authorize')==='revoke'?'revoke':'authorize';
+    const details=globalThis.__SHADOW_INTERNAL_COPY_ENGINE?.authorizationDetails(token,user.id,action);
+    if(!details)return json(res,410,{error:'Delegated action link is invalid or expired'});
+    return json(res,200,details);
+  }
+  if(route==='/api/copy-engine/authorization/prepare' && method==='POST'){
+    const user=requireUser(req,res,db); if(!user)return;
+    const b=await readJson(req); const token=String(b.token||''); const action=String(b.action||'authorize')==='revoke'?'revoke':'authorize';
+    try{return json(res,200,await globalThis.__SHADOW_INTERNAL_COPY_ENGINE.prepareAction(token,user.id,action));}
+    catch(error){return json(res,error.statusCode||400,{error:String(error.message||error)});}
+  }
+  if(route==='/api/copy-engine/authorization/confirm' && method==='POST'){
+    const user=requireUser(req,res,db); if(!user)return;
+    const b=await readJson(req); const token=String(b.token||''); const action=String(b.action||'authorize')==='revoke'?'revoke':'authorize';
+    try{return json(res,200,{ok:true,...await globalThis.__SHADOW_INTERNAL_COPY_ENGINE.confirmAction(token,user.id,action,String(b.signature||''))});}
+    catch(error){return json(res,error.statusCode||400,{error:String(error.message||error)});}
+  }
+  /* SHADOW_DELEGATED_COPY_ENGINE_V340_ROUTES_END */
+
+  /* SHADOW_DELEGATED_EXECUTION_V340_ROUTES */
+  if(parts[0]==='api'&&parts[1]==='entities'&&parts[2]&&parts[3]==='copy'&&parts[4]==='execution'&&parts.length===5&&method==='GET'){
+    const user=requireUser(req,res,db); if(!user)return;
+    ensureExecutionWalletSchema(db);
+    const entity=db.prepare('SELECT * FROM entities WHERE id=?').get(parts[2]); if(!entity)return json(res,404,{error:'Entity not found'});
+    const subscription=copySubscriptionRow(db,user.id,entity.id); const mainWallet=mainCopyWalletRows(db,entity.id)[0]||null;
+    const fundingWallet=subscription?db.prepare('SELECT id,address,provider,verified_at AS verifiedAt FROM user_wallets WHERE id=? AND user_id=?').get(subscription.user_wallet_id,user.id)||null:null;
+    let engine=null,executionWallet=executionAuthorizationRow(db,user.id,entity.id);
+    if(subscription&&fundingWallet){
+      try{engine=await globalThis.__SHADOW_INTERNAL_COPY_ENGINE.syncSubscription({action:'upsert',subscription:{...subscription,funding_address:fundingWallet.address,walletAddress:fundingWallet.address,userId:user.id,entityId:entity.id}});executionWallet=persistExecutionAuthorization(db,{subscription,userId:user.id,entityId:entity.id,fundingWalletId:fundingWallet.id,engine});
+        if(engine?.executionWallet?.authorizationUrl)executionWallet.authorizationUrl=engine.executionWallet.authorizationUrl;
+        if(engine?.revocationUrl||engine?.executionWallet?.revocationUrl)executionWallet.revocationUrl=engine.revocationUrl||engine.executionWallet.revocationUrl;
+        executionWallet.authorizationState=engine?.authorizationState||executionWallet.authorizationState;
+      }catch{}
+    }
+    return json(res,200,{ok:true,subscription,mainWallet:mainWallet?{id:mainWallet.id,address:mainWallet.address,label:mainWallet.label||'Main Wallet'}:null,fundingWallet,executionWallet,engineConfigured:globalThis.__SHADOW_INTERNAL_COPY_ENGINE?.status()?.configured===true,engine,mainWalletOnly:true,linkedWalletsTrading:false,nonCustodial:true});
+  }
+  if(parts[0]==='api'&&parts[1]==='entities'&&parts[2]&&parts[3]==='copy'&&parts[4]==='execution'&&parts[5]==='refresh'&&parts.length===6&&method==='POST'){
+    const user=requireUser(req,res,db); if(!user)return; const entity=db.prepare('SELECT * FROM entities WHERE id=?').get(parts[2]);if(!entity)return json(res,404,{error:'Entity not found'});
+    const sub=db.prepare('SELECT * FROM copy_subscriptions WHERE user_id=? AND entity_id=?').get(user.id,entity.id);if(!sub)return json(res,409,{error:'Save Copy Trading settings first',code:'COPY_SUBSCRIPTION_REQUIRED'});
+    const wallet=db.prepare('SELECT * FROM user_wallets WHERE id=? AND user_id=?').get(sub.user_wallet_id,user.id);if(!wallet)return json(res,409,{error:'Owner / funding wallet is not connected'});
+    const mainWallet=mainCopyWalletRows(db,entity.id)[0]||null;if(!mainWallet)return json(res,409,{error:'Entity Main Wallet is missing'});
+    try{const engine=await globalThis.__SHADOW_INTERNAL_COPY_ENGINE.syncSubscription({action:'upsert',subscription:{...sub,funding_address:wallet.address,walletAddress:wallet.address,userId:user.id,entityId:entity.id}});let executionWallet=persistExecutionAuthorization(db,{subscription:sub,userId:user.id,entityId:entity.id,fundingWalletId:wallet.id,engine});executionWallet={...executionWallet,authorizationState:engine.authorizationState||executionWallet.authorizationState,authorizationUrl:engine.authorizationUrl||engine.executionWallet?.authorizationUrl||'',revocationUrl:engine.revocationUrl||engine.executionWallet?.revocationUrl||''};const active=engine?.active===true;db.prepare('UPDATE copy_subscriptions SET enabled=?,engine_state=?,last_error=?,updated_at=? WHERE id=?').run(active?1:0,active?'active':String(engine?.authorizationState||'pending'),active?'':String(engine?.message||engine?.executionReadyReason||''),nowIso(),sub.id);return json(res,200,{ok:true,subscription:copySubscriptionRow(db,user.id,entity.id),mainWallet:{id:mainWallet.id,address:mainWallet.address,label:mainWallet.label||'Main Wallet'},fundingWallet:{id:wallet.id,address:wallet.address,provider:wallet.provider},executionWallet,engineConfigured:globalThis.__SHADOW_INTERNAL_COPY_ENGINE.status().configured===true,engine,mainWalletOnly:true,linkedWalletsTrading:false,nonCustodial:true});}catch(error){return json(res,error.statusCode||502,{error:String(error.message||error),code:'DELEGATED_ENGINE_ERROR'});}
+  }
+  if(parts[0]==='api'&&parts[1]==='entities'&&parts[2]&&parts[3]==='copy'&&parts[4]==='execution'&&parts[5]==='revoke'&&parts.length===6&&method==='POST'){
+    const user=requireUser(req,res,db); if(!user)return;const entity=db.prepare('SELECT * FROM entities WHERE id=?').get(parts[2]);if(!entity)return json(res,404,{error:'Entity not found'});const sub=db.prepare('SELECT * FROM copy_subscriptions WHERE user_id=? AND entity_id=?').get(user.id,entity.id);if(!sub)return json(res,404,{error:'Copy subscription not found'});const wallet=db.prepare('SELECT * FROM user_wallets WHERE id=? AND user_id=?').get(sub.user_wallet_id,user.id);if(!wallet)return json(res,409,{error:'Owner wallet missing'});const engine=await globalThis.__SHADOW_INTERNAL_COPY_ENGINE.syncSubscription({action:'revoke',subscription:{...sub,funding_address:wallet.address,walletAddress:wallet.address,userId:user.id,entityId:entity.id}});return json(res,200,{ok:true,revoked:false,authorizationState:'revocation_required',revocationUrl:engine.revocationUrl||engine.executionWallet?.revocationUrl||'',engine});
+  }
+  /* SHADOW_DELEGATED_EXECUTION_V340_ROUTES_END */
+
+  /* SHADOW_USER_COPY_TRADING_V230_ROUTES_END */
+
+  if (route === '/api/copy-groups' && method === 'GET') return json(res,200,{items:groups(db)});
+  if (parts[0]==='api' && parts[1]==='copy-groups' && parts[2] && parts.length===3 && method==='GET') {
+    const g=db.prepare('SELECT * FROM copy_groups WHERE id=?').get(parts[2]); if(!g)return json(res,404,{error:'Group not found'});
+    const wallets=db.prepare(`SELECT w.*,e.name AS entityName,e.x_handle AS xHandle FROM wallets w JOIN copy_group_wallets c ON c.wallet_id=w.id LEFT JOIN entities e ON e.id=w.entity_id WHERE c.group_id=? ORDER BY e.name,w.created_at`).all(g.id);
+    const available=db.prepare(`SELECT w.*,e.name AS entityName,e.x_handle AS xHandle FROM wallets w LEFT JOIN entities e ON e.id=w.entity_id WHERE w.id NOT IN (SELECT wallet_id FROM copy_group_wallets WHERE group_id=?) ORDER BY e.name,w.created_at`).all(g.id);
+    return json(res,200,{group:{...g,enabled:!!g.enabled},wallets,available});
+  }
+  if (route === '/api/copy-groups' && method === 'POST') {
+    if(!requireOwner(req,res,db))return; const b=await readJson(req); const name=clean(b.name,80); if(!name)return json(res,400,{error:'Name required'});
+    const groupId=id('grp_'); db.prepare('INSERT INTO copy_groups (id,name,mode,enabled,created_at) VALUES (?,?,?,?,?)').run(groupId,name,clean(b.mode,20)||'watch',0,nowIso()); return json(res,201,{id:groupId});
+  }
+  if (parts[0]==='api' && parts[1]==='copy-groups' && parts[2] && parts[3]==='wallets' && method==='POST') {
+    if(!requireOwner(req,res,db))return; const b=await readJson(req); const walletId=clean(b.walletId,100); if(!db.prepare('SELECT 1 FROM wallets WHERE id=?').get(walletId))return json(res,404,{error:'Wallet not found'});
+    db.prepare('INSERT OR IGNORE INTO copy_group_wallets (group_id,wallet_id) VALUES (?,?)').run(parts[2],walletId); return json(res,201,{ok:true});
+  }
+  if (parts[0]==='api' && parts[1]==='copy-groups' && parts[2] && parts[3]==='wallets' && parts[4] && method==='DELETE') {
+    if(!requireOwner(req,res,db))return;
+    db.prepare('DELETE FROM copy_group_wallets WHERE group_id=? AND wallet_id=?').run(parts[2],parts[4]); return json(res,200,{ok:true});
+  }
+  if (parts[0]==='api' && parts[1]==='copy-groups' && parts[2] && parts[3]==='toggle' && method==='POST') {
+    if(!requireOwner(req,res,db))return; const g=db.prepare('SELECT * FROM copy_groups WHERE id=?').get(parts[2]); if(!g)return json(res,404,{error:'Group not found'});
+    const enabled=g.enabled?0:1; db.prepare('UPDATE copy_groups SET enabled=? WHERE id=?').run(enabled,g.id);
+    const wallets=db.prepare(`SELECT w.* FROM wallets w JOIN copy_group_wallets c ON c.wallet_id=w.id WHERE c.group_id=?`).all(g.id);
+    let engine; try{engine=await syncCopyGroup({...g,enabled:!!enabled},wallets);}catch(err){engine={ok:false,error:err.message};}
+    return json(res,200,{enabled:!!enabled,engine});
+  }
+  if (route === '/api/settings' && method === 'GET') {
+    const user=requireUser(req,res,db); if(!user)return;
+    const all=getAllSettings(db); if(user.role!=='owner'&&user.role!=='admin') return json(res,200,{platform_name:all.platform_name,community_chat_enabled:all.community_chat_enabled});
+    return json(res,200,all);
+  }
+  if (route === '/api/settings' && method === 'PATCH') {
+    if(!requireOwner(req,res,db))return; const b=await readJson(req);
+    const allowed=['platform_name','registration_enabled','community_chat_enabled','copy_trading_enabled','live_monitor_enabled','live_poll_seconds','wallet_history_limit','x_monitor_enabled','wallet_monitor_mode'];
+    const stmt=db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
+    for(const key of allowed){
+      if(!Object.hasOwn(b,key))continue;
+      const value=key==='wallet_monitor_mode'?(String(b[key])==='solana_rpc'?'solana_rpc':'current'):String(b[key]);
+      stmt.run(key,value);
+    }
+    live.refreshMonitoringMode?.();
+    return json(res,200,getAllSettings(db));
+  }
+  return json(res,404,{error:'API route not found'});
+}
+
+function serveStatic(req,res,url){
+  let rel = url.pathname === '/' ? '/index.html' : url.pathname;
+  const full = path.normalize(path.join(PUBLIC_DIR, rel));
+  if(!full.startsWith(PUBLIC_DIR)) { res.writeHead(403); return res.end('Forbidden'); }
+  if(!fs.existsSync(full) || fs.statSync(full).isDirectory()) { rel='/index.html'; }
+  const target = path.normalize(path.join(PUBLIC_DIR, rel));
+  const ext=path.extname(target); const body=fs.readFileSync(target);
+  res.writeHead(200,{'content-type':MIME[ext]||'application/octet-stream','content-length':body.length,'cache-control':(ext==='.html'||ext==='.css'||ext==='.js')?'no-store':'public, max-age=3600'}); res.end(body);
+}
+
+export function createServer({dbPath,fetchImpl=fetch,autoMonitor=false}={}) {
+  const db=openDb(dbPath);
+  const internalCopyEngine=createInternalCopyEngine(db,{fetchImpl});
+  globalThis.__SHADOW_INTERNAL_COPY_ENGINE=internalCopyEngine;
+  globalThis.__SHADOW_INTERNAL_COPY_ENGINE_SYNC=payload=>internalCopyEngine.syncSubscription(payload);
+  const live=createLiveIntelligence(db,{
+    fetchImpl,
+    onFastTrade:event=>internalCopyEngine.handleTradeEvent?.(event)
+  });
+  let tokenImageBackfillTimer=null;
+  let profileAvatarRepairTimer=null;
+  let shadowPushStop=()=>{};
+  // Startup repair belongs only to the real long-lived app server.
+  // Unit/smoke tests create short-lived servers with autoMonitor=false;
+  // scheduling delayed DB work there races server.close() and produces
+  // misleading "database is not open" warnings after the tests pass.
+  if(autoMonitor){
+    profileAvatarRepairTimer=setTimeout(()=>{
+      repairDuplicateAutoProfileAvatars(db)
+        .then(result=>{
+          if(result?.updated)console.log(`Profile avatar repair: ${result.updated}/${result.checked} updated`);
+        })
+        .catch(error=>console.warn('Profile avatar repair failed:',error.message));
+    },700);
+    profileAvatarRepairTimer.unref?.();
+
+    tokenImageBackfillTimer=setTimeout(()=>{
+      backfillMissingTokenImages(db)
+        .then(result=>{
+          if(result?.updated)console.log(`Token image backfill: ${result.updated}/${result.checked} updated`);
+          else if(result?.skipped)console.log(`Token image backfill skipped: ${result.reason}`);
+        })
+        .catch(error=>console.warn('Token image backfill failed:',error.message));
+    },1200);
+    tokenImageBackfillTimer.unref?.();
+    shadowPushStop=startShadowPushDispatcher(db);
+  }
+  const server=http.createServer(async(req,res)=>{
+    try{
+      const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);
+      if(url.pathname.startsWith('/api/')) await api(req,res,db,url,live); else serveStatic(req,res,url);
+    }catch(err){ console.error(err); if(!res.headersSent)json(res,err.statusCode||500,{error:err.statusCode?err.message:'Internal server error'}); else res.end(); }
+  });
+  if(autoMonitor){ live.start(); if(!process.env.COPY_ENGINE_URL) internalCopyEngine.start(); }
+  server.on('close',()=>{ try{shadowPushStop();}catch{} try{internalCopyEngine.stop();}catch{} if(profileAvatarRepairTimer)clearTimeout(profileAvatarRepairTimer); if(tokenImageBackfillTimer)clearTimeout(tokenImageBackfillTimer); try{live.stop();}catch{} try{db.close();}catch{} });
+  return server;
+}
+
+export function startServer({port=Number(process.env.PORT)||3000,dbPath}={}){
+  const server=createServer({dbPath,autoMonitor:true});
+  server.listen(port,'0.0.0.0',()=>console.log(`Shadow Intelligence LIVE running on http://0.0.0.0:${server.address().port}`));
+  return server;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) startServer();

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const read=p=>fs.readFileSync(new URL(`../${p}`,import.meta.url),'utf8');
-const programId='H2LRaXnCHp5qc2MECPFLuAVWcFwYqQTi1TgJZJT3tDQc';
+const programId='HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA';
 
 test('delegated build/security configuration is clean',()=>{
   const replit=read('.replit');
@@ -14,9 +14,10 @@ test('delegated build/security configuration is clean',()=>{
   assert.equal(engine.includes('process.env.SHADOW_EXECUTION_MASTER_KEY'),false);
 
   const cargo=read('solana/shadow-delegated-vault/programs/shadow_delegated_vault/Cargo.toml');
-  assert.match(cargo,/anchor-lang = "=0\.30\.1"/);
-  assert.match(cargo,/anchor-spl = \{ version = "=0\.30\.1", default-features = false, features = \["token"\] \}/);
-  assert.match(cargo,/solana-program = "=1\.18\.17"/);
+  assert.equal(cargo.includes('anchor-lang = "=0.32.1"'), true);
+  assert.equal(cargo.includes('anchor-spl = { version = "=0.32.1", default-features = false, features = ["token"] }'), true);
+  assert.equal(cargo.includes('solana-program ='),false);
+  assert.equal(cargo.includes('spl-token ='),false);
   assert.equal(cargo.includes('indexmap'),false);
 
   const lib=read('solana/shadow-delegated-vault/programs/shadow_delegated_vault/src/lib.rs');

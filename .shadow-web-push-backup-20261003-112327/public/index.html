@@ -1,0 +1,160 @@
+<!-- SHADOW_DELEGATED_NONCUSTODIAL_V340 -->
+<!-- SHADOW_INTERNAL_COPY_ENGINE_V330 -->
+<!-- SHADOW_EXECUTION_WALLET_24X7_V320 -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
+<meta http-equiv="Pragma" content="no-cache"/>
+<meta http-equiv="Expires" content="0"/>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"/>
+<meta name="theme-color" content="#ffffff"/>
+<title>Shadow Intelligence</title>
+<script>(function(){try{var t=localStorage.getItem('si-theme');if(t==='dark'||(!t&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.dataset.theme='dark'}catch{}})()</script>
+<link rel="icon" href="/assets/logo.svg"/>
+
+
+
+<link rel="stylesheet" href="/si-current.css?v=fiz-bg-v1-20260926"/>
+<link rel="stylesheet" href="/si-token-sort.css?v=2.6.1-20260915"/>
+<link rel="stylesheet" href="/si-search-scope-fix.css?v=2.7.2-20260915"/>
+<link rel="stylesheet" href="/si-activity-ring-fix.css?v=2.7.3-20260915"/>
+  <link rel="stylesheet" href="/execution-wallet-24x7.css?v=3.3.0">
+</head>
+<body>
+<!-- SHADOW_USER_COPY_TRADING_V230 -->
+<!-- SHADOW_ADMIN_WALLETS_V222 -->
+<div id="app" class="si-app">
+<header class="si-topbar">
+  <!-- SHADOW_X_COMMUNITY_ICON_V296 -->
+  <a id="xCommunityLink" class="si-x-community-link" href="https://x.com/" target="_blank" rel="noopener noreferrer" aria-label="X Community" title="X Community">
+    <svg viewBox="-4 -4 32 32" aria-hidden="true">
+      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231z" fill="none"/>
+    </svg>
+  </a>
+  <!-- SHADOW_THEME_LEFT_V234 -->
+  <!-- SHADOW_THEME_ICON_UNIFY_V241 -->
+<nav class="si-mainnav" aria-label="Primary">
+    <button data-nav="overview" class="active">Map</button><button data-nav="entities">Entities</button><button data-nav="tokens">Tokens</button><button data-nav="feed">Live</button>
+  </nav>
+  <div class="si-top-actions">
+    <!-- SHADOW_NOTIFICATIONS_V240 -->
+    <button id="notificationButton" class="si-notification-button" type="button" aria-label="Notifications" title="Notifications">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M6.5 10.2a5.5 5.5 0 0 1 11 0v3.1l1.7 2.5H4.8l1.7-2.5v-3.1Z"/>
+        <path d="M9.8 18.3a2.4 2.4 0 0 0 4.4 0"/>
+      </svg>
+      <span id="notificationBadge" class="si-notification-badge" hidden>0</span>
+    </button>
+  </div>
+</header>
+<div class="si-layout">
+<aside class="si-rail">
+  <div class="si-rail-section"><span class="si-rail-label">INTELLIGENCE</span><button data-nav="overview" class="active"><i>◉</i>Map</button><button data-nav="feed"><i>↯</i>Live Stream</button><button data-nav="entities"><i>◎</i>Entities</button><button data-nav="tokens"><i>●</i>Tokens</button></div>
+  <div class="si-rail-section"><span class="si-rail-label">SYSTEM</span><button data-nav="evidence"><i>◇</i>Evidence</button><button data-nav="chat"><i>◌</i>Chat</button><button data-nav="settings" class="owner-only"><i>⚙</i>Admin</button></div>
+  <div class="si-rail-bottom"><span class="si-live-dot"></span><span>Solana</span><span id="railStatus">checking</span></div>
+</aside>
+<main class="si-main">
+<section id="page-overview" class="si-page active-page">
+  <div class="si-map-header"><div><div class="si-eyebrow"><span class="si-live-dot"></span> LIVE INTELLIGENCE</div><h1>Intelligence Map</h1><p>Entities, wallets and tokens connected in real time.</p></div><div class="si-map-actions"><button id="fitMap" class="si-button secondary">Fit</button><button id="addEntityBtn" class="si-button primary owner-only">＋ Entity</button></div></div>
+  <div class="si-map-layout">
+    <section class="si-map-card"><div id="globalMap" class="si-graph"></div><div class="si-map-footer"><span>Drag to orbit · scroll to zoom · tap a node to inspect</span><span id="mapCounts">0 entities · 0 wallets · 0 tokens</span></div></section>
+    <aside class="si-side-stack">
+      <section class="si-panel si-focus"><div class="si-panel-head"><span>FOCUS</span><button data-nav="entities">All →</button></div><div id="focusPanel"></div></section>
+      <section class="si-panel si-live-panel"><div class="si-panel-head"><span><span class="si-live-dot"></span> LIVE STREAM</span><button data-nav="feed">View all →</button></div><div id="overviewLive"></div></section>
+    </aside>
+  </div>
+  <div class="si-bottom-grid"><section class="si-panel"><div class="si-panel-head"><span>ACTIVE ENTITIES</span><button data-nav="entities">Explore →</button></div><div id="entityStrip" class="si-entity-strip"></div></section><section class="si-panel"><div class="si-panel-head"><span>RECENT CONNECTIONS</span></div><div id="connectionStrip" class="si-connection-strip"></div></section></div>
+</section>
+
+<section id="page-entities" class="si-page"><div class="si-page-head"><div><div class="si-eyebrow">DIRECTORY</div><h1>Entities</h1><p>People and identities mapped across wallets, tokens and activity.</p></div><button id="entitiesAddBtn" class="si-button primary owner-only">＋ Add Entity</button></div><div id="entitiesGrid" class="si-card-grid"></div></section>
+<section id="page-tokens" class="si-page"><div class="si-page-head"><div><div class="si-eyebrow">MARKETS</div><h1>Tokens</h1><p>Assets observed across tracked activity.</p></div></div><div id="tokensGrid" class="si-card-grid token-grid"></div></section>
+<section id="page-feed" class="si-page"><div class="si-page-head"><div><div class="si-eyebrow"><span class="si-live-dot"></span> STREAM</div><h1>Live Activity</h1><p>Chronological on-chain intelligence events.</p></div></div><div class="si-feed-layout"><div id="fullFeed" class="si-panel si-feed-list"></div><aside class="si-panel si-stream-info"><h3>Live system</h3><div id="liveHealth"></div></aside></div></section>
+<section id="page-evidence" class="si-page"><div class="si-page-head"><div><div class="si-eyebrow">RESEARCH</div><h1>Evidence</h1><p>Sources, screenshots, links and research notes.</p></div><button id="evidenceAddBtn" class="si-button primary auth-only">＋ Evidence</button></div><div id="evidenceGrid" class="si-card-grid"></div></section>
+<section id="page-chat" class="si-page"><div class="si-page-head"><div><div class="si-eyebrow">COMMUNITY</div><h1>Chat</h1><p>Discuss live signals with the community.</p></div></div><div class="si-chat panel"><div id="chatMessages" class="si-chat-messages"></div><form id="chatForm" class="si-composer auth-only"><input id="chatInput" maxlength="800" placeholder="Write a message…"/><button class="si-button primary">Send</button></form><div class="guest-note guest-only">Sign in to join the conversation.</div></div></section>
+<section id="page-messages" class="si-page"><div class="si-page-head"><div><div class="si-eyebrow">PRIVATE</div><h1>Messages</h1><p>Private conversations between registered users.</p></div></div><div class="si-messages-layout"><aside class="si-panel"><input id="userSearch" class="si-input" placeholder="Find a user…"/><div id="conversationList"></div></aside><section class="si-panel"><div id="dmHeader" class="si-dm-header">Choose a conversation</div><div id="dmMessages" class="si-dm-messages"></div><form id="dmForm" class="si-composer"><input id="dmInput" maxlength="1200" placeholder="Private message…" disabled/><button class="si-button primary" disabled>Send</button></form></section></div></section>
+<!-- SHADOW_SEARCH_PAGE_V237 -->
+<section id="page-search" class="si-page">
+  <div class="si-search-page-shell">
+    <div class="si-search-page-head">
+      <div class="si-eyebrow">SEARCH</div>
+      <h1>Search</h1>
+      <p>Find entities, tokens and tracked wallet addresses.</p>
+    </div>
+    <div id="searchPageResults" class="si-search-results">
+      <div class="si-search-empty">Start typing to search Shadow Intelligence.</div>
+    </div>
+  </div>
+</section>
+<section id="page-settings" class="si-page"><div class="si-page-head"><div><div class="si-eyebrow">OWNER CONTROL</div><h1>Admin Command Center</h1><p>Control the platform without changing the intelligence model.</p></div></div><form id="settingsForm" class="si-settings"><section class="si-panel"><h3>Platform</h3><label>Platform name<input id="setPlatformName" class="si-input"/></label><label class="si-toggle"><span>Allow registration</span><input id="setRegistration" type="checkbox"/></label><label class="si-toggle"><span>Community chat</span><input id="setChat" type="checkbox"/></label></section><section class="si-panel"><h3>Live intelligence</h3><label class="si-toggle"><span>Wallet monitoring</span><input id="setLiveMonitor" type="checkbox"/></label><label>Monitoring mode<select id="setWalletMonitorMode" class="si-input"><option value="current">Current</option><option value="solana_rpc">Solana RPC</option></select></label><label>Poll interval<input id="setPollSeconds" class="si-input" type="number" min="30" max="3600"/></label><label>Initial history depth<input id="setHistoryLimit" class="si-input" type="number" min="5" max="100"/></label><label class="si-toggle"><span>X monitoring</span><input id="setXMonitor" type="checkbox"/></label><div id="providerStatus" class="si-status"></div></section><section class="si-panel"><h3>Trading shell</h3><label class="si-toggle"><span>Copy trading enabled</span><input id="setCopy" type="checkbox"/></label><label>High signal threshold<input id="setRiskThreshold" class="si-input" type="number" min="1" max="100"/></label><label class="si-toggle"><span>Demo data mode</span><input id="setDemo" type="checkbox"/></label></section><section class="si-panel"><h3>Appearance</h3><p>Theme follows your saved preference. Use the ◐ button for Light / Dark.</p><button type="button" id="adminTheme" class="si-button secondary">Toggle theme</button></section><!-- SHADOW_WALLETS_IN_ADMIN_V233 -->
+<section class="si-panel si-admin-wallets-panel">
+  <div class="si-admin-wallets-head">
+    <div>
+      <div class="si-eyebrow">ON-CHAIN</div>
+      <h3>Tracked Wallets</h3>
+      <p>Tracked wallets and their live activity.</p>
+    </div>
+    <span id="adminWalletCount" class="si-admin-wallet-count">0 wallets</span>
+  </div>
+  <div id="walletsAdminTable" class="si-table-wrap"></div>
+</section>
+<button class="si-button primary" type="submit">Save settings</button></form></section>
+</main></div></div>
+<div id="modal" class="si-modal hidden"><div class="si-modal-card"><button id="modalClose" class="si-modal-close" aria-label="Back">
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 5.5L9 12l6.5 6.5M9 12h10"/></svg>
+</button><div id="modalBody"></div></div></div><div id="toast" class="si-toast"></div>
+<!-- SHADOW_IMMERSIVE_UI_V1_START -->
+<div class="si-bottom-cluster">
+<nav class="si-immersive-dock" aria-label="Quick navigation">
+  <button data-nav="overview" class="active" aria-label="Map"><svg viewBox="0 0 24 24"><circle cx="7" cy="7" r="2.4"/><circle cx="17" cy="8" r="2.4"/><circle cx="12" cy="17" r="2.4"/><path d="M9 8.3l5.6-.2M8.4 9l2.7 5.7M15.7 10l-2.6 4.8"/></svg><span>Map</span></button>
+  <button data-nav="entities" aria-label="Entities"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.3"/><path d="M3.5 19c.6-3.2 2.6-5 5.5-5s4.9 1.8 5.5 5M14.5 14.5c2.8-.5 5 .9 6 3.7"/></svg><span>Entities</span></button>
+  <button data-nav="tokens" aria-label="Tokens"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5"/><path d="M9.4 9.2h4a2 2 0 010 4h-2.8a2 2 0 000 4H15M12 6.5v2.7M12 17.2v1.9"/></svg><span>Tokens</span></button>
+  <button data-nav="feed" aria-label="Live"><svg viewBox="0 0 24 24"><path d="M4 12h3l2-5 4 10 2.1-5H20"/></svg><span>Live</span></button>
+  <button data-nav="chat" aria-label="Chat"><svg viewBox="0 0 24 24"><path d="M5 5.5h14a2 2 0 012 2v7a2 2 0 01-2 2h-8l-5 3v-3H5a2 2 0 01-2-2v-7a2 2 0 012-2z"/></svg><span>Chat</span></button>
+  <!-- SHADOW_WALLET_DOCK_V232 -->
+  <button id="walletButton" class="si-wallet-dock-button" type="button" aria-label="Connect Solana wallet" title="Connect Solana wallet">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 7.5h14.5A1.5 1.5 0 0 1 20 9v8.5A1.5 1.5 0 0 1 18.5 19h-13A1.5 1.5 0 0 1 4 17.5v-11A1.5 1.5 0 0 1 5.5 5H17"/>
+      <path d="M15 11h5v4h-5a2 2 0 1 1 0-4Z"/>
+    </svg>
+    <span>Wallet</span>
+  </button>
+
+  <!-- SHADOW_THEME_TO_DOCK_V2414 -->
+  <button id="themeToggleDock" class="si-theme-dock-button" type="button"
+    aria-label="Toggle light and dark theme" title="Theme">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="7.5"></circle>
+      <path class="si-theme-half" d="M12 4.5a7.5 7.5 0 0 0 0 15z"></path>
+    </svg>
+  </button>
+  <button data-nav="settings" class="owner-only" aria-label="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.7"/><path d="M12 3.8v2M12 18.2v2M20.2 12h-2M5.8 12h-2M17.8 6.2l-1.4 1.4M7.6 16.4l-1.4 1.4M17.8 17.8l-1.4-1.4M7.6 7.6L6.2 6.2"/></svg><span>Settings</span></button>
+</nav>
+  <button id="openSearchPage" class="si-floating-search-button" type="button" aria-label="Search" title="Search">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="11" cy="11" r="6.5"></circle>
+      <path d="M16 16l4 4"></path>
+    </svg>
+  </button>
+
+  <div class="si-search-dock" role="search">
+    <svg class="si-search-dock-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="11" cy="11" r="6.5"></circle>
+      <path d="M16 16l4 4"></path>
+    </svg>
+    <input id="searchPageInput" type="search" inputmode="search"
+      autocomplete="off" autocapitalize="off" spellcheck="false"
+      placeholder="Search entities, tokens, wallets..." aria-label="Search Shadow Intelligence"/>
+    <button id="searchPageClear" type="button" aria-label="Clear search">&times;</button>
+  </div>
+</div>
+<button id="pageBack" class="si-page-back" aria-label="Back"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 5.5L9 12l6.5 6.5M9 12h10"/></svg></button>
+<!-- SHADOW_IMMERSIVE_UI_V1_END -->
+<script src="/si-graph.js?v=watermark-removed-2.1.9-20260914"></script>
+<script type="module" src="/app.js?v=live-beacon-2.9.1-20260917"></script>
+<script src="/si-activity-ring-fix.js?v=2.9.7-perf-20260917"></script>
+<script src="/si-search-scope-fix.js?v=2.9.7-perf-20260917"></script>
+<script src="/si-remove-top-live-card.js?v=2.9.7-perf-20260917"></script>
+  <script src="/execution-wallet-24x7.js?v=3.4.0"></script>
+</body></html>
