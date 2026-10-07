@@ -166,18 +166,6 @@ function ensureSchema(db){
     );
     CREATE INDEX IF NOT EXISTS idx_delegated_execution_updated
       ON delegated_copy_executions(updated_at DESC);
-    /* SYNC_AUTH_TOKEN_RACE_FIX_V28 */
-    CREATE TABLE IF NOT EXISTS delegated_copy_action_tokens (
-      token_hash TEXT PRIMARY KEY,
-      subscription_id TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      action TEXT NOT NULL,
-      expires_at TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_delegated_action_tokens_subscription
-      ON delegated_copy_action_tokens(subscription_id,action,expires_at);
-    /* SYNC_AUTH_TOKEN_RACE_FIX_V28_END */
     /* SYNC_TP_SL_EXECUTOR_V15 */
     CREATE TABLE IF NOT EXISTS delegated_copy_positions (
       subscription_id TEXT NOT NULL,
@@ -1059,62 +1047,21 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
     );
     return sessionRow(db,subscription.id);
   }
-  /* SYNC_AUTH_TOKEN_RACE_FIX_V28 */
-  function cleanupActionTokens(){
-    db.prepare('DELETE FROM delegated_copy_action_tokens WHERE expires_at<=?').run(now());
-  }
   function issueActionUrl(row,action){
-    cleanupActionTokens();
     const token=crypto.randomBytes(32).toString('base64url');
     const exp=new Date(Date.now()+30*60*1000).toISOString();
     const hash=hashHex(`${action}:${token}`);
-
-    // Keep every still-valid short-lived action token. Background status polls
-    // may mint a newer URL without invalidating the URL already opened by user.
-    db.prepare(`INSERT INTO delegated_copy_action_tokens
-      (token_hash,subscription_id,user_id,action,expires_at,created_at)
-      VALUES (?,?,?,?,?,?)`)
-      .run(hash,row.subscription_id,row.user_id,action,exp,now());
-
-    // Legacy columns remain for compatibility/status display only.
-    db.prepare(`UPDATE delegated_copy_sessions
-      SET auth_token_hash=?,auth_token_expires_at=?,state=?,updated_at=?
-      WHERE subscription_id=?`)
+    db.prepare(`UPDATE delegated_copy_sessions SET auth_token_hash=?,auth_token_expires_at=?,state=?,updated_at=? WHERE subscription_id=?`)
       .run(hash,exp,action==='revoke'?'revocation_required':'authorization_required',now(),row.subscription_id);
-
     return absUrl(`/execution-authorize.html?mode=${encodeURIComponent(action)}&token=${encodeURIComponent(token)}`);
   }
-
   function actionRow(token,action,userId){
-    cleanupActionTokens();
     const hash=hashHex(`${action}:${token}`);
-
-    const tokenRow=db.prepare(`
-      SELECT d.*
-      FROM delegated_copy_action_tokens t
-      JOIN delegated_copy_sessions d ON d.subscription_id=t.subscription_id
-      WHERE t.token_hash=? AND t.action=? AND t.user_id=? AND t.expires_at>?
-      LIMIT 1
-    `).get(hash,action,userId,now());
-    if(tokenRow)return tokenRow;
-
-    // Backward compatibility for a URL issued before V28.
-    const legacy=db.prepare('SELECT * FROM delegated_copy_sessions WHERE auth_token_hash=?').get(hash);
-    if(!legacy||legacy.user_id!==userId)return null;
-    if(!legacy.auth_token_expires_at||Date.parse(legacy.auth_token_expires_at)<=Date.now())return null;
-    return legacy;
+    const row=db.prepare('SELECT * FROM delegated_copy_sessions WHERE auth_token_hash=?').get(hash);
+    if(!row||row.user_id!==userId)return null;
+    if(!row.auth_token_expires_at||Date.parse(row.auth_token_expires_at)<=Date.now())return null;
+    return row;
   }
-
-  function clearActionTokens(subscriptionId,action=''){
-    if(action){
-      db.prepare('DELETE FROM delegated_copy_action_tokens WHERE subscription_id=? AND action=?')
-        .run(subscriptionId,action);
-    }else{
-      db.prepare('DELETE FROM delegated_copy_action_tokens WHERE subscription_id=?')
-        .run(subscriptionId);
-    }
-  }
-  /* SYNC_AUTH_TOKEN_RACE_FIX_V28_END */
   async function onchainPolicyExists(row){
     try{
       const info=await connection.getAccountInfo(new PublicKey(row.policy_address),'confirmed');
@@ -1305,7 +1252,6 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
 
       const complete=!authorizationStillNeedsWallet(result);
       if(complete){
-        clearActionTokens(row.subscription_id,'authorize');
         db.prepare(`UPDATE delegated_copy_sessions
           SET auth_token_hash='',auth_token_expires_at='',state=?,last_error='',updated_at=?
           WHERE subscription_id=?`)
@@ -1323,7 +1269,6 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
       return {...result,authorizationConfirmed:complete};
     }
 
-    clearActionTokens(row.subscription_id,'revoke');
     db.prepare(`UPDATE delegated_copy_sessions SET state='revoked',revoked_at=?,auth_token_hash='',auth_token_expires_at='',updated_at=? WHERE subscription_id=?`)
       .run(at,at,row.subscription_id);
     const sub=subRow(db,row.subscription_id);
