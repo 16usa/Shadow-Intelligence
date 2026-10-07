@@ -1,0 +1,15 @@
+import { PublicKey } from '@solana/web3.js';
+const text=v=>String(v||'').trim();
+const rows=[];
+const pid=text(process.env.SHADOW_DELEGATED_PROGRAM_ID);
+rows.push(['Program ID',!!pid&&(()=>{try{new PublicKey(pid);return true}catch{return false}})(),pid||'missing']);
+rows.push(['Session master key',!!text(process.env.SHADOW_SESSION_MASTER_KEY),'configured']);
+rows.push(['Jupiter API key',!!text(process.env.JUPITER_API_KEY),text(process.env.JUPITER_API_KEY)?'configured':'missing']);
+const cluster=text(process.env.SHADOW_SOLANA_CLUSTER)||'mainnet-beta';
+const approved=['true','1','yes'].includes(text(process.env.SYNC_DELEGATED_MAINNET_APPROVED||process.env.SHADOW_DELEGATED_MAINNET_APPROVED).toLowerCase());
+rows.push(['Cluster',true,cluster]);
+rows.push(['Fee model',true,`user session reserve (${Number(process.env.SYNC_USER_FEE_RESERVE_SOL)||0.02} SOL target)`]);
+rows.push(['Operator trade-fee subsidy',true,'disabled']);
+rows.push(['Mainnet approval',cluster!=='mainnet-beta'||approved,approved?'enabled':'disabled']);
+for(const [name,ok,detail] of rows)console.log(`${ok?'OK ':'NO '} ${name}: ${detail}`);
+if(rows.some(r=>!r[1]))process.exitCode=2;

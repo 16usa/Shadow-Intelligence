@@ -1,0 +1,84 @@
+=== SYNC VAULT WITHDRAW AUDIT V21A ===
+Cluster: mainnet-beta
+Program ID: HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA
+Database: ./shadow-intelligence.db
+Delegated sessions: 4
+
+--- DEPLOYED PROGRAM ---
+Program account exists: true
+Executable: true
+Program account owner: BPFLoaderUpgradeab1e11111111111111111111111
+
+--- SESSION ---
+Entity: @sh4vwty
+Subscription: cps_2904b90c-2606-4b67-b3d7-996101bfcf33
+State: active
+Owner: 6qt8tt9g9F9PQRnZwHC3EbdsLK6aa4i1BY7KwgqMgbdJ
+Policy: BLUhWjXjUkM6SQ9nDfqS68TPpJXDYnFLF6iigASzWsfQ
+Vault PDA: HjpZhgwV3W9giVgjb8zaRD5hc7cLsLKpHmTxtCXpkfoL
+Vault PDA native SOL: 0.000000000 SOL
+Vault WSOL ATA: 7LCj7Wd49JbSd6YnsAMCYcYheZc8tTWj3yG35Tba1bL1
+Vault WSOL: 0.042981174 SOL
+WSOL ATA exists: true
+Policy exists: true
+Session fee reserve: 0.020000000 SOL
+Authorized at: 2026-10-07T18:24:33.324Z
+Revoked at: 
+
+--- SESSION ---
+Entity: @frankdegods
+Subscription: cps_da4aea83-feb4-49ec-aefd-50f23d8ea1ee
+State: authorization_required
+Owner: 6qt8tt9g9F9PQRnZwHC3EbdsLK6aa4i1BY7KwgqMgbdJ
+Policy: HRtbKZm6gUeAxKPxX6LT7TrUPjtdVGsFmTWKanNN7DFE
+Vault PDA: H87111LTrvBvQQVwWaK5QQofcLeE8vkhgpLFqc4GdYhh
+Vault PDA native SOL: 0.000000000 SOL
+Vault WSOL ATA: U6epfzJkVtQmrPozX5D6CAFP9MaQf14xb6t4gbo8yCC
+Vault WSOL: 0.085836910 SOL
+WSOL ATA exists: true
+Policy exists: true
+Session fee reserve: 0.020000000 SOL
+Authorized at: 2026-10-07T18:19:06.910Z
+Revoked at: 
+
+--- SESSION ---
+Entity: @Kryphos
+Subscription: cps_69ec18c5-2b62-4622-9860-ceddc808d2db
+State: authorization_required
+Owner: 6qt8tt9g9F9PQRnZwHC3EbdsLK6aa4i1BY7KwgqMgbdJ
+Policy: AYUhuPXrwfHtrYrQvrfdTDCCadYNR4C3v11U7kUaGfDj
+Vault PDA: 6NN4hYdkXeR8RWzxmAiKZb6NktrZLjRejS7Xi9CkEUiA
+Vault PDA native SOL: 0.000000000 SOL
+Vault WSOL ATA: 5so1yTHkg1xGGgJXaQExxZ75Do6ftNfEZjAhPUfTE37x
+Vault WSOL: 0.000000000 SOL
+WSOL ATA exists: false
+Policy exists: false
+Session fee reserve: 0.000000000 SOL
+Authorized at: 
+Revoked at: 
+
+--- SESSION ---
+Entity: @SossaDotKek
+Subscription: cps_115528ab-90b1-4e70-b5b0-441c97bbcdac
+State: authorization_required
+Owner: 6qt8tt9g9F9PQRnZwHC3EbdsLK6aa4i1BY7KwgqMgbdJ
+Policy: 8Vqpvqi7fKhauMfHRG1pGczfGxzXK8rqb8GhiVWeeMJX
+Vault PDA: BC6MfZrQFf2BoHGFjfJ4C3VHfDokiwKT4sZ5YSSsgaZ5
+Vault PDA native SOL: 0.000000000 SOL
+Vault WSOL ATA: 4jHa7TekAW2Y1AsxkJi9s3fS7xChxFUbPaV1XkrmXVCy
+Vault WSOL: 0.000000000 SOL
+WSOL ATA exists: false
+Policy exists: false
+Session fee reserve: 0.000000000 SOL
+Authorized at: 
+Revoked at: 
+
+=== IMPORTANT ===
+This audit moved NO funds and sent NO transaction.
+A WSOL ATA owned by the vault PDA cannot be closed by the owner wallet directly.
+Safe reclaim requires an instruction supported by the currently deployed delegated-vault program.
+The next step is to recover the deployed program IDL/source or verify its withdrawal instruction.
+
+=== IDL / PROGRAM RECOVERY ===
+Anchor CLI: not installed; IDL fetch skipped
+Solana CLI: not installed; program dump skipped

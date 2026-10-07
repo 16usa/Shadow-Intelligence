@@ -1,0 +1,21 @@
+/* SHADOW_DELEGATED_AUTH_V340 */
+(()=>{
+  const $=s=>document.querySelector(s);
+  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+  const qs=new URLSearchParams(location.search);const token=qs.get('token')||'';const mode=qs.get('mode')==='revoke'?'revoke':'authorize';
+  const api=async(url,opt={})=>{const r=await fetch(url,{credentials:'include',headers:{accept:'application/json',...(opt.body?{'content-type':'application/json'}:{})},...opt});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||`HTTP ${r.status}`);return d};
+  const status=t=>{$('#status').textContent=t};
+  const backToSync=()=>{location.href='/sync.html'}; // SYNC_AUTH_NAV_FIX_V22
+
+  function provider(){return window.phantom?.solana||window.solana||null}
+  function render(d){
+    $('#title').textContent=mode==='revoke'?'Revoke SYNC 24/7':'Authorize SYNC 24/7';
+    $('#details').innerHTML=`<div class="row"><small>Owner wallet</small><b>${esc(d.ownerAddress)}</b></div><div class="row"><small>Delegated vault</small><b>${esc(d.vaultAddress)}</b></div><div class="row"><small>Session public key</small><b>${esc(d.sessionPublicKey)}</b></div><div class="row"><small>Copy source</small><b>${esc(d.mainWallet||'—')}</b></div><div class="row"><small>Per BUY</small><b>${esc(d.amountSol)} SOL</b></div><div class="row"><small>Vault funding / max position</small><b>${esc(d.vaultFundingSol??d.maxPositionSol)} SOL</b></div><div class="row"><small>24/7 network reserve</small><b>${esc(d.feeReserveSol??0.02)} SOL</b></div><div class="row"><small>Daily cap</small><b>${esc(d.maxDailySol)} SOL</b></div><div class="row"><small>Authorization duration</small><b>${esc(d.delegationDays||30)} days</b></div><div class="row"><small>Max sell</small><b>${esc(d.sellPercent)}%</b></div><div class="row"><small>Network</small><b>${esc(d.cluster)}</b></div>`;
+    $('#actionBtn').textContent=mode==='revoke'?'Sign & revoke 24/7':'Sign delegated 24/7 policy';$('#actionBtn').disabled=false;
+  }
+  async function load(){try{render(await api(`/api/copy-engine/authorization?token=${encodeURIComponent(token)}&action=${mode}`));status('Ready. This is an on-chain policy transaction, not a transfer to Shadow.')}catch(e){status(e.message);$('#actionBtn').disabled=true}}
+  async function sign(){const p=provider();if(!p){status('Open this page inside Phantom or Solflare so the owner wallet can sign.');return}$('#actionBtn').disabled=true;try{await p.connect();const prep=await api('/api/copy-engine/authorization/prepare',{method:'POST',body:JSON.stringify({token,action:mode})});const bytes=Uint8Array.from(atob(prep.transaction),c=>c.charCodeAt(0));let signature='';if(p.signAndSendTransaction){const web3=window.solanaWeb3; if(!web3?.Transaction)throw new Error('Wallet transaction codec is unavailable on this page');const tx=web3.Transaction.from(bytes);const sent=await p.signAndSendTransaction(tx);signature=sent?.signature||sent||''}else throw new Error('Connected wallet does not expose signAndSendTransaction');status(`Submitted ${String(signature).slice(0,12)}… Waiting for chain…`);await new Promise(r=>setTimeout(r,1400));const result=await api('/api/copy-engine/authorization/confirm',{method:'POST',body:JSON.stringify({token,action:mode,signature})});status(mode==='revoke'?'24/7 delegation revoked on-chain.':'SYNC 24/7 execution is authorized. Your scoped session reserve pays network fees; trading limits remain enforced by the signed on-chain policy.');$('#status').className='status good';/* SYNC_AUTH_NAV_FIX_V22 */setTimeout(()=>{location.replace('/sync.html')},900);return result}catch(e){status(e.message);$('#status').className='status bad';$('#actionBtn').disabled=false}}
+  $('#actionBtn').addEventListener('click',sign);$('#refreshBtn').addEventListener('click',load);
+  // web3.js browser bundle already exists in Shadow wallet flows in current builds.
+  load();
+})();

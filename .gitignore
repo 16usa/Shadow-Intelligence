@@ -19,3 +19,13 @@ solana/shadow-delegated-vault/target/
 /.shadow-program-keys/
 /.shadow-deployer/
 /.shadow-deployer-path
+.shadow-deploy-keys/
+
+# local build/toolchain files
+.rustup/
+.cargo/
+node_modules/
+target/
+.cache/
+.pythonlibs/
+*.zip

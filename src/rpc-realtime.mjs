@@ -21,7 +21,7 @@ function wsFromHttp(value){
 
 function websocketEndpoints(){
   const out=[];
-  const add=value=>{const v=String(value||'').trim();if(v&&!out.includes(v))out.push(v)};
+  const add=value=>{const v=String(value||'').trim();if(v&&!/helius/i.test(v)&&!out.includes(v))out.push(v)};
 
   add(cleanWsUrl(process.env.SOLANA_WS_URL));
   add(wsFromHttp(process.env.SOLANA_RPC_URL));
@@ -78,9 +78,9 @@ export function createRpcRealtimeMonitor({db,getSetting,onSignature}={}){
   let eventWorkers=0;
   const MAX_EVENT_WORKERS=3;
 
-  const mode=()=>String(getSetting(db,'wallet_monitor_mode','current')||'current')==='solana_rpc'?'solana_rpc':'current';
+  const mode=()=>{const raw=String(getSetting(db,'wallet_monitor_mode','auto')||'auto').trim().toLowerCase();return (raw==='solana_rpc'||raw==='solana_rpc_only')?'solana_rpc_only':'auto'};
   const enabled=()=>getSetting(db,'live_monitor_enabled','true')==='true';
-  const shouldRun=()=>started&&enabled()&&mode()==='solana_rpc';
+  const shouldRun=()=>started&&enabled();
 
   function currentEndpoint(){
     const endpoints=websocketEndpoints();
@@ -319,7 +319,7 @@ export function createRpcRealtimeMonitor({db,getSetting,onSignature}={}){
 
   function refresh(){
     if(!started)return status();
-    if(!enabled()||mode()!=='solana_rpc'){
+    if(!enabled()){
       disconnect('monitor mode changed');
       return status();
     }
@@ -351,7 +351,8 @@ export function createRpcRealtimeMonitor({db,getSetting,onSignature}={}){
   function status(){
     return {
       enabled:enabled(),
-      selected:mode()==='solana_rpc',
+      selected:true,
+      mode:mode(),
       connected,
       connecting,
       provider:endpointLabel(currentEndpoint()),

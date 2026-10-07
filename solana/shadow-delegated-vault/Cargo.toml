@@ -1,9 +1,0 @@
-[workspace]
-members = ["programs/shadow_delegated_vault"]
-resolver = "2"
-
-[profile.release]
-overflow-checks = true
-
-[workspace.metadata.solana]
-tools-version = "v1.57"

@@ -154,6 +154,7 @@ export async function getPumpTokenMarketsBatch(
 
 
 function heliusEndpoint() {
+  if(String(process.env.HELIUS_AUXILIARY_ENABLED||'').toLowerCase()!=='true')return '';
   const key=String(process.env.HELIUS_API_KEY||'').trim();
   return key ? `https://mainnet.helius-rpc.com/?api-key=${encodeURIComponent(key)}` : '';
 }

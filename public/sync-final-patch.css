@@ -1,0 +1,68 @@
+/* SYNC FINAL PATCH
+   - online dot lives on leader avatar
+   - right badge says LEADER
+   - no other site images are hidden here
+*/
+
+#leaderStatus .leader-status-dot{
+  display:none!important;
+}
+
+#leaderStatus{
+  min-width:78px!important;
+  min-height:38px!important;
+  padding:0 12px!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  font-size:0!important;
+  line-height:1!important;
+}
+
+#leaderStatus::before{
+  content:"LEADER"!important;
+  display:block!important;
+  font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace!important;
+  font-size:9px!important;
+  font-weight:700!important;
+  letter-spacing:.10em!important;
+  color:var(--green,#19ee7a)!important;
+}
+
+#leaderAvatar{
+  position:relative!important;
+  overflow:visible!important;
+  isolation:isolate!important;
+}
+
+#leaderAvatar img{
+  display:block!important;
+  width:100%!important;
+  height:100%!important;
+  object-fit:cover!important;
+  border-radius:50%!important;
+}
+
+#leaderCard:not(.is-empty) #leaderAvatar::after{
+  content:""!important;
+  display:block!important;
+  position:absolute!important;
+  right:-2px!important;
+  bottom:1px!important;
+  width:11px!important;
+  height:11px!important;
+  box-sizing:border-box!important;
+  border-radius:999px!important;
+  background:#19ee7a!important;
+  border:2px solid #080909!important;
+  box-shadow:
+    0 0 0 1px rgba(25,238,122,.10),
+    0 0 8px rgba(25,238,122,.78),
+    0 0 15px rgba(25,238,122,.28)!important;
+  z-index:999!important;
+  pointer-events:none!important;
+}
+
+#leaderCard.is-empty #leaderAvatar::after{
+  display:none!important;
+}

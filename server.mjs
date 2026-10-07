@@ -13,7 +13,8 @@ import { resolveWalletAvatar } from './src/adapters/pump-profile.mjs';
 import { resolveProfileAvatar, normalizeProfilePlatform, normalizeProfileHandle, isPublicProfileUrl } from './src/adapters/profile-avatar.mjs';
 import { syncCopyGroup, syncCopySubscription } from './src/adapters/copy-trading.mjs';
 import { ensureExecutionWalletSchema, mainCopyWalletRows, engineExecutionSnapshot, executionAuthorizationRow, persistExecutionAuthorization, markExecutionAuthorizationError, clearExecutionAuthorization } from './src/execution-wallet-24x7.mjs'; // SHADOW_EXECUTION_WALLET_24X7_V320
-import { createInternalCopyEngine } from './src/internal-copy-engine.mjs'; // SHADOW_INTERNAL_COPY_ENGINE_V330
+import { createInternalCopyEngine } from './src/internal-copy-engine.mjs';
+import { getVaultReclaimStatus, prepareVaultReclaim, confirmVaultReclaim } from './src/sync-vault-reclaim.mjs'; // SYNC_STOP_RECLAIM_V21B // SHADOW_INTERNAL_COPY_ENGINE_V330
 import { providerHealth } from './src/adapters/intelligence.mjs';
 import { createLiveIntelligence } from './src/live-intelligence.mjs';
 import { getTokenMarket, getTokenMetadataBatch, getTokenMarketsBatch, getPumpTokenMarket } from './src/adapters/token-market.mjs';
@@ -257,6 +258,10 @@ function copySubscriptionRow(db,userId,entityId){
     slippageBps:row.slippage_bps,
     minMarketCapUsd:Number(row.min_market_cap_usd||0),
     maxMarketCapUsd:Number(row.max_market_cap_usd||0),
+    takeProfitEnabled:!!row.take_profit_enabled,
+    takeProfitPercent:Number(row.take_profit_percent||100),
+    stopLossEnabled:!!row.stop_loss_enabled,
+    stopLossPercent:Number(row.stop_loss_percent||30),
     sellPercent:row.sell_percent,
     engineState:row.engine_state,
     lastError:row.last_error,
@@ -1456,6 +1461,7 @@ function parseRoute(urlPath) { return urlPath.split('/').filter(Boolean); }
 
 
 /* SHADOW_REPAIR_AUTO_PROFILE_AVATARS_V352 */
+/* SHADOW_FOMO_REPAIR_V17: also re-resolve non-manual Fomo avatars with clean-image rules. */
 async function repairDuplicateAutoProfileAvatars(db){
   /*
    * v351 repaired only rows whose avatar URL was byte-for-byte duplicated.
@@ -1469,7 +1475,7 @@ async function repairDuplicateAutoProfileAvatars(db){
   const rows=db.prepare(`
     SELECT e.*
     FROM entities e
-    WHERE COALESCE(e.profile_platform,'auto')='auto'
+    WHERE COALESCE(e.profile_platform,'auto') IN ('auto','fomo')
       AND COALESCE(TRIM(e.profile_handle),'')<>''
       AND COALESCE(e.avatar_source,'')<>'manual'
     ORDER BY e.created_at,e.id
@@ -1505,12 +1511,15 @@ async function repairDuplicateAutoProfileAvatars(db){
     const wallet=String(mainWallet.get(entity.id)?.address||'').trim();
     if(!handle)continue;
 
+    const storedPlatform=normalizeProfilePlatform(entity.profile_platform||'auto');
+    const resolutionPlatform=storedPlatform==='fomo'?'fomo':'auto';
+
     let resolved=null;
     try{
       resolved=await resolveProfileAvatar({
-        platform:'auto',
+        platform:resolutionPlatform,
         handle,
-        profileUrl:'',
+        profileUrl:resolutionPlatform==='fomo'?String(entity.profile_url||''):'',
         wallet
       });
     }catch(error){
@@ -1519,7 +1528,7 @@ async function repairDuplicateAutoProfileAvatars(db){
 
     let avatar=String(resolved?.avatar||'').trim();
     let source=String(resolved?.source||'pending');
-    let detected=normalizeProfilePlatform(resolved?.platform||'auto');
+    let detected=normalizeProfilePlatform(resolved?.platform||resolutionPlatform);
     let newProfileUrl=String(resolved?.profileUrl||'').trim();
 
     if(!avatar && wallet){
@@ -1528,7 +1537,7 @@ async function repairDuplicateAutoProfileAvatars(db){
         avatar=String(fallback?.avatar||'').trim();
         source=String(fallback?.source||'generated');
         if(source==='pump.fun')detected='pump.fun';
-        else detected='auto';
+        else if(detected!=='fomo')detected='auto';
         if(source!=='pump.fun')newProfileUrl='';
       }catch(error){
         console.warn(`Wallet avatar fallback failed for ${entity.name||entity.id}:`,error.message);
@@ -2850,6 +2859,10 @@ async function api(req, res, db, url, live) {
     if(maxMarketCapUsd>0 && maxMarketCapUsd<minMarketCapUsd){
       return json(res,400,{error:'Maximum market cap must be greater than or equal to minimum market cap'});
     }
+    const takeProfitEnabled=b.takeProfitEnabled===true?1:0;
+    const takeProfitPercent=numBetween(b.takeProfitPercent,1,10000,100);
+    const stopLossEnabled=b.stopLossEnabled===true?1:0;
+    const stopLossPercent=numBetween(b.stopLossPercent,1,99,30);
     const copyBuys=b.copyBuys!==false?1:0;
     const copySells=b.copySells!==false?1:0;
     const sellPercent=Math.round(numBetween(b.sellPercent,1,100,100));
@@ -2864,25 +2877,29 @@ async function api(req, res, db, url, live) {
         UPDATE copy_subscriptions SET
           user_wallet_id=?,amount_sol=?,max_position_sol=?,max_daily_sol=?,
           slippage_bps=?,min_market_cap_usd=?,max_market_cap_usd=?,
+          take_profit_enabled=?,take_profit_percent=?,stop_loss_enabled=?,stop_loss_percent=?,
           copy_buys=?,copy_sells=?,sell_percent=?,updated_at=?
         WHERE id=? AND user_id=?
       `).run(
         wallet.id,amountSol,maxPositionSol,maxDailySol,
         slippageBps,minMarketCapUsd,maxMarketCapUsd,
+        takeProfitEnabled,takeProfitPercent,stopLossEnabled,stopLossPercent,
         copyBuys,copySells,sellPercent,at,subId,user.id
       );
     }else{
       db.prepare(`
         INSERT INTO copy_subscriptions
           (id,user_id,user_wallet_id,entity_id,enabled,amount_sol,max_position_sol,max_daily_sol,
-           slippage_bps,min_market_cap_usd,max_market_cap_usd,copy_buys,copy_sells,sell_percent,
-           engine_state,last_error,created_at,updated_at)
-        VALUES (?,?,?,?,0,?,?,?,?,?,?,?,?,?,'draft','',?,?)
+           slippage_bps,min_market_cap_usd,max_market_cap_usd,
+           take_profit_enabled,take_profit_percent,stop_loss_enabled,stop_loss_percent,
+           copy_buys,copy_sells,sell_percent,engine_state,last_error,created_at,updated_at)
+        VALUES (?,?,?,?,0,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft','',?,?)
       `).run(
         subId,user.id,wallet.id,entity.id,
         amountSol,maxPositionSol,maxDailySol,slippageBps,
-        minMarketCapUsd,maxMarketCapUsd,copyBuys,copySells,sellPercent,
-        at,at
+        minMarketCapUsd,maxMarketCapUsd,
+        takeProfitEnabled,takeProfitPercent,stopLossEnabled,stopLossPercent,
+        copyBuys,copySells,sellPercent,at,at
       );
     }
 
@@ -2900,7 +2917,9 @@ async function api(req, res, db, url, live) {
       }
       db.prepare("UPDATE copy_subscriptions SET enabled=0,engine_state='stopped',last_error='',updated_at=? WHERE id=?")
         .run(nowIso(),subId);
-      return json(res,200,{ok:true,subscription:copySubscriptionRow(db,user.id,entity.id),engine});
+      const reclaimSession=db.prepare('SELECT 1 FROM delegated_copy_sessions WHERE user_id=? AND entity_id=? LIMIT 1').get(user.id,entity.id);
+      const reclaimUrl=reclaimSession?`/execution-reclaim.html?entity=${encodeURIComponent(entity.id)}`:'';
+      return json(res,200,{ok:true,subscription:copySubscriptionRow(db,user.id,entity.id),engine,reclaimRequired:!!reclaimUrl,reclaimUrl});
     }
 
     if(!shadowCopyEngineConfigured()){
@@ -2950,6 +2969,25 @@ async function api(req, res, db, url, live) {
       authorizationUrl:engine?.authorizationUrl||''
     });
   }
+  /* SYNC_STOP_RECLAIM_V21B_ROUTES */
+  if(parts[0]==='api'&&parts[1]==='entities'&&parts[2]&&parts[3]==='copy'&&parts[4]==='reclaim'&&parts.length===5&&method==='GET'){
+    const user=requireUser(req,res,db); if(!user)return;
+    try{return json(res,200,await getVaultReclaimStatus(db,user.id,parts[2]));}
+    catch(error){return json(res,error.statusCode||500,{error:String(error.message||error)});}
+  }
+  if(parts[0]==='api'&&parts[1]==='entities'&&parts[2]&&parts[3]==='copy'&&parts[4]==='reclaim'&&parts[5]==='prepare'&&parts.length===6&&method==='POST'){
+    const user=requireUser(req,res,db); if(!user)return;
+    try{return json(res,200,await prepareVaultReclaim(db,user.id,parts[2]));}
+    catch(error){return json(res,error.statusCode||500,{error:String(error.message||error)});}
+  }
+  if(parts[0]==='api'&&parts[1]==='entities'&&parts[2]&&parts[3]==='copy'&&parts[4]==='reclaim'&&parts[5]==='confirm'&&parts.length===6&&method==='POST'){
+    const user=requireUser(req,res,db); if(!user)return;
+    const body=await readJson(req);
+    try{return json(res,200,await confirmVaultReclaim(db,user.id,parts[2],Array.isArray(body.signatures)?body.signatures:[]));}
+    catch(error){return json(res,error.statusCode||500,{error:String(error.message||error)});}
+  }
+  /* SYNC_STOP_RECLAIM_V21B_ROUTES_END */
+
   /* SHADOW_DELEGATED_COPY_ENGINE_V340_ROUTES */
   if(route==='/api/copy-engine/status' && method==='GET'){
     const user=requireUser(req,res,db); if(!user)return;
@@ -3005,6 +3043,64 @@ async function api(req, res, db, url, live) {
   if(parts[0]==='api'&&parts[1]==='entities'&&parts[2]&&parts[3]==='copy'&&parts[4]==='execution'&&parts[5]==='revoke'&&parts.length===6&&method==='POST'){
     const user=requireUser(req,res,db); if(!user)return;const entity=db.prepare('SELECT * FROM entities WHERE id=?').get(parts[2]);if(!entity)return json(res,404,{error:'Entity not found'});const sub=db.prepare('SELECT * FROM copy_subscriptions WHERE user_id=? AND entity_id=?').get(user.id,entity.id);if(!sub)return json(res,404,{error:'Copy subscription not found'});const wallet=db.prepare('SELECT * FROM user_wallets WHERE id=? AND user_id=?').get(sub.user_wallet_id,user.id);if(!wallet)return json(res,409,{error:'Owner wallet missing'});const engine=await globalThis.__SHADOW_INTERNAL_COPY_ENGINE.syncSubscription({action:'revoke',subscription:{...sub,funding_address:wallet.address,walletAddress:wallet.address,userId:user.id,entityId:entity.id}});return json(res,200,{ok:true,revoked:false,authorizationState:'revocation_required',revocationUrl:engine.revocationUrl||engine.executionWallet?.revocationUrl||'',engine});
   }
+  /* SYNC_COPY_STATUS_LIVE_V18 */
+  if(parts[0]==='api'&&parts[1]==='entities'&&parts[2]&&parts[3]==='copy'&&parts[4]==='execution-status'&&parts.length===5&&method==='GET'){
+    const user=requireUser(req,res,db); if(!user)return;
+    const entity=db.prepare('SELECT id FROM entities WHERE id=?').get(parts[2]);
+    if(!entity)return json(res,404,{error:'Entity not found'});
+
+    const signature=clean(url.searchParams.get('signature'),160);
+    const mint=clean(url.searchParams.get('mint'),120);
+    const side=String(url.searchParams.get('side')||'').toLowerCase()==='sell'?'sell':'buy';
+    if(!signature||!mint)return json(res,400,{error:'signature and mint are required'});
+
+    const sub=db.prepare('SELECT * FROM copy_subscriptions WHERE user_id=? AND entity_id=?').get(user.id,entity.id);
+    if(!sub)return json(res,200,{status:'off',reason:'no_subscription',side,mint,signature});
+    if(!sub.enabled)return json(res,200,{status:'off',reason:'copy_off',side,mint,signature});
+    if(side==='buy'&&!sub.copy_buys)return json(res,200,{status:'skipped',reason:'follow_buys_off',side,mint,signature});
+    if(side==='sell'&&!sub.copy_sells)return json(res,200,{status:'skipped',reason:'follow_sells_off',side,mint,signature});
+
+    const row=db.prepare(`
+      SELECT status,tx_signature,last_error,updated_at,
+             COALESCE(fill_input_raw,'0') AS fill_input_raw,
+             COALESCE(fill_output_raw,'0') AS fill_output_raw,
+             COALESCE(close_reason,'') AS close_reason
+      FROM delegated_copy_executions
+      WHERE subscription_id=? AND source_signature=? AND side=? AND mint=?
+      LIMIT 1
+    `).get(sub.id,signature,side,mint);
+
+    if(!row){
+      return json(res,200,{
+        status:'pending',
+        reason:'awaiting_execution',
+        side,mint,signature,
+        configuredAmountSol:Number(sub.amount_sol||0)
+      });
+    }
+
+    const inputRaw=String(row.fill_input_raw||'0');
+    const outputRaw=String(row.fill_output_raw||'0');
+    const executedSol=side==='buy'
+      ? Number(inputRaw||0)/1_000_000_000
+      : Number(outputRaw||0)/1_000_000_000;
+    const solUsd=await currentSolUsd();
+
+    return json(res,200,{
+      status:String(row.status||''),
+      reason:String(row.last_error||''),
+      side,mint,signature,
+      txSignature:String(row.tx_signature||''),
+      closeReason:String(row.close_reason||''),
+      executedSol:Number.isFinite(executedSol)?executedSol:0,
+      executedUsd:Number.isFinite(executedSol)&&solUsd>0?executedSol*solUsd:0,
+      fillInputRaw:inputRaw,
+      fillOutputRaw:outputRaw,
+      updatedAt:String(row.updated_at||'')
+    });
+  }
+  /* SYNC_COPY_STATUS_LIVE_V18_END */
+
   /* SHADOW_DELEGATED_EXECUTION_V340_ROUTES_END */
 
   /* SHADOW_USER_COPY_TRADING_V230_ROUTES_END */
@@ -3043,7 +3139,7 @@ async function api(req, res, db, url, live) {
       120
     );
     const leader=configuredLeaderId
-      ? db.prepare("SELECT id,name,x_handle AS xHandle,avatar,status FROM entities WHERE id=?").get(configuredLeaderId)
+      ? db.prepare("SELECT id,name,x_handle AS xHandle,avatar,avatar_source AS avatarSource,profile_platform AS profilePlatform,status FROM entities WHERE id=?").get(configuredLeaderId)
       : null;
     const mainWallet=leader?mainCopyWalletRows(db,leader.id)[0]||null:null;
     const copyTradingEnabled=getSetting(db,'copy_trading_enabled','true')==='true';
@@ -3068,6 +3164,8 @@ async function api(req, res, db, url, live) {
       "FROM copy_subscriptions WHERE entity_id=?"
     ).get(leader.id)||{};
 
+    // Live signals are not a multi-day history panel. Keep only fresh activity.
+    const liveSignalCutoff=new Date(Date.now()-24*60*60*1000).toISOString();
     const recent=db.prepare(
       "SELECT a.id,a.type,a.signature,a.mint AS tokenMint,"+
       "ABS(COALESCE(a.trade_usd,0)) AS tradeUsd,"+
@@ -3079,8 +3177,9 @@ async function api(req, res, db, url, live) {
       "COALESCE(t.market_cap,0) AS marketCap "+
       "FROM wallet_activity a LEFT JOIN tokens t ON t.mint=a.mint "+
       "WHERE a.entity_id=? AND a.wallet_id=? AND a.type IN ('buy','sell','swap') "+
+      "AND COALESCE(NULLIF(a.block_time,''),a.created_at)>=? "+
       "ORDER BY COALESCE(NULLIF(a.block_time,''),a.created_at) DESC LIMIT 12"
-    ).all(leader.id,mainWallet.id).map(row=>({
+    ).all(leader.id,mainWallet.id,liveSignalCutoff).map(row=>({
       ...row,
       side:String(row.type||'').toLowerCase()==='sell'?'sell':'buy'
     }));
@@ -3095,6 +3194,8 @@ async function api(req, res, db, url, live) {
         name:leader.name||'Leader',
         xHandle:leader.xHandle||'',
         avatar:leader.avatar||'',
+        avatarSource:leader.avatarSource||'',
+        profilePlatform:leader.profilePlatform||'',
         status:leader.status||'',
         mainWallet:{address:mainWallet.address,label:mainWallet.label||'Main Wallet'}
       },
@@ -3135,11 +3236,38 @@ async function api(req, res, db, url, live) {
     );
     stmt.run('public_copy_leader_entity_id',entityId);
     stmt.run('public_copy_room_enabled',body.enabled===false?'false':'true');
+
+    /* SYNC_LEADER_HELIUS_REFRESH_V19B */
+    // Rebind realtime Helius monitoring immediately whenever Room setup changes.
+    let selectedLeaderWallet=null;
+    if(entityId){
+      selectedLeaderWallet=mainCopyWalletRows(db,entityId)[0]||null;
+      if(selectedLeaderWallet?.id){
+        db.prepare("UPDATE wallets SET monitoring_enabled=1 WHERE id=?").run(selectedLeaderWallet.id);
+      }
+    }
+
+    let heliusRealtime=null;
+    try{
+      heliusRealtime=await live.refreshRealtimeWebhook();
+    }catch(error){
+      console.warn('SYNC leader Helius refresh failed:',String(error?.message||error));
+      heliusRealtime={active:false,lastError:String(error?.message||error)};
+    }
+    /* SYNC_LEADER_HELIUS_REFRESH_V19B_END */
+
+    setTimeout(()=>live.refreshMonitoringMode?.(),0).unref?.();
     return json(res,200,{
       ok:true,
       enabled:body.enabled!==false,
-      leaderEntityId:entityId
-    });
+      leaderEntityId:entityId,
+      leaderWalletId:selectedLeaderWallet?.id||'',
+      helius:{
+        active:!!heliusRealtime?.active,
+        addressCount:Number(heliusRealtime?.addressCount||0),
+        lastConfigAt:String(heliusRealtime?.lastConfigAt||''),
+        lastError:String(heliusRealtime?.lastError||'')
+      }});
   }
   /* SHADOW_PUBLIC_COPY_ROOM_V100_END */
 
@@ -3154,7 +3282,8 @@ async function api(req, res, db, url, live) {
     const stmt=db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
     for(const key of allowed){
       if(!Object.hasOwn(b,key))continue;
-      const value=key==='wallet_monitor_mode'?(String(b[key])==='solana_rpc'?'solana_rpc':'current'):String(b[key]);
+      const raw=String(b[key]??'').trim().toLowerCase();
+      const value=key==='wallet_monitor_mode'?((raw==='solana_rpc'||raw==='solana_rpc_only')?'solana_rpc_only':'auto'):String(b[key]);
       stmt.run(key,value);
     }
     live.refreshMonitoringMode?.();
@@ -3178,10 +3307,66 @@ export function createServer({dbPath,fetchImpl=fetch,autoMonitor=false}={}) {
   const internalCopyEngine=createInternalCopyEngine(db,{fetchImpl});
   globalThis.__SHADOW_INTERNAL_COPY_ENGINE=internalCopyEngine;
   globalThis.__SHADOW_INTERNAL_COPY_ENGINE_SYNC=payload=>internalCopyEngine.syncSubscription(payload);
+
+  /* SYNC_LIVE_SIGNALS_SSE_V17 */
+  const syncLiveSignalClients=new Set();
+
+  function syncPublicSignalRow(event){
+    const leaderId=String(getSetting(db,'public_copy_leader_entity_id',process.env.PUBLIC_COPY_LEADER_ENTITY_ID||'')||'').trim();
+    if(!leaderId || String(event?.entityId||'')!==leaderId)return null;
+    const mainWallet=mainCopyWalletRows(db,leaderId)[0]||null;
+    if(!mainWallet || String(event?.sourceWalletId||'')!==String(mainWallet.id||''))return null;
+
+    const row=db.prepare(
+      "SELECT a.id,a.type,a.signature,a.mint AS tokenMint,"+
+      "ABS(COALESCE(a.trade_usd,0)) AS tradeUsd,"+
+      "ABS(COALESCE(a.sol_amount,0)) AS solAmount,"+
+      "COALESCE(NULLIF(a.block_time,''),a.created_at) AS eventAt,"+
+      "COALESCE(t.symbol,a.token_symbol,'') AS symbol,"+
+      "COALESCE(t.name,a.token_name,'') AS tokenName,"+
+      "COALESCE(t.image,'') AS tokenImage,"+
+      "COALESCE(t.market_cap,0) AS marketCap "+
+      "FROM wallet_activity a LEFT JOIN tokens t ON t.mint=a.mint "+
+      "WHERE a.entity_id=? AND a.wallet_id=? AND a.signature=? AND a.mint=? "+
+      "ORDER BY COALESCE(NULLIF(a.block_time,''),a.created_at) DESC LIMIT 1"
+    ).get(leaderId,mainWallet.id,String(event?.signature||''),String(event?.mint||''));
+
+    if(!row)return {
+      id:`live:${String(event?.signature||'')}:${String(event?.mint||'')}`,
+      type:String(event?.side||'buy'),
+      side:String(event?.side||'buy')==='sell'?'sell':'buy',
+      signature:String(event?.signature||''),
+      tokenMint:String(event?.mint||''),
+      symbol:'',
+      tokenName:'',
+      tokenImage:'',
+      tradeUsd:0,
+      solAmount:Math.abs(Number(event?.solAmount||0)),
+      marketCap:Math.max(0,Number(event?.cachedMarketCapUsd||0)),
+      eventAt:new Date().toISOString()
+    };
+
+    return {...row,side:String(row.type||'').toLowerCase()==='sell'?'sell':'buy'};
+  }
+
+  function broadcastSyncLiveSignal(event){
+    const row=syncPublicSignalRow(event);
+    if(!row)return;
+    const packet=`event: trade\ndata: ${JSON.stringify(row)}\n\n`;
+    for(const res of [...syncLiveSignalClients]){
+      try{res.write(packet)}catch{syncLiveSignalClients.delete(res)}
+    }
+  }
+
   const live=createLiveIntelligence(db,{
     fetchImpl,
-    onFastTrade:event=>internalCopyEngine.handleTradeEvent?.(event)
+    onFastTrade:async event=>{
+      // UI gets the Helius event immediately. Copy execution stays on the same hot path.
+      broadcastSyncLiveSignal(event);
+      return await internalCopyEngine.handleTradeEvent?.(event);
+    }
   });
+  /* SYNC_LIVE_SIGNALS_SSE_V17_END */
   let tokenImageBackfillTimer=null;
   let profileAvatarRepairTimer=null;
   let shadowPushStop=()=>{};
@@ -3213,11 +3398,33 @@ export function createServer({dbPath,fetchImpl=fetch,autoMonitor=false}={}) {
   const server=http.createServer(async(req,res)=>{
     try{
       const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);
+
+      /* SYNC_LIVE_SIGNALS_SSE_V17_ROUTE */
+      if(url.pathname==='/api/public-copy-room/events' && (req.method||'GET')==='GET'){
+        res.writeHead(200,{
+          'content-type':'text/event-stream; charset=utf-8',
+          'cache-control':'no-cache, no-transform',
+          'connection':'keep-alive',
+          'x-accel-buffering':'no'
+        });
+        res.write('event: ready\ndata: {}\n\n');
+        syncLiveSignalClients.add(res);
+        const ping=setInterval(()=>{
+          try{res.write(': ping\n\n')}catch{}
+        },20000);
+        ping.unref?.();
+        req.on('close',()=>{
+          clearInterval(ping);
+          syncLiveSignalClients.delete(res);
+        });
+        return;
+      }
+
       if(url.pathname.startsWith('/api/')) await api(req,res,db,url,live); else serveStatic(req,res,url);
     }catch(err){ console.error(err); if(!res.headersSent)json(res,err.statusCode||500,{error:err.statusCode?err.message:'Internal server error'}); else res.end(); }
   });
   if(autoMonitor){ live.start(); if(!process.env.COPY_ENGINE_URL) internalCopyEngine.start(); }
-  server.on('close',()=>{ try{shadowPushStop();}catch{} try{internalCopyEngine.stop();}catch{} if(profileAvatarRepairTimer)clearTimeout(profileAvatarRepairTimer); if(tokenImageBackfillTimer)clearTimeout(tokenImageBackfillTimer); try{live.stop();}catch{} try{db.close();}catch{} });
+  server.on('close',()=>{ for(const res of [...syncLiveSignalClients]){try{res.end()}catch{}} syncLiveSignalClients.clear(); try{shadowPushStop();}catch{} try{internalCopyEngine.stop();}catch{} if(profileAvatarRepairTimer)clearTimeout(profileAvatarRepairTimer); if(tokenImageBackfillTimer)clearTimeout(tokenImageBackfillTimer); try{live.stop();}catch{} try{db.close();}catch{} });
   return server;
 }
 

@@ -58,6 +58,135 @@
     if(!response.ok)throw new Error(data.error||("HTTP "+response.status));
     return data;
   }
+  /* SYNC_VAULT_HEADER_LIVE_V24B */
+  function ensureVaultHeader(){
+    var topbar=qs(".topbar");
+    var menu=qs(".sync-menu");
+    if(!topbar||!menu)return null;
+
+    var box=qs("#vaultHeaderBalance");
+    if(box)return box;
+
+    var right=document.createElement("div");
+    right.className="vault-header-right";
+
+    box=document.createElement("div");
+    box.id="vaultHeaderBalance";
+    box.className="vault-header-balance";
+    box.hidden=true;
+    box.setAttribute("aria-label","Delegated vault balance");
+    box.innerHTML='<span id="vaultHeaderAmount">0</span><small>SOL</small>';
+
+    menu.parentNode.insertBefore(right,menu);
+    right.appendChild(box);
+    right.appendChild(menu);
+    return box;
+  }
+
+  function formatVaultHeaderSol(value){
+    var n=Number(value||0);
+    if(!isFinite(n)||n<=0)return "0";
+    if(n<0.001)return n.toFixed(6).replace(/0+$/,"").replace(/\.$/,"");
+    if(n<1)return n.toFixed(4).replace(/0+$/,"").replace(/\.$/,"");
+    if(n<100)return n.toFixed(3).replace(/0+$/,"").replace(/\.$/,"");
+    return n.toFixed(2).replace(/0+$/,"").replace(/\.$/,"");
+  }
+
+  function extractVaultSol(data){
+    var direct=[
+      data&&data.vaultWsol,
+      data&&data.vaultWsolSol,
+      data&&data.vaultBalanceSol,
+      data&&data.vaultSol,
+      data&&data.amountSol,
+      data&&data.balanceSol,
+      data&&data.freeSol,
+      data&&data.reclaimableSol,
+      data&&data.reclaimable&&data.reclaimable.sol,
+      data&&data.vault&&data.vault.wsol,
+      data&&data.vault&&data.vault.balanceSol,
+      data&&data.engine&&data.engine.vaultWsol,
+      data&&data.engine&&data.engine.vaultBalanceSol
+    ];
+    for(var i=0;i<direct.length;i++){
+      var n=Number(direct[i]);
+      if(isFinite(n)&&n>=0)return n;
+    }
+
+    var assets=Array.isArray(data&&data.assets)?data.assets:[];
+    var total=0,found=false;
+    assets.forEach(function(asset){
+      if(!asset)return;
+      var isWsol=asset.isWsol===true ||
+        String(asset.symbol||"").toUpperCase()==="WSOL" ||
+        String(asset.mint||"")==="So11111111111111111111111111111111111111112";
+      if(!isWsol)return;
+      var n=Number(asset.uiAmount!=null?asset.uiAmount:
+        asset.amountSol!=null?asset.amountSol:
+        asset.balanceSol!=null?asset.balanceSol:asset.amount);
+      if(isFinite(n)&&n>=0){total+=n;found=true}
+    });
+    return found?total:null;
+  }
+
+  function renderVaultHeaderBalance(value,visible){
+    var box=ensureVaultHeader();
+    if(!box)return;
+    var amount=qs("#vaultHeaderAmount");
+    if(!visible){
+      box.hidden=true;
+      return;
+    }
+    var n=Math.max(0,Number(value||0));
+    amount.textContent=formatVaultHeaderSol(n);
+    box.classList.toggle("is-zero",n<=0);
+    box.hidden=false;
+  }
+
+  async function loadVaultHeaderBalance(){
+    if(state.vaultHeaderBusy)return;
+    if(document.visibilityState==="hidden")return;
+
+    ensureVaultHeader();
+
+    if(!state.user||!state.wallet||!roomReady()){
+      state.vaultHeaderLast=null;
+      renderVaultHeaderBalance(0,false);
+      return;
+    }
+
+    state.vaultHeaderBusy=true;
+    try{
+      var base="/api/entities/"+encodeURIComponent(state.room.leader.id)+"/copy";
+      var data=null;
+      try{
+        data=await api(base+"/reclaim",{method:"GET"});
+      }catch(firstError){
+        try{
+          data=await api(base+"/execution",{method:"GET"});
+        }catch(secondError){
+          throw firstError;
+        }
+      }
+
+      var total=extractVaultSol(data);
+      if(total==null)throw new Error("Vault balance not present in response");
+
+      state.vaultHeaderLast=total;
+      renderVaultHeaderBalance(total,true);
+    }catch(error){
+      if(state.vaultHeaderLast!=null){
+        renderVaultHeaderBalance(state.vaultHeaderLast,true);
+      }else{
+        renderVaultHeaderBalance(0,false);
+      }
+    }finally{
+      state.vaultHeaderBusy=false;
+    }
+  }
+  /* SYNC_VAULT_HEADER_LIVE_V24B_END */
+
+
 
   function roomReady(){
     return !!(state.room&&state.room.configured&&state.room.enabled&&state.room.leader);
@@ -83,6 +212,7 @@
 
     if(!live){
       card.classList.add("is-empty");
+      avatar.classList.remove("is-fomo-card");
       avatar.innerHTML="S";
       name.textContent="Leader not configured";
       wallet.textContent="Owner setup required";
@@ -93,8 +223,14 @@
 
     card.classList.remove("is-empty");
     var leader=room.leader;
+    avatar.classList.remove("is-fomo-card");
     if(leader.avatar){
-      avatar.innerHTML='<img src="'+esc(leader.avatar)+'" alt="">';
+      if(String(leader.avatarSource||"")==="fomo-card"){
+        avatar.classList.add("is-fomo-card");
+        avatar.innerHTML='<img class="fomo-card-img" src="'+esc(leader.avatar)+'" alt="">';
+      }else{
+        avatar.innerHTML='<img src="'+esc(leader.avatar)+'" alt="">';
+      }
     }else{
       avatar.textContent=(leader.name||"L").slice(0,1).toUpperCase();
     }
@@ -102,6 +238,52 @@
     wallet.textContent=short(leader.mainWallet&&leader.mainWallet.address||"");
     status.setAttribute("aria-label","Leader online");
     qs("#leaderLine").textContent="ONE LEADER · "+Number(room.counts&&room.counts.connected||0)+" CONNECTED";
+  }
+
+  /* SYNC_COPY_STATUS_LIVE_V18 */
+  function copyExecutionKey(row){
+    return String(row&&row.signature||"")+":"+String(row&&row.tokenMint||"")+":"+String(row&&row.side||row&&row.type||"");
+  }
+
+  function copyUsd(value){
+    var n=Number(value||0);
+    if(!isFinite(n)||n<=0)return "";
+    if(n<1000)return "$"+n.toFixed(2);
+    return fmtUsd(n);
+  }
+
+  function copyExecutionLine(row){
+    state.copyExecutions=state.copyExecutions||{};
+    var item=state.copyExecutions[copyExecutionKey(row)];
+    if(!item)return "";
+    var status=String(item.status||"").toLowerCase();
+    var cls="copy-execution "+status;
+    if(status==="confirmed"){
+      var side=(row.side==="sell"?"sell":"buy");
+      var label=side==="sell"?"✓ SYNC SOLD":"✓ SYNC COPIED";
+      var parts=[label];
+      if(Number(item.executedSol)>0){
+        var sol=Number(item.executedSol);
+        parts.push((sol<0.001?sol.toFixed(6):sol.toFixed(4))+" SOL");
+      }
+      if(Number(item.executedUsd)>0)parts.push("~"+copyUsd(item.executedUsd));
+      var reason=String(item.closeReason||"");
+      if(reason==="leader_sell")parts.push("LEADER SELL");
+      else if(reason==="take_profit")parts.push("TAKE PROFIT");
+      else if(reason==="stop_loss")parts.push("STOP LOSS");
+      return '<span class="'+cls+'">'+esc(parts.join(" · "))+'</span>';
+    }
+    if(status==="queued"||status==="executing"||status==="pending"){
+      return '<span class="'+cls+'">SYNC COPYING…</span>';
+    }
+    if(status==="skipped"){
+      var why=String(item.reason||"");
+      var label=why==="market_cap_filter"?"MC FILTER":why==="follow_buys_off"?"BUY OFF":why==="follow_sells_off"?"SELL OFF":"NOT COPIED";
+      return '<span class="'+cls+'">SYNC SKIPPED · '+esc(label)+'</span>';
+    }
+    if(status==="error")return '<span class="'+cls+'">SYNC FAILED</span>';
+    if(status==="off")return '<span class="'+cls+'">SYNC OFF</span>';
+    return "";
   }
 
   function renderActivity(){
@@ -120,11 +302,49 @@
       if(row.eventAt)meta.push(ago(row.eventAt));
       return '<div class="activity-row '+side+'">'+
         '<span class="activity-dot"></span>'+
-        '<div class="activity-copy"><strong>$'+esc(token)+'</strong><span>'+esc(meta.join(" · ")||"Confirmed signal")+'</span></div>'+
+        '<div class="activity-copy"><strong>$'+esc(token)+'</strong><span>'+esc(meta.join(" · ")||"Confirmed signal")+'</span>'+copyExecutionLine(row)+'</div>'+
         '<span class="activity-side">'+(side==="sell"?"SELL":"BUY")+'</span>'+
       '</div>';
     }).join("");
   }
+
+  async function refreshCopyExecution(row,attempt){
+    if(!row||!state.user||!state.wallet||!roomReady())return;
+    var sig=String(row.signature||"");
+    var mint=String(row.tokenMint||"");
+    if(!sig||!mint)return;
+    attempt=Number(attempt||0);
+    state.copyExecutions=state.copyExecutions||{};
+    var key=copyExecutionKey(row);
+    try{
+      var url="/api/entities/"+encodeURIComponent(state.room.leader.id)+"/copy/execution-status"+
+        "?signature="+encodeURIComponent(sig)+
+        "&mint="+encodeURIComponent(mint)+
+        "&side="+encodeURIComponent(row.side==="sell"?"sell":"buy");
+      var result=await api(url);
+      state.copyExecutions[key]=result;
+      renderActivity();
+
+      var status=String(result.status||"").toLowerCase();
+      if((status==="pending"||status==="queued"||status==="executing")&&attempt<10){
+        var waits=[500,700,900,1200,1600,2200,3000,4000,5000,6000];
+        setTimeout(function(){refreshCopyExecution(row,attempt+1)},waits[Math.min(attempt,waits.length-1)]);
+      }
+    }catch(error){}
+  }
+
+  function refreshVisibleCopyExecutions(){
+    if(!state.user||!state.wallet||!roomReady())return;
+    var rows=state.room&&Array.isArray(state.room.recent)?state.room.recent:[];
+    rows.slice(0,12).forEach(function(row){
+      var key=copyExecutionKey(row);
+      var current=state.copyExecutions&&state.copyExecutions[key];
+      var status=String(current&&current.status||"").toLowerCase();
+      if(status==="confirmed"||status==="skipped"||status==="error"||status==="off")return;
+      refreshCopyExecution(row,0);
+    });
+  }
+  /* SYNC_COPY_STATUS_LIVE_V18_END */
 
   function renderWallet(){
     var connected=!!state.wallet;
@@ -163,24 +383,162 @@
       qs("#maxMc").value=String(Math.round(Number(sub.maxMarketCapUsd||0)));
       qs("#copyBuys").checked=sub.copyBuys!==false;
       qs("#copySells").checked=sub.copySells!==false;
+
+      qs("#takeProfitEnabled").checked=sub.takeProfitEnabled!==false;
+      qs("#stopLossEnabled").checked=sub.stopLossEnabled!==false;
+
+      qs("#takeProfitPercent").value=String(
+        Math.max(1,Number(sub.takeProfitPercent||100))
+      );
+
+      qs("#stopLossPercent").value=String(
+        Math.max(1,Math.min(99,Number(sub.stopLossPercent||30)))
+      );
       qs("#slippagePercent").value=String(Math.max(.1,Number(sub.slippageBps||500)/100));
     }
     renderCopyState();
   }
 
+  /* SYNC_COPY_STATE_UI_V20B */
+  function executionAuthorizationState(){
+    var execution=state.execution||{};
+    return String(
+      execution.executionWallet&&execution.executionWallet.authorizationState||
+      execution.engine&&execution.engine.authorizationState||
+      state.copy&&state.copy.engineState||
+      ""
+    ).trim().toLowerCase();
+  }
+
+  function executionIsAuthorized(){
+    var auth=executionAuthorizationState();
+    var execution=state.execution||{};
+    return !!(
+      state.copy&&state.copy.enabled&&state.copy.engineState==="active"||
+      execution.engine&&execution.engine.active===true||
+      auth==="authorized"||
+      auth==="active"||
+      auth==="ready"
+    );
+  }
+
   function renderCopyState(){
     var sub=state.copy;
-    var active=!!(sub&&sub.enabled&&sub.engineState==="active");
-    var pending=!!(sub&&!active&&sub.engineState&&sub.engineState!=="stopped"&&sub.engineState!=="draft");
+    var engineState=String(sub&&sub.engineState||"").toLowerCase();
+    var active=!!(sub&&sub.enabled&&engineState==="active");
+    var authorized=executionIsAuthorized();
+
+    var needsAuthorization=!!(
+      !active &&
+      state.authorizationUrl &&
+      !authorized
+    );
+
+    var activating=!!(
+      sub &&
+      !active &&
+      !needsAuthorization &&
+      engineState &&
+      engineState!=="stopped" &&
+      engineState!=="draft" &&
+      engineState!=="authorization_required" &&
+      engineState!=="execution_wallet_required" &&
+      engineState!=="error"
+    );
+
+    var ready=!!(
+      state.wallet &&
+      !active &&
+      !needsAuthorization &&
+      !activating
+    );
+
     var badge=qs("#copyBadge");
-    badge.classList.toggle("is-active",active);
-    badge.classList.toggle("is-pending",pending);
-    badge.textContent=active?"SYNCED":pending?"PENDING":"OFF";
-    qs("#copyStateTitle").textContent=active?"Synced with leader":pending?"Authorization pending":"Ready to sync";
-    qs("#startButton").textContent=active?"UPDATE SETTINGS":"START COPYING";
-    qs("#stopButton").hidden=!sub||(!active&&!pending);
-    qs("#authorizationBox").hidden=!state.authorizationUrl;
+    if(badge){
+      badge.classList.toggle("is-active",active);
+      badge.classList.toggle("is-pending",needsAuthorization||activating);
+
+      if(active)badge.textContent="ACTIVE";
+      else if(needsAuthorization)badge.textContent="AUTHORIZE";
+      else if(activating)badge.textContent="PENDING";
+      else if(ready)badge.textContent="READY";
+      else badge.textContent="OFF";
+    }
+
+    var title=qs("#copyStateTitle");
+    if(title){
+      if(active)title.textContent="Copy trading active";
+      else if(needsAuthorization)title.textContent="Execution authorization required";
+      else if(activating)title.textContent="Activating copy trading";
+      else if(ready)title.textContent="Ready to start copying";
+      else title.textContent="Connect wallet to continue";
+    }
+
+    var startButton=qs("#startButton");
+    var stopButton=qs("#stopButton");
+    var authorizationBox=qs("#authorizationBox");
+    var authorizeButton=qs("#authorizeButton");
+
+    if(startButton){
+      startButton.hidden=false;
+      startButton.disabled=needsAuthorization||activating||!state.wallet;
+      startButton.textContent=active
+        ?"UPDATE SETTINGS"
+        :needsAuthorization
+          ?"AUTHORIZE FIRST"
+          :activating
+            ?"ACTIVATING…"
+            :"START COPYING";
+    }
+
+    // STOP COPYING exists only for a genuinely ACTIVE subscription.
+    if(stopButton){
+      stopButton.hidden=!active;
+      stopButton.disabled=!active;
+    }
+
+    if(authorizationBox)authorizationBox.hidden=!needsAuthorization;
+
+    if(authorizeButton){
+      authorizeButton.hidden=!needsAuthorization;
+      authorizeButton.disabled=!needsAuthorization||!state.authorizationUrl;
+      authorizeButton.textContent="AUTHORIZE";
+    }
   }
+  /* SYNC_COPY_STATE_UI_V20B_END */
+
+  /* SYNC_LIVE_SIGNALS_SSE_V17 */
+  function liveSignalKey(row){
+    return String(row&&row.id||row&&row.signature||"")+":"+String(row&&row.tokenMint||"")+":"+String(row&&row.side||row&&row.type||"");
+  }
+
+  function prependLiveSignal(row){
+    if(!row||!state.room)return;
+    var rows=Array.isArray(state.room.recent)?state.room.recent:[];
+    var key=liveSignalKey(row);
+    state.room.recent=[row].concat(rows.filter(function(item){return liveSignalKey(item)!==key})).slice(0,12);
+    renderActivity();
+    refreshCopyExecution(row,0);
+  }
+
+  function connectLiveSignals(){
+    if(!("EventSource" in window))return;
+    try{
+      if(state.liveSignalsSource)state.liveSignalsSource.close();
+      var source=new EventSource("/api/public-copy-room/events");
+      state.liveSignalsSource=source;
+      source.addEventListener("trade",function(event){
+        try{
+          var row=JSON.parse(event.data||"{}");
+          prependLiveSignal(row);
+          // Background enrichment may add token name/MC/trade USD a moment later.
+          setTimeout(loadRoom,700);
+        }catch(error){}
+      });
+      window.addEventListener("beforeunload",function(){try{source.close()}catch{}},{once:true});
+    }catch(error){}
+  }
+  /* SYNC_LIVE_SIGNALS_SSE_V17_END */
 
   async function loadRoom(){
     try{
@@ -188,6 +546,7 @@
       renderHero();
       renderActivity();
       renderTradeAlerts();
+      refreshVisibleCopyExecutions();
     }catch(error){
       toast(error.message);
     }
@@ -244,6 +603,7 @@
       state.execution=null;
     }
     hydrateCopyForm();
+    refreshVisibleCopyExecutions();
   }
 
   function bytesToBase64(bytes){
@@ -365,6 +725,19 @@
       maxMarketCapUsd:maxMc,
       copyBuys:qs("#copyBuys").checked,
       copySells:qs("#copySells").checked,
+
+      takeProfitEnabled:qs("#takeProfitEnabled").checked,
+      takeProfitPercent:Math.max(
+        1,
+        Math.min(10000,Number(qs("#takeProfitPercent").value||100))
+      ),
+
+      stopLossEnabled:qs("#stopLossEnabled").checked,
+      stopLossPercent:Math.max(
+        1,
+        Math.min(99,Number(qs("#stopLossPercent").value||30))
+      ),
+
       sellPercent:100
     };
   }
@@ -381,10 +754,15 @@
         method:"PUT",
         body:JSON.stringify(copyPayload(enabled))
       });
+      /* SYNC_STOP_RECLAIM_V21B */
+      if(!enabled&&result.reclaimUrl){
+        location.href=String(result.reclaimUrl);
+        return;
+      }
       state.copy=result.subscription||state.copy;
       state.authorizationUrl=String(result.authorizationUrl||"");
       if(result.requiresAuthorization&&state.authorizationUrl){
-        toast("Execution authorization required");
+        toast("24/7 execution authorization required");
       }else if(state.copy&&state.copy.enabled){
         toast("Copy trading active");
       }else if(enabled){
@@ -670,8 +1048,39 @@
     bind();
     await loadRoom();
     await loadSession();
+    ensureVaultHeader();
+    await loadVaultHeaderBalance();
+    connectLiveSignals();
+    // SSE is primary; polling remains only as a recovery/fallback path.
     setInterval(loadRoom,5000);
+    setInterval(loadVaultHeaderBalance,1000);
+    window.addEventListener("pageshow",function(){loadVaultHeaderBalance()});
+    document.addEventListener("visibilitychange",function(){
+      if(document.visibilityState==="visible")loadVaultHeaderBalance();
+    });
   }
 
-  boot();
+  
+  /* SYNC_COPY_STATE_UI_V20B_REFRESH */
+  window.addEventListener("pageshow",function(){
+    if(state.wallet&&roomReady()){
+      loadCopyState().catch(function(){});
+    }
+  });
+
+  document.addEventListener("visibilitychange",function(){
+    if(document.visibilityState==="visible"&&state.wallet&&roomReady()){
+      loadCopyState().catch(function(){});
+    }
+  });
+
+  setInterval(function(){
+    var sub=state.copy;
+    if(!state.wallet||!roomReady())return;
+    if(sub&&sub.enabled&&sub.engineState==="active")return;
+    loadCopyState().catch(function(){});
+  },4000);
+  /* SYNC_COPY_STATE_UI_V20B_REFRESH_END */
+
+boot();
 })();

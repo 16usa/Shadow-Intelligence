@@ -999,8 +999,11 @@ function avatar(item,size='md'){
   const src=imageSource(item);
   const key=item?.name||item?.displayName||item?.x_handle||item?.xHandle||item?.symbol||item?.address||item?.mint||'SI';
   const hue=Math.abs([...String(key)].reduce((a,c)=>a+c.charCodeAt(0),0))%360;
+  const fomoCard=String(item?.avatar_source||item?.avatarSource||'')==='fomo-card';
   const bg=src
-    ? `background-image:url(&quot;${esc(src)}&quot;)`
+    ? (fomoCard
+      ? `background-image:url(&quot;${esc(src)}&quot;);background-size:400% 400%;background-position:50% 25%;background-repeat:no-repeat`
+      : `background-image:url(&quot;${esc(src)}&quot;)`)
     : `background:linear-gradient(135deg,hsl(${hue} 70% 52%),#111)`;
   return `<span class="avatar avatar-${size}" style="${bg}"></span>`;
 }
@@ -1620,6 +1623,7 @@ class ShadowDomSwarm{
     if(!el)return;
     el.setAttribute('aria-label',raw?.name||raw?.x_handle||'Entity');
     const avatarUrl=String(raw?.avatar||'').trim();
+    const fomoCard=String(raw?.avatar_source||raw?.avatarSource||'')==='fomo-card';
     let img=el.querySelector('img');
     if(avatarUrl){
       if(!img){
@@ -1630,6 +1634,21 @@ class ShadowDomSwarm{
         el.prepend(img);
       }
       if(img.getAttribute('src')!==avatarUrl)img.src=avatarUrl;
+      if(fomoCard){
+        img.style.width='400%';
+        img.style.height='400%';
+        img.style.maxWidth='none';
+        img.style.objectFit='cover';
+        img.style.transform='translate(-37.5%,-18.5%)';
+        img.style.transformOrigin='0 0';
+      }else{
+        img.style.width='';
+        img.style.height='';
+        img.style.maxWidth='';
+        img.style.objectFit='';
+        img.style.transform='';
+        img.style.transformOrigin='';
+      }
     }else{
       img?.remove();
       this.ensureFallback(el,raw);
@@ -2802,7 +2821,8 @@ async function refreshAdminWalletRealtimeStatuses(){
   let payload;
   try{payload=await api('/api/live/wallet-status')}catch{return}
   const monitor=payload?.walletMonitoring||{};
-  if(String(monitor.mode||'current')!=='solana_rpc')return;
+  const rawMode=String(monitor.mode||'auto').toLowerCase();
+  if(!['auto','current','solana_rpc','solana_rpc_only'].includes(rawMode))return;
 
   const realtime=monitor.realtime||{};
   const subscribed=new Set((Array.isArray(realtime.subscribedWalletIds)?realtime.subscribedWalletIds:[]).map(String));
@@ -4816,17 +4836,24 @@ async function loadSettings(){
     $('#setChat').checked=s.community_chat_enabled==='true';
     $('#setCopy').checked=s.copy_trading_enabled==='true';
     $('#setLiveMonitor').checked=s.live_monitor_enabled==='true';
-    $('#setWalletMonitorMode').value=s.wallet_monitor_mode==='solana_rpc'?'solana_rpc':'current';
+    { const rawMode=String(s.wallet_monitor_mode||'auto').toLowerCase(); $('#setWalletMonitorMode').value=(rawMode==='solana_rpc'||rawMode==='solana_rpc_only')?'solana_rpc_only':'auto'; }
     $('#setPollSeconds').value=s.live_poll_seconds||60;
     $('#setHistoryLimit').value=s.wallet_history_limit||30;
     $('#setXMonitor').checked=s.x_monitor_enabled==='true';
 
     const h=await api('/api/live/status');
-    const monitorMode=h.walletMonitoring?.mode||s.wallet_monitor_mode||'current';
+    const rawMode=String(h.walletMonitoring?.mode||s.wallet_monitor_mode||'auto').toLowerCase();
+    const monitorMode=(rawMode==='solana_rpc'||rawMode==='solana_rpc_only')?'solana_rpc_only':'auto';
     const rpcLive=h.walletMonitoring?.realtime||{};
-    $('#providerStatus').textContent=monitorMode==='solana_rpc'
-      ? `Mode: Solana RPC · WebSocket: ${rpcLive.connected?'live':(rpcLive.connecting||rpcLive.reconnecting)?'reconnecting':'offline'} · ${rpcLive.subscriptions||0} wallets`
-      : `Mode: Current · Solana: ${h.solana?.status||'unknown'} · ${h.solana?.provider||''}`;
+    const routing=h.walletMonitoring?.routing||{};
+    if(monitorMode==='solana_rpc_only'){
+      $('#providerStatus').textContent=`Leader: Solana RPC · Others: Solana RPC · Helius: off`;
+    }else if(routing.heliusActive){
+      $('#providerStatus').textContent=`Leader: Helius · Others: Solana RPC · Fallback: ON`;
+    }else{
+      const heliusState=routing.heliusConfigured?'retrying':'not configured';
+      $('#providerStatus').textContent=`Leader: RPC fallback · Others: Solana RPC · Helius: ${heliusState}`;
+    }
 
     await renderWalletInventory('#walletsAdminTable');
     startCopyLatencyMeter();

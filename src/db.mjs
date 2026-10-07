@@ -90,6 +90,10 @@ export function openDb(path = process.env.DB_PATH || './shadow-intelligence.db')
       slippage_bps INTEGER NOT NULL DEFAULT 500,
       min_market_cap_usd REAL NOT NULL DEFAULT 0,
       max_market_cap_usd REAL NOT NULL DEFAULT 0,
+      take_profit_enabled INTEGER NOT NULL DEFAULT 0,
+      take_profit_percent REAL NOT NULL DEFAULT 100,
+      stop_loss_enabled INTEGER NOT NULL DEFAULT 0,
+      stop_loss_percent REAL NOT NULL DEFAULT 30,
       copy_buys INTEGER NOT NULL DEFAULT 1,
       copy_sells INTEGER NOT NULL DEFAULT 1,
       sell_percent INTEGER NOT NULL DEFAULT 100,
@@ -239,6 +243,12 @@ function migrateColumns(db) {
   addColumn(db,'copy_subscriptions',"min_market_cap_usd REAL NOT NULL DEFAULT 0");
   addColumn(db,'copy_subscriptions',"max_market_cap_usd REAL NOT NULL DEFAULT 0");
   /* SHADOW_COPY_MC_RANGE_V360_DB_END */
+  /* SYNC_TP_SL_BACKEND_V2 */
+  addColumn(db,'copy_subscriptions',"take_profit_enabled INTEGER NOT NULL DEFAULT 0");
+  addColumn(db,'copy_subscriptions',"take_profit_percent REAL NOT NULL DEFAULT 100");
+  addColumn(db,'copy_subscriptions',"stop_loss_enabled INTEGER NOT NULL DEFAULT 0");
+  addColumn(db,'copy_subscriptions',"stop_loss_percent REAL NOT NULL DEFAULT 30");
+  /* SYNC_TP_SL_BACKEND_V2_END */
   addColumn(db,'tokens',"price_usd REAL DEFAULT 0");
   addColumn(db,'tokens',"market_cap REAL DEFAULT 0");
   addColumn(db,'tokens',"liquidity_usd REAL DEFAULT 0");
@@ -264,7 +274,7 @@ function migrateColumns(db) {
 function seedSettings(db) {
   const defaults = {
     platform_name:'Shadow Intelligence', registration_enabled:'true', community_chat_enabled:'true', copy_trading_enabled:'true',
-    live_monitor_enabled:'true', live_poll_seconds:'60', wallet_history_limit:'30', x_monitor_enabled:'true', wallet_monitor_mode:'current'
+    live_monitor_enabled:'true', live_poll_seconds:'60', wallet_history_limit:'30', x_monitor_enabled:'true', wallet_monitor_mode:'auto'
   };
   const stmt=db.prepare('INSERT OR IGNORE INTO settings (key,value) VALUES (?,?)');
   for (const [k,v] of Object.entries(defaults)) stmt.run(k,v);

@@ -35,7 +35,24 @@ function isTrackedTradeActivity(activity){
 
 export function createLiveIntelligence(db,{fetchImpl=fetch,onFastTrade=null}={}) {
   /* SHADOW_RPC_REALTIME_V310 */
-  const walletMonitorMode=()=>String(getSetting(db,'wallet_monitor_mode','current')||'current')==='solana_rpc'?'solana_rpc':'current';
+  const walletMonitorMode=()=>{
+    const raw=String(getSetting(db,'wallet_monitor_mode','auto')||'auto').trim().toLowerCase();
+    return (raw==='solana_rpc'||raw==='solana_rpc_only')?'solana_rpc_only':'auto';
+  };
+  function selectedRoomLeaderWallet(){
+    if(getSetting(db,'public_copy_room_enabled','true')==='false')return null;
+    const entityId=String(getSetting(db,'public_copy_leader_entity_id',process.env.PUBLIC_COPY_LEADER_ENTITY_ID||'')||'').trim();
+    if(!entityId)return null;
+    const wallet=db.prepare(`
+      SELECT * FROM wallets
+      WHERE entity_id=?
+        AND monitoring_enabled=1
+        AND lower(trim(COALESCE(label,'')))='main wallet'
+      ORDER BY created_at ASC
+      LIMIT 1
+    `).get(entityId);
+    return wallet&&isSolanaAddress(wallet.address)?wallet:null;
+  }
   let rpcRealtime=null;
   /* SHADOW_REALTIME_HELIUS_V300 */
   let timer=null, realtimeTimer=null, running=false, lastCycleAt='', lastError='', cycleCount=0;
@@ -162,17 +179,37 @@ export function createLiveIntelligence(db,{fetchImpl=fetch,onFastTrade=null}={})
     throw lastError||new Error('Helius webhook request failed');
   }
 
-  async function refreshRealtimeWebhook(){
-    if(walletMonitorMode()==='solana_rpc'){
-      realtime.active=false;
-      realtime.lastError='Paused while Solana RPC mode is selected';
-      return {...realtime};
+  async function deactivateRealtimeWebhook(reason='Helius disabled'){
+    const webhookId=String(getSetting(db,'helius_webhook_id','')||'').trim();
+    if(webhookId&&process.env.HELIUS_API_KEY){
+      try{
+        await heliusWebhookRequest('DELETE',`/${encodeURIComponent(webhookId)}`);
+        setInternalSetting('helius_webhook_id','');
+      }catch(error){
+        if(error?.status===404){
+          setInternalSetting('helius_webhook_id','');
+        }else{
+          realtime={...realtime,active:false,lastConfigAt:nowIso(),lastError:`${reason}; cleanup: ${String(error?.message||error)}`};
+          return {...realtime};
+        }
+      }
     }
+    realtime={...realtime,active:false,webhookId:'',addressCount:0,lastConfigAt:nowIso(),lastError:reason};
+    return {...realtime};
+  }
+
+  async function refreshRealtimeWebhook(){
+    const mode=walletMonitorMode();
     realtime.configured=!!process.env.HELIUS_API_KEY;
     const base=publicBaseUrl();
-    const addresses=db.prepare('SELECT address FROM wallets WHERE monitoring_enabled=1 ORDER BY created_at').all().map(x=>String(x.address||'')).filter(isSolanaAddress);
+    const leader=selectedRoomLeaderWallet();
+    const addresses=mode==='auto'&&leader?[leader.address]:[];
     realtime.addressCount=addresses.length;
+    realtime.leaderEntityId=leader?.entity_id||'';
+    realtime.leaderWalletId=leader?.id||'';
     realtime.url=base?`${base}/api/webhooks/helius`:'';
+
+    if(mode!=='auto')return await deactivateRealtimeWebhook('Helius disabled in Solana RPC only mode');
 
     if(!realtime.configured){
       realtime.active=false;
@@ -184,11 +221,7 @@ export function createLiveIntelligence(db,{fetchImpl=fetch,onFastTrade=null}={})
       realtime.lastError='Public base URL unavailable';
       return {...realtime};
     }
-    if(!addresses.length){
-      realtime.active=false;
-      realtime.lastError='No monitored wallets';
-      return {...realtime};
-    }
+    if(!addresses.length)return await deactivateRealtimeWebhook('Room leader Main Wallet unavailable');
 
     const payload={
       webhookURL:realtime.url,
@@ -363,7 +396,9 @@ export function createLiveIntelligence(db,{fetchImpl=fetch,onFastTrade=null}={})
   async function ingestWebhookBatch(events){
     const rows=(Array.isArray(events)?events:[]).filter(x=>x&&typeof x==='object');
     if(!rows.length)return {events:0,matched:0,inserted:0};
-    const wallets=db.prepare('SELECT * FROM wallets WHERE monitoring_enabled=1').all();
+    const leader=selectedRoomLeaderWallet();
+    if(walletMonitorMode()!=='auto'||!leader)return {events:rows.length,matched:0,inserted:0,ignored:true};
+    const wallets=[leader];
     let matched=0,inserted=0;
 
     for(const event of rows){
@@ -631,9 +666,7 @@ export function createLiveIntelligence(db,{fetchImpl=fetch,onFastTrade=null}={})
 
       const configuredLimit=Math.max(5,Math.min(Number(getSetting(db,'wallet_history_limit','30'))||30,100));
       const limit=wallet.last_signature?configuredLimit:100;
-      const result=walletMonitorMode()==='solana_rpc'
-        ? await getRpcRecentWalletActivity(wallet.address,{limit,untilSignature:wallet.last_signature||'',fetchImpl})
-        : await getRecentWalletActivity(wallet.address,{limit,untilSignature:wallet.last_signature||'',fetchImpl});
+      const result=await getRpcRecentWalletActivity(wallet.address,{limit,untilSignature:wallet.last_signature||'',fetchImpl});
 
       const needsSolUsd=result.activity.some(a=>
         Math.abs(Number(a?.solAmount||0))>1e-12 && !(Number(a?.tradeUsd||0)>0)
@@ -756,20 +789,41 @@ export function createLiveIntelligence(db,{fetchImpl=fetch,onFastTrade=null}={})
 
   async function processRpcRealtimeSignature({walletId,address,signature}){
     const wallet=db.prepare('SELECT * FROM wallets WHERE id=? AND monitoring_enabled=1').get(walletId);
-    if(!wallet||walletMonitorMode()!=='solana_rpc')return {ok:false,skipped:true};
+    if(!wallet)return {ok:false,skipped:true};
     const decoded=await getRpcTransactionActivity(address||wallet.address,signature,{fetchImpl});
     if(!decoded?.found)return {ok:false,pending:true};
 
+    // AUTO routing:
+    // Selected Room leader Main Wallet -> Helius only.
+    // Every other wallet -> Solana public RPC.
+    // RPC may still receive the leader signature at transport level,
+    // but it must never process/insert/dispatch it here.
+    if(walletMonitorMode()==='auto'){
+      const leader=selectedRoomLeaderWallet();
+      if(
+        leader &&
+        realtime.active===true &&
+        String(wallet?.id||'')===String(leader?.id||'')
+      ){
+        return {
+          ok:true,
+          skipped:true,
+          reason:'leader-routed-to-helius',
+          signature
+        };
+      }
+    }
+
     let inserted=0;
-    const tokenByMint=new Map();
+    const eventReceivedAtMs=Date.now();
     for(const activity of decoded.activity||[]){
       if(!activity?.isPump||!isTrackedTradeActivity(activity))continue;
-      let token=tokenByMint.get(activity.mint);
-      if(!token){
-        token=await ensureToken(activity.mint);
-        tokenByMint.set(activity.mint,token);
+      const token=cachedTokenForFastPath(activity.mint);
+      if(insertActivity(wallet,activity,token)){
+        inserted++;
+        dispatchFastTrade(wallet,activity,token,eventReceivedAtMs);
+        scheduleTradeEnrichment(wallet,activity);
       }
-      if(insertActivity(wallet,activity,token))inserted++;
     }
 
     if(inserted){
@@ -796,11 +850,7 @@ export function createLiveIntelligence(db,{fetchImpl=fetch,onFastTrade=null}={})
     monitor.refresh();
     scheduleNext();
 
-    if(walletMonitorMode()==='current'){
-      setTimeout(()=>refreshRealtimeWebhook().catch(error=>{realtime.lastError=String(error?.message||error)}),0).unref?.();
-    }else{
-      realtime.active=false;
-    }
+    setTimeout(()=>refreshRealtimeWebhook().catch(error=>{realtime.lastError=String(error?.message||error)}),0).unref?.();
     return {mode:walletMonitorMode(),realtime:monitor.status()};
   }
 
@@ -842,7 +892,7 @@ export function createLiveIntelligence(db,{fetchImpl=fetch,onFastTrade=null}={})
 
   function reconciliationSeconds(){
     const configured=Math.max(30,Math.min(Number(getSetting(db,'live_poll_seconds','60'))||60,3600));
-    if(walletMonitorMode()==='solana_rpc')return Math.max(300,Math.min(configured*5,3600));
+    if(walletMonitorMode()==='solana_rpc_only')return Math.max(300,Math.min(configured*5,3600));
     if(realtime.active)return 3600; // Current Helius webhook is primary.
     return Math.max(300,configured);
   }
@@ -872,7 +922,7 @@ export function createLiveIntelligence(db,{fetchImpl=fetch,onFastTrade=null}={})
   function start(){
     ensureRpcRealtime().start();
     // Existing webhook ID is treated as provisionally active only in Current mode.
-    if(walletMonitorMode()==='current' && process.env.HELIUS_API_KEY && realtime.webhookId && publicBaseUrl())realtime.active=true;
+    if(walletMonitorMode()==='auto' && process.env.HELIUS_API_KEY && realtime.webhookId && publicBaseUrl() && selectedRoomLeaderWallet())realtime.active=true;
     scheduleNext();
     scheduleRealtimeRefresh(1200);
     setTimeout(()=>{
@@ -890,17 +940,34 @@ export function createLiveIntelligence(db,{fetchImpl=fetch,onFastTrade=null}={})
     realtimeTimer=null;
   }
 
+  function routingStatus(){
+    const mode=walletMonitorMode();
+    const leader=selectedRoomLeaderWallet();
+    const heliusConfigured=!!process.env.HELIUS_API_KEY;
+    const heliusActive=mode==='auto'&&!!leader&&realtime.active===true;
+    return {
+      mode,
+      leaderEntityId:leader?.entity_id||'',
+      leaderWalletId:leader?.id||'',
+      heliusConfigured,
+      heliusActive,
+      leaderProvider:heliusActive?'helius':'solana-rpc-fallback',
+      othersProvider:'solana-rpc',
+      rpcFallback:true
+    };
+  }
+
   function walletMonitoringStatus(){
-    return {mode:walletMonitorMode(),realtime:ensureRpcRealtime().status()};
+    return {mode:walletMonitorMode(),realtime:ensureRpcRealtime().status(),routing:routingStatus()};
   }
 
   async function health(){
     const mode=walletMonitorMode();
     return {
       worker:{running,lastCycleAt,lastError,cycleCount,enabled:getSetting(db,'live_monitor_enabled','true')==='true',reconciliationSeconds:reconciliationSeconds()},
-      walletMonitoring:{mode,realtime:ensureRpcRealtime().status()},
+      walletMonitoring:{mode,realtime:ensureRpcRealtime().status(),routing:routingStatus()},
       realtime:{...realtime,fastPath:publicFastPath(),queueDepth:webhookQueue.length,processing:webhookProcessing},
-      solana:mode==='solana_rpc'?await solanaRpcHealth({fetchImpl}):await cachedSolanaHealth(),
+      solana:await solanaRpcHealth({fetchImpl}),
       x:{configured:xConfigured(),enabled:getSetting(db,'x_monitor_enabled','true')==='true'}
     };
   }

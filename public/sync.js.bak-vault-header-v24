@@ -1,0 +1,950 @@
+(function(){
+  "use strict";
+
+  var state={
+    room:null,
+    user:null,
+    wallet:null,
+    copy:null,
+    execution:null,
+    authorizationUrl:"",
+    ownerConfig:null,
+    busy:false,
+    tradeAlerts:false,
+    pushActive:false
+  };
+
+  function qs(selector){return document.querySelector(selector)}
+  function qsa(selector){return Array.prototype.slice.call(document.querySelectorAll(selector))}
+  function esc(value){
+    return String(value==null?"":value).replace(/[&<>"']/g,function(ch){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[ch];
+    });
+  }
+  function short(value){
+    var s=String(value||"");
+    return s.length>12?s.slice(0,5)+"…"+s.slice(-5):s;
+  }
+  function fmtUsd(value){
+    var n=Number(value||0);
+    if(!isFinite(n)||n<=0)return "$0";
+    if(n>=1e9)return "$"+(n/1e9).toFixed(n>=1e10?0:1)+"B";
+    if(n>=1e6)return "$"+(n/1e6).toFixed(n>=1e7?0:1)+"M";
+    if(n>=1e3)return "$"+(n/1e3).toFixed(n>=1e4?0:1)+"K";
+    return "$"+Math.round(n).toLocaleString();
+  }
+  function ago(value){
+    var t=Date.parse(value||"");
+    if(!isFinite(t))return "";
+    var s=Math.max(0,Math.floor((Date.now()-t)/1000));
+    if(s<60)return s+"s ago";
+    if(s<3600)return Math.floor(s/60)+"m ago";
+    if(s<86400)return Math.floor(s/3600)+"h ago";
+    return Math.floor(s/86400)+"d ago";
+  }
+  function toast(message){
+    var el=qs("#toast");
+    if(!el)return;
+    el.textContent=String(message||"");
+    el.classList.add("show");
+    clearTimeout(toast.timer);
+    toast.timer=setTimeout(function(){el.classList.remove("show")},2400);
+  }
+  async function api(url,opt){
+    opt=opt||{};
+    var headers=Object.assign({"content-type":"application/json"},opt.headers||{});
+    var response=await fetch(url,Object.assign({},opt,{headers:headers,cache:"no-store"}));
+    var data=await response.json().catch(function(){return {}});
+    if(!response.ok)throw new Error(data.error||("HTTP "+response.status));
+    return data;
+  }
+
+  function roomReady(){
+    return !!(state.room&&state.room.configured&&state.room.enabled&&state.room.leader);
+  }
+
+  function renderHero(){
+    var room=state.room||{};
+    var live=roomReady();
+    var roomState=qs("#roomState");
+    if(roomState){
+      roomState.classList.toggle("is-live",live);
+      var roomStateLabel=roomState.querySelector("span:last-child");
+      if(roomStateLabel)roomStateLabel.textContent=live?"LIVE":"SETUP";
+    }
+
+    qs("#walletCount").textContent=String(Number(room.counts&&room.counts.active||0));
+
+    var card=qs("#leaderCard");
+    var avatar=qs("#leaderAvatar");
+    var name=qs("#leaderName");
+    var wallet=qs("#leaderWallet");
+    var status=qs("#leaderStatus");
+
+    if(!live){
+      card.classList.add("is-empty");
+      avatar.classList.remove("is-fomo-card");
+      avatar.innerHTML="S";
+      name.textContent="Leader not configured";
+      wallet.textContent="Owner setup required";
+      status.setAttribute("aria-label","Leader offline");
+      qs("#leaderLine").textContent="ONE LEADER · ONE SIGNAL";
+      return;
+    }
+
+    card.classList.remove("is-empty");
+    var leader=room.leader;
+    avatar.classList.remove("is-fomo-card");
+    if(leader.avatar){
+      if(String(leader.avatarSource||"")==="fomo-card"){
+        avatar.classList.add("is-fomo-card");
+        avatar.innerHTML='<img class="fomo-card-img" src="'+esc(leader.avatar)+'" alt="">';
+      }else{
+        avatar.innerHTML='<img src="'+esc(leader.avatar)+'" alt="">';
+      }
+    }else{
+      avatar.textContent=(leader.name||"L").slice(0,1).toUpperCase();
+    }
+    name.textContent=leader.xHandle||leader.name||"Leader";
+    wallet.textContent=short(leader.mainWallet&&leader.mainWallet.address||"");
+    status.setAttribute("aria-label","Leader online");
+    qs("#leaderLine").textContent="ONE LEADER · "+Number(room.counts&&room.counts.connected||0)+" CONNECTED";
+  }
+
+  /* SYNC_COPY_STATUS_LIVE_V18 */
+  function copyExecutionKey(row){
+    return String(row&&row.signature||"")+":"+String(row&&row.tokenMint||"")+":"+String(row&&row.side||row&&row.type||"");
+  }
+
+  function copyUsd(value){
+    var n=Number(value||0);
+    if(!isFinite(n)||n<=0)return "";
+    if(n<1000)return "$"+n.toFixed(2);
+    return fmtUsd(n);
+  }
+
+  function copyExecutionLine(row){
+    state.copyExecutions=state.copyExecutions||{};
+    var item=state.copyExecutions[copyExecutionKey(row)];
+    if(!item)return "";
+    var status=String(item.status||"").toLowerCase();
+    var cls="copy-execution "+status;
+    if(status==="confirmed"){
+      var side=(row.side==="sell"?"sell":"buy");
+      var label=side==="sell"?"✓ SYNC SOLD":"✓ SYNC COPIED";
+      var parts=[label];
+      if(Number(item.executedSol)>0){
+        var sol=Number(item.executedSol);
+        parts.push((sol<0.001?sol.toFixed(6):sol.toFixed(4))+" SOL");
+      }
+      if(Number(item.executedUsd)>0)parts.push("~"+copyUsd(item.executedUsd));
+      var reason=String(item.closeReason||"");
+      if(reason==="leader_sell")parts.push("LEADER SELL");
+      else if(reason==="take_profit")parts.push("TAKE PROFIT");
+      else if(reason==="stop_loss")parts.push("STOP LOSS");
+      return '<span class="'+cls+'">'+esc(parts.join(" · "))+'</span>';
+    }
+    if(status==="queued"||status==="executing"||status==="pending"){
+      return '<span class="'+cls+'">SYNC COPYING…</span>';
+    }
+    if(status==="skipped"){
+      var why=String(item.reason||"");
+      var label=why==="market_cap_filter"?"MC FILTER":why==="follow_buys_off"?"BUY OFF":why==="follow_sells_off"?"SELL OFF":"NOT COPIED";
+      return '<span class="'+cls+'">SYNC SKIPPED · '+esc(label)+'</span>';
+    }
+    if(status==="error")return '<span class="'+cls+'">SYNC FAILED</span>';
+    if(status==="off")return '<span class="'+cls+'">SYNC OFF</span>';
+    return "";
+  }
+
+  function renderActivity(){
+    var list=qs("#activityList");
+    var rows=state.room&&Array.isArray(state.room.recent)?state.room.recent:[];
+    if(!rows.length){
+      list.innerHTML='<div class="empty-row">Waiting for leader activity.</div>';
+      return;
+    }
+    list.innerHTML=rows.map(function(row){
+      var side=row.side==="sell"?"sell":"buy";
+      var token=String(row.symbol||row.tokenName||short(row.tokenMint)||"TOKEN").replace(/^\$/,"");
+      var meta=[];
+      if(Number(row.marketCap)>0)meta.push("MC "+fmtUsd(row.marketCap));
+      if(Number(row.tradeUsd)>0)meta.push(fmtUsd(row.tradeUsd));
+      if(row.eventAt)meta.push(ago(row.eventAt));
+      return '<div class="activity-row '+side+'">'+
+        '<span class="activity-dot"></span>'+
+        '<div class="activity-copy"><strong>$'+esc(token)+'</strong><span>'+esc(meta.join(" · ")||"Confirmed signal")+'</span>'+copyExecutionLine(row)+'</div>'+
+        '<span class="activity-side">'+(side==="sell"?"SELL":"BUY")+'</span>'+
+      '</div>';
+    }).join("");
+  }
+
+  async function refreshCopyExecution(row,attempt){
+    if(!row||!state.user||!state.wallet||!roomReady())return;
+    var sig=String(row.signature||"");
+    var mint=String(row.tokenMint||"");
+    if(!sig||!mint)return;
+    attempt=Number(attempt||0);
+    state.copyExecutions=state.copyExecutions||{};
+    var key=copyExecutionKey(row);
+    try{
+      var url="/api/entities/"+encodeURIComponent(state.room.leader.id)+"/copy/execution-status"+
+        "?signature="+encodeURIComponent(sig)+
+        "&mint="+encodeURIComponent(mint)+
+        "&side="+encodeURIComponent(row.side==="sell"?"sell":"buy");
+      var result=await api(url);
+      state.copyExecutions[key]=result;
+      renderActivity();
+
+      var status=String(result.status||"").toLowerCase();
+      if((status==="pending"||status==="queued"||status==="executing")&&attempt<10){
+        var waits=[500,700,900,1200,1600,2200,3000,4000,5000,6000];
+        setTimeout(function(){refreshCopyExecution(row,attempt+1)},waits[Math.min(attempt,waits.length-1)]);
+      }
+    }catch(error){}
+  }
+
+  function refreshVisibleCopyExecutions(){
+    if(!state.user||!state.wallet||!roomReady())return;
+    var rows=state.room&&Array.isArray(state.room.recent)?state.room.recent:[];
+    rows.slice(0,12).forEach(function(row){
+      var key=copyExecutionKey(row);
+      var current=state.copyExecutions&&state.copyExecutions[key];
+      var status=String(current&&current.status||"").toLowerCase();
+      if(status==="confirmed"||status==="skipped"||status==="error"||status==="off")return;
+      refreshCopyExecution(row,0);
+    });
+  }
+  /* SYNC_COPY_STATUS_LIVE_V18_END */
+
+  function renderWallet(){
+    var connected=!!state.wallet;
+    qs("#guestActions").hidden=connected;
+    qs("#walletBar").hidden=!connected;
+    qs("#copyForm").hidden=!connected;
+    if(connected)qs("#connectedWallet").textContent=short(state.wallet.address);
+  }
+
+  function currentSolUsd(){
+    var n=Number(state.room&&state.room.solUsd||0);
+    return isFinite(n)&&n>0?n:0;
+  }
+
+  function authorizationFromExecution(data){
+    if(!data)return "";
+    return String(
+      data.executionWallet&&data.executionWallet.authorizationUrl||
+      data.engine&&data.engine.authorizationUrl||
+      data.engine&&data.engine.executionWallet&&data.engine.executionWallet.authorizationUrl||
+      ""
+    );
+  }
+
+  function hydrateCopyForm(){
+    var sub=state.copy;
+    var solUsd=currentSolUsd();
+    if(sub&&solUsd>0){
+      var amount=Math.max(1,Math.round(Number(sub.amountSol||0)*solUsd));
+      var maxPos=Math.max(amount,Math.round(Number(sub.maxPositionSol||0)*solUsd));
+      var daily=Math.max(amount,Math.round(Number(sub.maxDailySol||0)*solUsd));
+      qs("#amountUsd").value=String(amount||50);
+      qs("#maxPositionUsd").value=String(maxPos||150);
+      qs("#dailyCapUsd").value=String(daily||500);
+      qs("#minMc").value=String(Math.round(Number(sub.minMarketCapUsd||0)));
+      qs("#maxMc").value=String(Math.round(Number(sub.maxMarketCapUsd||0)));
+      qs("#copyBuys").checked=sub.copyBuys!==false;
+      qs("#copySells").checked=sub.copySells!==false;
+
+      qs("#takeProfitEnabled").checked=sub.takeProfitEnabled!==false;
+      qs("#stopLossEnabled").checked=sub.stopLossEnabled!==false;
+
+      qs("#takeProfitPercent").value=String(
+        Math.max(1,Number(sub.takeProfitPercent||100))
+      );
+
+      qs("#stopLossPercent").value=String(
+        Math.max(1,Math.min(99,Number(sub.stopLossPercent||30)))
+      );
+      qs("#slippagePercent").value=String(Math.max(.1,Number(sub.slippageBps||500)/100));
+    }
+    renderCopyState();
+  }
+
+  /* SYNC_COPY_STATE_UI_V20B */
+  function executionAuthorizationState(){
+    var execution=state.execution||{};
+    return String(
+      execution.executionWallet&&execution.executionWallet.authorizationState||
+      execution.engine&&execution.engine.authorizationState||
+      state.copy&&state.copy.engineState||
+      ""
+    ).trim().toLowerCase();
+  }
+
+  function executionIsAuthorized(){
+    var auth=executionAuthorizationState();
+    var execution=state.execution||{};
+    return !!(
+      state.copy&&state.copy.enabled&&state.copy.engineState==="active"||
+      execution.engine&&execution.engine.active===true||
+      auth==="authorized"||
+      auth==="active"||
+      auth==="ready"
+    );
+  }
+
+  function renderCopyState(){
+    var sub=state.copy;
+    var engineState=String(sub&&sub.engineState||"").toLowerCase();
+    var active=!!(sub&&sub.enabled&&engineState==="active");
+    var authorized=executionIsAuthorized();
+
+    var needsAuthorization=!!(
+      !active &&
+      state.authorizationUrl &&
+      !authorized
+    );
+
+    var activating=!!(
+      sub &&
+      !active &&
+      !needsAuthorization &&
+      engineState &&
+      engineState!=="stopped" &&
+      engineState!=="draft" &&
+      engineState!=="authorization_required" &&
+      engineState!=="execution_wallet_required" &&
+      engineState!=="error"
+    );
+
+    var ready=!!(
+      state.wallet &&
+      !active &&
+      !needsAuthorization &&
+      !activating
+    );
+
+    var badge=qs("#copyBadge");
+    if(badge){
+      badge.classList.toggle("is-active",active);
+      badge.classList.toggle("is-pending",needsAuthorization||activating);
+
+      if(active)badge.textContent="ACTIVE";
+      else if(needsAuthorization)badge.textContent="AUTHORIZE";
+      else if(activating)badge.textContent="PENDING";
+      else if(ready)badge.textContent="READY";
+      else badge.textContent="OFF";
+    }
+
+    var title=qs("#copyStateTitle");
+    if(title){
+      if(active)title.textContent="Copy trading active";
+      else if(needsAuthorization)title.textContent="Execution authorization required";
+      else if(activating)title.textContent="Activating copy trading";
+      else if(ready)title.textContent="Ready to start copying";
+      else title.textContent="Connect wallet to continue";
+    }
+
+    var startButton=qs("#startButton");
+    var stopButton=qs("#stopButton");
+    var authorizationBox=qs("#authorizationBox");
+    var authorizeButton=qs("#authorizeButton");
+
+    if(startButton){
+      startButton.hidden=false;
+      startButton.disabled=needsAuthorization||activating||!state.wallet;
+      startButton.textContent=active
+        ?"UPDATE SETTINGS"
+        :needsAuthorization
+          ?"AUTHORIZE FIRST"
+          :activating
+            ?"ACTIVATING…"
+            :"START COPYING";
+    }
+
+    // STOP COPYING exists only for a genuinely ACTIVE subscription.
+    if(stopButton){
+      stopButton.hidden=!active;
+      stopButton.disabled=!active;
+    }
+
+    if(authorizationBox)authorizationBox.hidden=!needsAuthorization;
+
+    if(authorizeButton){
+      authorizeButton.hidden=!needsAuthorization;
+      authorizeButton.disabled=!needsAuthorization||!state.authorizationUrl;
+      authorizeButton.textContent="AUTHORIZE";
+    }
+  }
+  /* SYNC_COPY_STATE_UI_V20B_END */
+
+  /* SYNC_LIVE_SIGNALS_SSE_V17 */
+  function liveSignalKey(row){
+    return String(row&&row.id||row&&row.signature||"")+":"+String(row&&row.tokenMint||"")+":"+String(row&&row.side||row&&row.type||"");
+  }
+
+  function prependLiveSignal(row){
+    if(!row||!state.room)return;
+    var rows=Array.isArray(state.room.recent)?state.room.recent:[];
+    var key=liveSignalKey(row);
+    state.room.recent=[row].concat(rows.filter(function(item){return liveSignalKey(item)!==key})).slice(0,12);
+    renderActivity();
+    refreshCopyExecution(row,0);
+  }
+
+  function connectLiveSignals(){
+    if(!("EventSource" in window))return;
+    try{
+      if(state.liveSignalsSource)state.liveSignalsSource.close();
+      var source=new EventSource("/api/public-copy-room/events");
+      state.liveSignalsSource=source;
+      source.addEventListener("trade",function(event){
+        try{
+          var row=JSON.parse(event.data||"{}");
+          prependLiveSignal(row);
+          // Background enrichment may add token name/MC/trade USD a moment later.
+          setTimeout(loadRoom,700);
+        }catch(error){}
+      });
+      window.addEventListener("beforeunload",function(){try{source.close()}catch{}},{once:true});
+    }catch(error){}
+  }
+  /* SYNC_LIVE_SIGNALS_SSE_V17_END */
+
+  async function loadRoom(){
+    try{
+      state.room=await api("/api/public-copy-room/status");
+      renderHero();
+      renderActivity();
+      renderTradeAlerts();
+      refreshVisibleCopyExecutions();
+    }catch(error){
+      toast(error.message);
+    }
+  }
+
+  async function loadSession(){
+    try{
+      var me=await api("/api/me");
+      state.user=me.user||null;
+    }catch(error){
+      state.user=null;
+    }
+
+    state.wallet=null;
+    state.copy=null;
+    state.execution=null;
+    state.authorizationUrl="";
+
+    if(state.user){
+      try{
+        var wallets=await api("/api/user-wallets");
+        state.wallet=Array.isArray(wallets.items)?wallets.items[0]||null:null;
+      }catch(error){}
+    }
+
+    renderWallet();
+
+    if(state.wallet&&roomReady()){
+      await loadCopyState();
+    }else{
+      renderCopyState();
+    }
+
+    if(state.user&&(state.user.role==="owner"||state.user.role==="admin")){
+      await loadOwnerConfig();
+    }else{
+      qs("#ownerPanel").hidden=true;
+    }
+    await loadTradeAlerts();
+  }
+
+  async function loadCopyState(){
+    if(!state.wallet||!roomReady())return;
+    try{
+      var data=await api("/api/entities/"+encodeURIComponent(state.room.leader.id)+"/copy");
+      state.copy=data.subscription||null;
+    }catch(error){
+      console.debug(error);
+    }
+    try{
+      state.execution=await api("/api/entities/"+encodeURIComponent(state.room.leader.id)+"/copy/execution");
+      state.authorizationUrl=authorizationFromExecution(state.execution);
+    }catch(error){
+      state.execution=null;
+    }
+    hydrateCopyForm();
+    refreshVisibleCopyExecutions();
+  }
+
+  function bytesToBase64(bytes){
+    var binary="";
+    var arr=bytes instanceof Uint8Array?bytes:new Uint8Array(bytes||[]);
+    for(var i=0;i<arr.length;i++)binary+=String.fromCharCode(arr[i]);
+    return btoa(binary);
+  }
+
+  function walletCandidates(){
+    var rows=[];
+    var phantom=window.phantom&&window.phantom.solana;
+    if(phantom&&phantom.isPhantom)rows.push({name:"Phantom",key:"phantom",provider:phantom});
+    var sf=(window.solflare&&window.solflare.solana)||window.solflare;
+    if(sf&&(sf.isSolflare||sf.connect))rows.push({name:"Solflare",key:"solflare",provider:sf});
+    if(window.solana&&window.solana.connect&&!rows.some(function(x){return x.provider===window.solana})){
+      rows.push({name:window.solana.isPhantom?"Phantom":"Solana wallet",key:window.solana.isPhantom?"phantom":"solana",provider:window.solana});
+    }
+    return rows;
+  }
+
+  function mobileWalletUrl(kind){
+    var target=encodeURIComponent(location.href);
+    var ref=encodeURIComponent(location.origin);
+    if(kind==="phantom")return "https://phantom.app/ul/browse/"+target+"?ref="+ref;
+    if(kind==="solflare")return "https://solflare.com/ul/v1/browse/"+target+"?ref="+ref;
+    return "";
+  }
+
+  function openWalletSheet(){
+    var choices=qs("#walletChoices");
+    var rows=walletCandidates();
+    choices.innerHTML=rows.length?rows.map(function(row,index){
+      return '<button class="primary-button" type="button" data-wallet-index="'+index+'">CONNECT '+esc(row.name.toUpperCase())+'</button>';
+    }).join(""):'<div class="empty-row">No injected Solana wallet detected in this browser.</div>';
+    qsa("[data-wallet-index]").forEach(function(button){
+      button.onclick=function(){connectWallet(rows[Number(button.dataset.walletIndex)],button)};
+    });
+    qs("#walletSheet").hidden=false;
+  }
+
+  function closeWalletSheet(){qs("#walletSheet").hidden=true}
+
+  async function connectWallet(candidate,button){
+    if(!candidate||!candidate.provider)throw new Error("Wallet provider unavailable");
+    if(button)button.disabled=true;
+    try{
+      var provider=candidate.provider;
+      var result=await provider.connect();
+      var publicKey=provider.publicKey||(result&&result.publicKey);
+      var address=String(publicKey&&publicKey.toString?publicKey.toString():publicKey||"");
+      if(!address)throw new Error("Wallet did not return a Solana address");
+      if(!provider.signMessage)throw new Error("This wallet does not support message signing");
+
+      var challenge=await api("/api/wallet-auth/challenge",{
+        method:"POST",
+        body:JSON.stringify({address:address})
+      });
+      var bytes=new TextEncoder().encode(challenge.message);
+      var signed=await provider.signMessage(bytes,"utf8");
+      var signature=signed&&signed.signature?signed.signature:signed;
+      if(!signature)throw new Error("Wallet signature was not returned");
+
+      await api("/api/wallet-auth/verify",{
+        method:"POST",
+        body:JSON.stringify({
+          challengeId:challenge.challengeId,
+          address:address,
+          provider:candidate.key,
+          signature:bytesToBase64(signature)
+        })
+      });
+
+      closeWalletSheet();
+      toast("Wallet connected");
+      await loadSession();
+    }catch(error){
+      toast(error.message);
+    }finally{
+      if(button)button.disabled=false;
+    }
+  }
+
+  async function disconnectWallet(){
+    if(!state.wallet||state.busy)return;
+    state.busy=true;
+    try{
+      await api("/api/user-wallets/"+encodeURIComponent(state.wallet.id),{method:"DELETE"});
+      if(state.user&&String(state.user.email||"").endsWith("@wallet.shadow.local")){
+        try{await api("/api/auth/logout",{method:"POST",body:"{}"})}catch(error){}
+      }
+      state.wallet=null;state.copy=null;state.execution=null;state.authorizationUrl="";
+      renderWallet();renderCopyState();
+      toast("Wallet disconnected");
+    }catch(error){
+      toast(error.message);
+    }finally{
+      state.busy=false;
+    }
+  }
+
+  function copyPayload(enabled){
+    var solUsd=currentSolUsd();
+    if(!(solUsd>0))throw new Error("Live SOL price is unavailable. Try again.");
+    var amountUsd=Math.max(1,Number(qs("#amountUsd").value||0));
+    var maxPositionUsd=Math.max(amountUsd,Number(qs("#maxPositionUsd").value||0));
+    var dailyCapUsd=Math.max(amountUsd,Number(qs("#dailyCapUsd").value||0));
+    var minMc=Math.max(0,Number(qs("#minMc").value||0));
+    var maxMc=Math.max(0,Number(qs("#maxMc").value||0));
+    if(maxMc>0&&maxMc<minMc)throw new Error("Maximum MC must be greater than or equal to minimum MC");
+    return {
+      walletId:state.wallet.id,
+      enabled:!!enabled,
+      amountSol:amountUsd/solUsd,
+      maxPositionSol:maxPositionUsd/solUsd,
+      maxDailySol:dailyCapUsd/solUsd,
+      slippageBps:Math.round(Math.max(.1,Math.min(30,Number(qs("#slippagePercent").value||5)))*100),
+      minMarketCapUsd:minMc,
+      maxMarketCapUsd:maxMc,
+      copyBuys:qs("#copyBuys").checked,
+      copySells:qs("#copySells").checked,
+
+      takeProfitEnabled:qs("#takeProfitEnabled").checked,
+      takeProfitPercent:Math.max(
+        1,
+        Math.min(10000,Number(qs("#takeProfitPercent").value||100))
+      ),
+
+      stopLossEnabled:qs("#stopLossEnabled").checked,
+      stopLossPercent:Math.max(
+        1,
+        Math.min(99,Number(qs("#stopLossPercent").value||30))
+      ),
+
+      sellPercent:100
+    };
+  }
+
+  async function saveCopy(enabled){
+    if(!state.wallet) return openWalletSheet();
+    if(!roomReady()) return toast("Leader room is not configured yet");
+    if(state.busy)return;
+    state.busy=true;
+    qs("#startButton").disabled=true;
+    qs("#stopButton").disabled=true;
+    try{
+      var result=await api("/api/entities/"+encodeURIComponent(state.room.leader.id)+"/copy",{
+        method:"PUT",
+        body:JSON.stringify(copyPayload(enabled))
+      });
+      /* SYNC_STOP_RECLAIM_V21B */
+      if(!enabled&&result.reclaimUrl){
+        location.href=String(result.reclaimUrl);
+        return;
+      }
+      state.copy=result.subscription||state.copy;
+      state.authorizationUrl=String(result.authorizationUrl||"");
+      if(result.requiresAuthorization&&state.authorizationUrl){
+        toast("24/7 execution authorization required");
+      }else if(state.copy&&state.copy.enabled){
+        toast("Copy trading active");
+      }else if(enabled){
+        toast("Settings saved");
+      }else{
+        toast("Copy trading stopped");
+      }
+      await loadCopyState();
+      await loadRoom();
+    }catch(error){
+      toast(error.message);
+    }finally{
+      state.busy=false;
+      qs("#startButton").disabled=false;
+      qs("#stopButton").disabled=false;
+    }
+  }
+
+  async function loadOwnerConfig(){
+    try{
+      var data=await api("/api/public-copy-room/config");
+      state.ownerConfig=data;
+      var select=qs("#leaderSelect");
+      var items=Array.isArray(data.entities)?data.entities:[];
+      select.innerHTML='<option value="">Choose Entity</option>'+items.map(function(item){
+        var label=(item.xHandle||item.name||item.id)+(item.mainWalletAddress?" · "+short(item.mainWalletAddress):" · no wallet");
+        return '<option value="'+esc(item.id)+'">'+esc(label)+'</option>';
+      }).join("");
+      select.value=data.leaderEntityId||"";
+      qs("#roomEnabled").checked=data.enabled!==false;
+      qs("#ownerPanel").hidden=false;
+    }catch(error){
+      qs("#ownerPanel").hidden=true;
+    }
+  }
+
+  async function saveOwnerConfig(){
+    var button=qs("#saveRoomButton");
+    button.disabled=true;
+    try{
+      await api("/api/public-copy-room/config",{
+        method:"PUT",
+        body:JSON.stringify({
+          entityId:qs("#leaderSelect").value,
+          enabled:qs("#roomEnabled").checked
+        })
+      });
+      toast("Room saved");
+      await loadRoom();
+      await loadSession();
+    }catch(error){
+      toast(error.message);
+    }finally{
+      button.disabled=false;
+    }
+  }
+
+
+  /* SHADOW_SYNC_PUSH_OPTION1_V4 */
+  function syncPushSupported(){
+    return !!(
+      state.user &&
+      "serviceWorker" in navigator &&
+      "PushManager" in window &&
+      "Notification" in window
+    );
+  }
+
+  function syncIsIos(){
+    return /iphone|ipad|ipod/i.test(navigator.userAgent||"");
+  }
+
+  function syncIsStandalone(){
+    return window.matchMedia&&window.matchMedia("(display-mode: standalone)").matches ||
+      window.navigator.standalone===true;
+  }
+
+  function syncVapidKeyBytes(value){
+    var padding="=".repeat((4-(value.length%4))%4);
+    var base64=(value+padding).replace(/-/g,"+").replace(/_/g,"/");
+    var raw=atob(base64);
+    return Uint8Array.from(raw,function(ch){return ch.charCodeAt(0)});
+  }
+
+  async function syncCurrentPushSubscription(){
+    if(!("serviceWorker" in navigator))return null;
+    var reg=await navigator.serviceWorker.getRegistration("/");
+    if(!reg||!reg.pushManager)return null;
+    return await reg.pushManager.getSubscription();
+  }
+
+  async function syncEnsurePushSubscription(){
+    if(!syncPushSupported())throw new Error("System push is not supported in this browser");
+    if(syncIsIos()&&!syncIsStandalone()){
+      throw new Error("On iPhone: Share → Add to Home Screen, then open SYNC from the Home Screen icon");
+    }
+
+    var permission=Notification.permission;
+    if(permission!=="granted"){
+      permission=await Notification.requestPermission();
+    }
+    if(permission!=="granted"){
+      throw new Error(permission==="denied"
+        ?"Notifications are blocked in iPhone Settings"
+        :"Notification permission was not granted");
+    }
+
+    await navigator.serviceWorker.register("/sw.js",{scope:"/"});
+    var status=await api("/api/push/status");
+    var registration=await navigator.serviceWorker.ready;
+    var subscription=await registration.pushManager.getSubscription();
+
+    if(!subscription){
+      subscription=await registration.pushManager.subscribe({
+        userVisibleOnly:true,
+        applicationServerKey:syncVapidKeyBytes(status.publicKey)
+      });
+    }
+
+    await api("/api/push/subscribe",{
+      method:"POST",
+      body:JSON.stringify({subscription:subscription.toJSON()})
+    });
+
+    return subscription;
+  }
+
+  function syncLeaderAlertEnabled(settings){
+    if(!settings||!roomReady())return false;
+    var id=String(state.room.leader.id||"");
+    var entityIds=Array.isArray(settings.entityIds)?settings.entityIds.map(String):[];
+    var muted=Array.isArray(settings.mutedEntityIds)?settings.mutedEntityIds.map(String):[];
+    var explicit=!!settings.entitiesEnabled && entityIds.indexOf(id)>=0;
+    var live=!!settings.liveEnabled && muted.indexOf(id)<0;
+    return explicit||live;
+  }
+
+  function renderTradeAlerts(){
+    var input=qs("#tradeAlerts");
+    var row=input&&input.closest(".switch-line");
+    var help=qs("#tradeAlertsHelp");
+    var test=qs("#tradeAlertsTest");
+    if(!input||!help)return;
+
+    var supported=syncPushSupported();
+    var iosInstall=syncIsIos()&&!syncIsStandalone();
+
+    input.checked=!!state.tradeAlerts;
+    input.disabled=!state.user||!roomReady()||!supported||iosInstall;
+    if(row){
+      row.classList.toggle("is-active",!!state.tradeAlerts);
+      row.classList.toggle("is-unavailable",input.disabled);
+    }
+
+    if(!state.user){
+      help.textContent="Connect a wallet first to enable leader alerts";
+    }else if(!roomReady()){
+      help.textContent="Leader must be configured before alerts can be enabled";
+    }else if(!supported){
+      help.textContent="System push is not supported in this browser";
+    }else if(iosInstall){
+      help.textContent="iPhone: Share → Add to Home Screen, then open SYNC from the Home Screen";
+    }else if(Notification.permission==="denied"){
+      help.textContent="Notifications are blocked in your phone settings";
+    }else if(state.tradeAlerts){
+      help.textContent="Leader BUY / SELL alerts are active on this device";
+    }else{
+      help.textContent="Get leader BUY / SELL push notifications even when SYNC is closed";
+    }
+
+    if(test)test.hidden=!(state.tradeAlerts&&state.pushActive);
+  }
+
+  async function loadTradeAlerts(){
+    state.tradeAlerts=false;
+    state.pushActive=false;
+    if(!state.user||!roomReady()){
+      renderTradeAlerts();
+      return;
+    }
+
+    try{
+      var settingsResult=await api("/api/notification-settings");
+      var subscription=await syncCurrentPushSubscription();
+      state.pushActive=!!subscription;
+      state.tradeAlerts=syncLeaderAlertEnabled(settingsResult.settings)&&state.pushActive;
+    }catch(error){
+      console.debug("SYNC alerts state unavailable",error);
+    }
+    renderTradeAlerts();
+  }
+
+  async function setTradeAlerts(enabled){
+    if(!state.user){
+      openWalletSheet();
+      return;
+    }
+    if(!roomReady())throw new Error("Leader room is not configured yet");
+
+    if(enabled){
+      await syncEnsurePushSubscription();
+      await api("/api/notification-entities/"+encodeURIComponent(state.room.leader.id),{
+        method:"PUT",
+        body:JSON.stringify({enabled:true})
+      });
+      state.pushActive=true;
+      state.tradeAlerts=true;
+      toast("Trade alerts enabled");
+    }else{
+      await api("/api/notification-entities/"+encodeURIComponent(state.room.leader.id),{
+        method:"PUT",
+        body:JSON.stringify({enabled:false})
+      });
+      state.tradeAlerts=false;
+      state.pushActive=!!(await syncCurrentPushSubscription());
+      toast("Trade alerts disabled");
+    }
+
+    renderTradeAlerts();
+  }
+
+  async function sendTradeAlertsTest(){
+    var button=qs("#tradeAlertsTest");
+    if(!button)return;
+    button.disabled=true;
+    var original=button.textContent;
+    button.textContent="Sending…";
+    try{
+      var result=await api("/api/push/test",{method:"POST",body:"{}"});
+      if(!result.sent)throw new Error("No active push device found");
+      toast("Test notification sent");
+    }catch(error){
+      toast(error.message||"Could not send test notification");
+    }finally{
+      button.disabled=false;
+      button.textContent=original;
+    }
+  }
+  /* SHADOW_SYNC_PUSH_OPTION1_V4_END */
+
+  function bind(){
+    var xLink=qs("#xLink");
+    if(xLink)xLink.onclick=function(event){
+      if((xLink.getAttribute("href")||"#")==="#")event.preventDefault();
+    };
+    qs("#connectButton").onclick=openWalletSheet;
+    qs("#disconnectButton").onclick=disconnectWallet;
+    qsa("[data-close-sheet]").forEach(function(button){button.onclick=closeWalletSheet});
+    qs("#openPhantom").onclick=function(){location.href=mobileWalletUrl("phantom")};
+    qs("#openSolflare").onclick=function(){location.href=mobileWalletUrl("solflare")};
+    qsa("[data-amount]").forEach(function(button){
+      button.onclick=function(){
+        qs("#amountUsd").value=button.dataset.amount;
+        qsa("[data-amount]").forEach(function(item){
+          item.classList.toggle("is-selected",item===button);
+        });
+      };
+    });
+    var tradeAlerts=qs("#tradeAlerts");
+    if(tradeAlerts)tradeAlerts.onchange=async function(){
+      var requested=tradeAlerts.checked;
+      tradeAlerts.disabled=true;
+      try{
+        await setTradeAlerts(requested);
+      }catch(error){
+        tradeAlerts.checked=!requested;
+        toast(error.message||"Could not change trade alerts");
+      }finally{
+        renderTradeAlerts();
+      }
+    };
+    var tradeAlertsTest=qs("#tradeAlertsTest");
+    if(tradeAlertsTest)tradeAlertsTest.onclick=sendTradeAlertsTest;
+    qs("#copyForm").onsubmit=function(event){event.preventDefault();saveCopy(true)};
+    qs("#stopButton").onclick=function(){saveCopy(false)};
+    qs("#authorizeButton").onclick=function(){
+      if(state.authorizationUrl)location.href=state.authorizationUrl;
+    };
+    qs("#saveRoomButton").onclick=saveOwnerConfig;
+  }
+
+  async function boot(){
+    bind();
+    await loadRoom();
+    await loadSession();
+    connectLiveSignals();
+    // SSE is primary; polling remains only as a recovery/fallback path.
+    setInterval(loadRoom,5000);
+  }
+
+  
+  /* SYNC_COPY_STATE_UI_V20B_REFRESH */
+  window.addEventListener("pageshow",function(){
+    if(state.wallet&&roomReady()){
+      loadCopyState().catch(function(){});
+    }
+  });
+
+  document.addEventListener("visibilitychange",function(){
+    if(document.visibilityState==="visible"&&state.wallet&&roomReady()){
+      loadCopyState().catch(function(){});
+    }
+  });
+
+  setInterval(function(){
+    var sub=state.copy;
+    if(!state.wallet||!roomReady())return;
+    if(sub&&sub.enabled&&sub.engineState==="active")return;
+    loadCopyState().catch(function(){});
+  },4000);
+  /* SYNC_COPY_STATE_UI_V20B_REFRESH_END */
+
+boot();
+})();

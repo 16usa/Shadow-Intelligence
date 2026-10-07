@@ -38,6 +38,12 @@ const b64url=b=>Buffer.from(b).toString('base64url');
 const discriminator=name=>sha256(`global:${name}`).subarray(0,8);
 const INIT_DISC=discriminator('initialize_policy');
 const REVOKE_DISC=discriminator('revoke_session');
+const UPDATE_DISC=discriminator('update_policy');
+const EXECUTE_SWAP_DISC=discriminator('execute_swap');
+const TOKEN_PROGRAM_ID=new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+const ASSOCIATED_TOKEN_PROGRAM_ID=new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
+const JUPITER_V6=new PublicKey('JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4');
+const WSOL_MINT=new PublicKey('So11111111111111111111111111111111111111112');
 
 function rpcUrl(){
   const direct=text(process.env.SOLANA_RPC_URL);
@@ -146,15 +152,82 @@ function ensureSchema(db){
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_delegated_copy_user_entity
       ON delegated_copy_sessions(user_id,entity_id);
+    CREATE TABLE IF NOT EXISTS delegated_copy_executions (
+      subscription_id TEXT NOT NULL,
+      source_signature TEXT NOT NULL,
+      side TEXT NOT NULL,
+      mint TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      tx_signature TEXT NOT NULL DEFAULT '',
+      last_error TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(subscription_id,source_signature,side,mint)
+    );
+    CREATE INDEX IF NOT EXISTS idx_delegated_execution_updated
+      ON delegated_copy_executions(updated_at DESC);
+    /* SYNC_TP_SL_EXECUTOR_V15 */
+    CREATE TABLE IF NOT EXISTS delegated_copy_positions (
+      subscription_id TEXT NOT NULL,
+      mint TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'open',
+      token_amount_raw TEXT NOT NULL DEFAULT '0',
+      token_decimals INTEGER NOT NULL DEFAULT 0,
+      cost_lamports TEXT NOT NULL DEFAULT '0',
+      entry_price_sol REAL NOT NULL DEFAULT 0,
+      entry_tx_signature TEXT NOT NULL DEFAULT '',
+      last_buy_source_signature TEXT NOT NULL DEFAULT '',
+      last_mark_price_sol REAL NOT NULL DEFAULT 0,
+      last_pnl_percent REAL NOT NULL DEFAULT 0,
+      last_checked_at TEXT NOT NULL DEFAULT '',
+      close_reason TEXT NOT NULL DEFAULT '',
+      close_source_signature TEXT NOT NULL DEFAULT '',
+      close_tx_signature TEXT NOT NULL DEFAULT '',
+      close_trigger_percent REAL NOT NULL DEFAULT 0,
+      exit_sold_raw TEXT NOT NULL DEFAULT '0',
+      exit_received_lamports TEXT NOT NULL DEFAULT '0',
+      last_error TEXT NOT NULL DEFAULT '',
+      opened_at TEXT NOT NULL,
+      closed_at TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(subscription_id,mint)
+    );
+    CREATE INDEX IF NOT EXISTS idx_delegated_positions_state
+      ON delegated_copy_positions(state,last_checked_at,updated_at);
+    /* SYNC_TP_SL_EXECUTOR_V15_END */
   `);
+
+  /* SYNC_COPY_STATUS_LIVE_V18_SCHEMA */
+  const executionColumns=new Set(
+    db.prepare("PRAGMA table_info(delegated_copy_executions)").all().map(row=>String(row.name||''))
+  );
+  if(!executionColumns.has('fill_input_raw'))db.exec("ALTER TABLE delegated_copy_executions ADD COLUMN fill_input_raw TEXT NOT NULL DEFAULT '0'");
+  if(!executionColumns.has('fill_output_raw'))db.exec("ALTER TABLE delegated_copy_executions ADD COLUMN fill_output_raw TEXT NOT NULL DEFAULT '0'");
+  if(!executionColumns.has('close_reason'))db.exec("ALTER TABLE delegated_copy_executions ADD COLUMN close_reason TEXT NOT NULL DEFAULT ''");
+  /* SYNC_COPY_STATUS_LIVE_V18_SCHEMA_END */
 }
 function subRow(db,subscriptionId){
-  return db.prepare(`
+  const exact=db.prepare(`
     SELECT s.*,uw.address AS funding_address,uw.provider AS funding_provider,e.name AS entity_name
     FROM copy_subscriptions s
     JOIN user_wallets uw ON uw.id=s.user_wallet_id
     JOIN entities e ON e.id=s.entity_id
     WHERE s.id=?
+  `).get(subscriptionId);
+  if(exact)return exact;
+
+  // SYNC_DELEGATED_SESSION_REBIND_V16:
+  // A copy subscription can be recreated while the existing on-chain delegated
+  // session/vault remains valid. Resolve that current subscription by the
+  // stable (user_id, entity_id) pair instead of orphaning the funded vault.
+  return db.prepare(`
+    SELECT s.*,uw.address AS funding_address,uw.provider AS funding_provider,e.name AS entity_name
+    FROM delegated_copy_sessions d
+    JOIN copy_subscriptions s ON s.user_id=d.user_id AND s.entity_id=d.entity_id
+    JOIN user_wallets uw ON uw.id=s.user_wallet_id
+    JOIN entities e ON e.id=s.entity_id
+    WHERE d.subscription_id=?
+    LIMIT 1
   `).get(subscriptionId)||null;
 }
 function mainWallet(db,entityId){
@@ -162,7 +235,29 @@ function mainWallet(db,entityId){
     ORDER BY CASE WHEN lower(trim(COALESCE(label,'')))='main wallet' THEN 0 ELSE 1 END,created_at ASC LIMIT 1`).get(entityId)||null;
 }
 function sessionRow(db,subscriptionId){
-  return db.prepare('SELECT * FROM delegated_copy_sessions WHERE subscription_id=?').get(subscriptionId)||null;
+  const exact=db.prepare('SELECT * FROM delegated_copy_sessions WHERE subscription_id=?').get(subscriptionId);
+  if(exact)return exact;
+
+  // SYNC_DELEGATED_SESSION_REBIND_V16:
+  // Reuse the already-authorized delegated session when only the local
+  // copy_subscriptions.id drifted. Never cross users/entities or owners.
+  const current=db.prepare(`
+    SELECT s.user_id,s.entity_id,uw.address AS funding_address
+    FROM copy_subscriptions s
+    JOIN user_wallets uw ON uw.id=s.user_wallet_id
+    WHERE s.id=?
+  `).get(subscriptionId);
+  if(!current)return null;
+
+  const existing=db.prepare(`
+    SELECT * FROM delegated_copy_sessions
+    WHERE user_id=? AND entity_id=?
+    LIMIT 1
+  `).get(current.user_id,current.entity_id);
+  if(!existing)return null;
+
+  if(String(existing.owner_address||'')!==String(current.funding_address||''))return null;
+  return existing;
 }
 function publicSession(row){
   if(!row)return null;
@@ -196,11 +291,425 @@ function buyMarketCapFilter(subscription={}) {
   };
 }
 
+
+function u32(n){const b=Buffer.alloc(4);b.writeUInt32LE(Number(n));return b}
+function base58Decode(value){
+  const alphabet='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  const textValue=String(value||'');
+  if(!textValue)return Buffer.alloc(0);
+  let bytes=[0];
+  for(const ch of textValue){
+    const digit=alphabet.indexOf(ch);if(digit<0)throw new Error('Invalid base58');
+    let carry=digit;
+    for(let i=0;i<bytes.length;i++){const x=bytes[i]*58+carry;bytes[i]=x&255;carry=x>>8}
+    while(carry){bytes.push(carry&255);carry>>=8}
+  }
+  for(let i=0;i<textValue.length-1&&textValue[i]==='1';i++)bytes.push(0);
+  return Buffer.from(bytes.reverse());
+}
+function parseKeypairSecret(raw){
+  const value=text(raw);if(!value)return null;
+  let bytes=null;
+  try{
+    if(value.startsWith('['))bytes=Buffer.from(JSON.parse(value));
+    else if(/^[1-9A-HJ-NP-Za-km-z]{80,120}$/.test(value))bytes=base58Decode(value);
+    else bytes=Buffer.from(value,'base64');
+  }catch{return null}
+  try{
+    if(bytes.length===64)return Keypair.fromSecretKey(new Uint8Array(bytes));
+    if(bytes.length===32)return Keypair.fromSeed(new Uint8Array(bytes));
+  }catch{}
+  return null;
+}
+function executorFeePayer(){
+  return parseKeypairSecret(process.env.SYNC_EXECUTOR_FEE_PAYER_KEY||process.env.SHADOW_EXECUTOR_FEE_PAYER_KEY||'');
+}
+function decryptSessionKeypair(row){
+  const master=parseSessionMasterKey();if(!master)throw new Error('Session master key unavailable');
+  const decipher=crypto.createDecipheriv('aes-256-gcm',master,Buffer.from(row.seed_iv,'base64'));
+  decipher.setAuthTag(Buffer.from(row.seed_tag,'base64'));
+  const seed=Buffer.concat([decipher.update(Buffer.from(row.encrypted_session_seed,'base64')),decipher.final()]);
+  const kp=Keypair.fromSeed(new Uint8Array(seed.subarray(0,32)));
+  if(kp.publicKey.toBase58()!==row.session_public_key)throw new Error('Delegated session key integrity check failed');
+  return kp;
+}
+function ataAddress(owner,mint){
+  return PublicKey.findProgramAddressSync(
+    [owner.toBuffer(),TOKEN_PROGRAM_ID.toBuffer(),mint.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  )[0];
+}
+function createAtaIdempotentIx(payer,owner,mint,ata=ataAddress(owner,mint)){
+  return new TransactionInstruction({
+    programId:ASSOCIATED_TOKEN_PROGRAM_ID,
+    keys:[
+      {pubkey:payer,isSigner:true,isWritable:true},
+      {pubkey:ata,isSigner:false,isWritable:true},
+      {pubkey:owner,isSigner:false,isWritable:false},
+      {pubkey:mint,isSigner:false,isWritable:false},
+      {pubkey:SystemProgram.programId,isSigner:false,isWritable:false},
+      {pubkey:TOKEN_PROGRAM_ID,isSigner:false,isWritable:false},
+    ],
+    data:Buffer.from([1]),
+  });
+}
+function syncNativeIx(account){
+  return new TransactionInstruction({programId:TOKEN_PROGRAM_ID,keys:[{pubkey:account,isSigner:false,isWritable:true}],data:Buffer.from([17])});
+}
+function deserializeRemoteIx(payload){
+  if(!payload)return null;
+  return new TransactionInstruction({
+    programId:new PublicKey(payload.programId),
+    keys:(payload.accounts||[]).map(k=>({pubkey:new PublicKey(k.pubkey),isSigner:!!k.isSigner,isWritable:!!k.isWritable})),
+    data:Buffer.from(payload.data||'','base64'),
+  });
+}
+function parsePolicyData(data){
+  const b=Buffer.from(data||[]);if(b.length<151)return null;
+  let o=8;
+  const owner=new PublicKey(b.subarray(o,o+=32)).toBase58();
+  const sessionKey=new PublicKey(b.subarray(o,o+=32)).toBase58();
+  const subscriptionHash=b.subarray(o,o+=32).toString('hex');
+  const expiresAt=Number(b.readBigInt64LE(o));o+=8;
+  const maxTradeLamports=b.readBigUInt64LE(o);o+=8;
+  const dailyCapLamports=b.readBigUInt64LE(o);o+=8;
+  const spentTodayLamports=b.readBigUInt64LE(o);o+=8;
+  const dayIndex=Number(b.readBigInt64LE(o));o+=8;
+  const maxSellBps=b.readUInt16LE(o);o+=2;
+  const copyBuys=b[o++]!==0,copySells=b[o++]!==0,revoked=b[o++]!==0;
+  const policyBump=b[o++],vaultBump=b[o++];
+  return {owner,sessionKey,subscriptionHash,expiresAt,maxTradeLamports,dailyCapLamports,spentTodayLamports,dayIndex,maxSellBps,copyBuys,copySells,revoked,policyBump,vaultBump};
+}
+function desiredPolicy(subscription){
+  return {
+    maxTradeLamports:BigInt(Math.max(1,Math.round(Number(subscription.amount_sol||subscription.amountSol||0)*1_000_000_000))),
+    dailyCapLamports:BigInt(Math.max(1,Math.round(Number(subscription.max_daily_sol||subscription.maxDailySol||0)*1_000_000_000))),
+    maxSellBps:Math.max(0,Math.min(10000,Math.round(Number(subscription.sell_percent||subscription.sellPercent||100)*100))),
+    copyBuys:subscription.copy_buys!=null?!!subscription.copy_buys:subscription.copyBuys!==false,
+    // TP/SL needs on-chain SELL permission even when leader SELL copying is disabled.
+    // Server routing still honors copy_sells for leader events.
+    copySells:(subscription.copy_sells!=null?!!subscription.copy_sells:subscription.copySells!==false)||
+      !!(subscription.take_profit_enabled??subscription.takeProfitEnabled)||!!(subscription.stop_loss_enabled??subscription.stopLossEnabled),
+  };
+}
+function policyMatches(policy,subscription,row){
+  if(!policy||policy.revoked)return false;
+  const d=desiredPolicy(subscription);
+  return policy.sessionKey===row.session_public_key &&
+    policy.maxTradeLamports===d.maxTradeLamports &&
+    policy.dailyCapLamports===d.dailyCapLamports &&
+    policy.maxSellBps===d.maxSellBps &&
+    policy.copyBuys===d.copyBuys && policy.copySells===d.copySells &&
+    policy.expiresAt>Math.floor(Date.now()/1000)+300;
+}
+function jupiterBase(){return text(process.env.JUPITER_API_BASE)||'https://api.jup.ag'}
+function jupiterHeaders(){
+  const h={accept:'application/json','content-type':'application/json'};
+  const key=text(process.env.JUPITER_API_KEY);if(key)h['x-api-key']=key;return h;
+}
+function jupiterConfigured(){return !!text(process.env.JUPITER_API_KEY)}
+function mainnetApproved(){return ['true','1','yes'].includes(text(process.env.SYNC_DELEGATED_MAINNET_APPROVED||process.env.SHADOW_DELEGATED_MAINNET_APPROVED).toLowerCase())}
+function userFeeReserveTargetLamports(){
+  const sol=Math.max(0.005,Math.min(0.25,Number(process.env.SYNC_USER_FEE_RESERVE_SOL)||0.02));
+  return Math.round(sol*1_000_000_000);
+}
+function userFeeReserveMinLamports(){
+  const target=userFeeReserveTargetLamports();
+  const sol=Math.max(0.001,Math.min(target/1_000_000_000,Number(process.env.SYNC_USER_FEE_RESERVE_MIN_SOL)||0.004));
+  return Math.round(sol*1_000_000_000);
+}
+function feeReservePublicConfig(){
+  return {
+    model:'user_session_reserve',
+    targetLamports:userFeeReserveTargetLamports(),
+    minimumLamports:userFeeReserveMinLamports(),
+    targetSol:userFeeReserveTargetLamports()/1_000_000_000,
+    minimumSol:userFeeReserveMinLamports()/1_000_000_000,
+    pays:'network_fees_and_token_account_rent',
+    operatorSubsidy:false,
+  };
+}
+function asBigInt(value){try{return BigInt(String(value??0))}catch{return 0n}}
+function minBigInt(a,b){return a<b?a:b}
+function boundedPercent(value,fallback=100){
+  const n=Number(value);return Number.isFinite(n)?Math.max(1,Math.min(100,n)):fallback;
+}
+
 export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
   // Export name intentionally preserved for v3.3.x server compatibility.
   ensureSchema(db);
   const connection=new Connection(rpcUrl(),'confirmed');
   let lastError='';
+
+  let executionChain=Promise.resolve();
+  function enqueueExecution(task){
+    const run=executionChain.then(task,task);
+    executionChain=run.catch(()=>{});
+    return run;
+  }
+  async function policyState(row){
+    try{
+      const info=await connection.getAccountInfo(new PublicKey(row.policy_address),'confirmed');
+      if(!info||!info.owner.equals(new PublicKey(row.program_id)))return null;
+      return parsePolicyData(info.data);
+    }catch(error){lastError=String(error?.message||error);return null}
+  }
+  async function tokenBalanceSnapshot(address){
+    try{
+      const value=(await connection.getTokenAccountBalance(address,'confirmed')).value;
+      return {amount:asBigInt(value.amount),decimals:Number(value.decimals||0)};
+    }catch{return {amount:0n,decimals:0}}
+  }
+  async function tokenRawBalance(address){return (await tokenBalanceSnapshot(address)).amount}
+  async function refundSessionFeeReserve(row){
+    const session=decryptSessionKeypair(row);
+    const owner=new PublicKey(row.owner_address);
+    const balance=BigInt(await connection.getBalance(session.publicKey,'confirmed'));
+    if(balance<=0n)return {refundedLamports:'0',signature:''};
+    const latest=await connection.getLatestBlockhash('confirmed');
+    const probe=new Transaction().add(SystemProgram.transfer({fromPubkey:session.publicKey,toPubkey:owner,lamports:1}));
+    probe.feePayer=session.publicKey;probe.recentBlockhash=latest.blockhash;
+    const feeQuote=await connection.getFeeForMessage(probe.compileMessage(),'confirmed');
+    const fee=BigInt(feeQuote?.value||5000);
+    if(balance<=fee)return {refundedLamports:'0',signature:'',remainingLamports:String(balance)};
+    const amount=balance-fee;
+    const tx=new Transaction().add(SystemProgram.transfer({fromPubkey:session.publicKey,toPubkey:owner,lamports:Number(amount)}));
+    tx.feePayer=session.publicKey;tx.recentBlockhash=latest.blockhash;tx.sign(session);
+    const signature=await connection.sendRawTransaction(tx.serialize(),{skipPreflight:false,maxRetries:3});
+    await connection.confirmTransaction({signature,...latest},'confirmed');
+    return {refundedLamports:String(amount),signature};
+  }
+  async function ensureAta(owner,mint,payer){
+    const ata=ataAddress(owner,mint);
+    if(await connection.getAccountInfo(ata,'confirmed'))return ata;
+    const tx=new Transaction().add(createAtaIdempotentIx(payer.publicKey,owner,mint,ata));
+    tx.feePayer=payer.publicKey;
+    const latest=await connection.getLatestBlockhash('confirmed');tx.recentBlockhash=latest.blockhash;tx.sign(payer);
+    const sig=await connection.sendRawTransaction(tx.serialize(),{skipPreflight:false,maxRetries:3});
+    await connection.confirmTransaction({signature:sig,...latest},'confirmed');
+    return ata;
+  }
+  async function jupiterQuote(inputMint,outputMint,amount,slippageBps){
+    const url=new URL('/swap/v1/quote',jupiterBase());
+    url.searchParams.set('inputMint',inputMint.toBase58());
+    url.searchParams.set('outputMint',outputMint.toBase58());
+    url.searchParams.set('amount',String(amount));
+    url.searchParams.set('slippageBps',String(Math.max(10,Math.min(3000,Number(slippageBps)||500))));
+    url.searchParams.set('restrictIntermediateTokens','true');
+    url.searchParams.set('onlyDirectRoutes',text(process.env.SYNC_JUPITER_DIRECT_ONLY||'true').toLowerCase()==='true'?'true':'false');
+    url.searchParams.set('maxAccounts',String(Math.max(16,Math.min(40,Number(process.env.SYNC_JUPITER_MAX_ACCOUNTS)||28))));
+    url.searchParams.set('asLegacyTransaction','true');
+    const response=await fetchImpl(url,{headers:jupiterHeaders(),signal:AbortSignal.timeout(5000)});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok||data.error)throw new Error(data.error||`Jupiter quote HTTP ${response.status}`);
+    if(!Array.isArray(data.routePlan)||!data.routePlan.length)throw new Error('Jupiter returned no route');
+    return data;
+  }
+  async function jupiterInstructions(quote,vault,destination,payer){
+    const url=new URL('/swap/v1/swap-instructions',jupiterBase());
+    const maxPriority=Math.max(0,Math.min(2_000_000,Number(process.env.SYNC_MAX_PRIORITY_FEE_LAMPORTS)||500_000));
+    const response=await fetchImpl(url,{
+      method:'POST',headers:jupiterHeaders(),signal:AbortSignal.timeout(7000),
+      body:JSON.stringify({
+        quoteResponse:quote,
+        userPublicKey:vault.toBase58(),
+        payer:payer.publicKey.toBase58(),
+        wrapAndUnwrapSol:false,
+        destinationTokenAccount:destination.toBase58(),
+        asLegacyTransaction:true,
+        dynamicComputeUnitLimit:true,
+        prioritizationFeeLamports:{priorityLevelWithMaxLamports:{priorityLevel:'high',maxLamports:maxPriority}}
+      })
+    });
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok||data.error)throw new Error(data.error||`Jupiter instructions HTTP ${response.status}`);
+    if(!data.swapInstruction)throw new Error('Jupiter did not return swapInstruction');
+    return data;
+  }
+  function safeSetupInstruction(ix,vault,payer){
+    if(!ix)return true;
+    for(const k of ix.keys||[]){
+      if(k.isSigner && !k.pubkey.equals(payer.publicKey))return false;
+      if(k.isSigner && k.pubkey.equals(vault))return false;
+    }
+    return true;
+  }
+  async function executeCopyTrade(subscription,event){
+    const canonical=subRow(db,subscription.id)||subscription;
+    const row=sessionRow(db,canonical.id);if(!row)throw new Error('Delegated session missing');
+    const policy=await policyState(row);if(!policy||!policyMatches(policy,canonical,row))throw new Error('Delegated policy is not active for current settings');
+    if(clusterName()==='mainnet-beta'&&!mainnetApproved())throw new Error('Mainnet execution approval is off');
+    if(!jupiterConfigured())throw new Error('JUPITER_API_KEY is not configured');
+    const session=decryptSessionKeypair(row);
+    const payer=session;
+    const payerLamports=await connection.getBalance(session.publicKey,'confirmed');
+    if(payerLamports<userFeeReserveMinLamports())throw new Error('User 24/7 fee reserve is low; top up authorization is required');
+    const vault=new PublicKey(row.vault_address);
+    const mint=new PublicKey(String(event.mint||''));
+    const side=String(event.side||'').toLowerCase()==='sell'?'sell':'buy';
+    const inputMint=side==='buy'?WSOL_MINT:mint;
+    const outputMint=side==='buy'?mint:WSOL_MINT;
+    const source=ataAddress(vault,inputMint);
+    const destination=await ensureAta(vault,outputMint,payer);
+    const sourceBefore=await tokenBalanceSnapshot(source);
+    const destinationBefore=await tokenBalanceSnapshot(destination);
+    const sourceBalance=sourceBefore.amount;
+    let amount=0n;
+    if(side==='buy'){
+      amount=BigInt(Math.max(1,Math.round(Number(canonical.amount_sol||0)*1_000_000_000)));
+      if(sourceBalance<amount)throw new Error('Delegated vault has insufficient WSOL for BUY');
+    }else if(event.amountRaw!=null&&String(event.amountRaw)!==''){
+      amount=minBigInt(sourceBalance,asBigInt(event.amountRaw));
+      if(amount<=0n)throw new Error('No tracked delegated token balance to sell');
+    }else{
+      const sellPercent=boundedPercent(canonical.sell_percent||100,100);
+      amount=(sourceBalance*BigInt(Math.round(sellPercent*100)))/10000n;
+      if(amount<=0n)throw new Error('No delegated token balance to sell');
+    }
+    const quote=await jupiterQuote(inputMint,outputMint,amount,canonical.slippage_bps||500);
+    const built=await jupiterInstructions(quote,vault,destination,payer);
+    const swapIx=deserializeRemoteIx(built.swapInstruction);
+    if(!swapIx.programId.equals(JUPITER_V6))throw new Error('Unexpected Jupiter program id');
+    const setup=[...(built.computeBudgetInstructions||[]),...(built.setupInstructions||[])].map(deserializeRemoteIx).filter(Boolean);
+    for(const ix of setup)if(!safeSetupInstruction(ix,vault,payer))throw new Error('Unsafe Jupiter setup signer requirement');
+    const cleanup=deserializeRemoteIx(built.cleanupInstruction);
+    if(cleanup&&!safeSetupInstruction(cleanup,vault,payer))throw new Error('Unsafe Jupiter cleanup signer requirement');
+    const jupiterData=swapIx.data;
+    const executeData=Buffer.concat([EXECUTE_SWAP_DISC,Buffer.from([side==='buy'?0:1]),u64(amount),u32(jupiterData.length),jupiterData]);
+    const executeIx=new TransactionInstruction({
+      programId:new PublicKey(row.program_id),
+      keys:[
+        {pubkey:session.publicKey,isSigner:true,isWritable:false},
+        {pubkey:new PublicKey(row.policy_address),isSigner:false,isWritable:true},
+        {pubkey:vault,isSigner:false,isWritable:false},
+        {pubkey:source,isSigner:false,isWritable:true},
+        {pubkey:destination,isSigner:false,isWritable:true},
+        {pubkey:JUPITER_V6,isSigner:false,isWritable:false},
+        ...swapIx.keys,
+      ],
+      data:executeData,
+    });
+    const tx=new Transaction();setup.forEach(ix=>tx.add(ix));tx.add(executeIx);if(cleanup)tx.add(cleanup);
+    tx.feePayer=payer.publicKey;
+    const latest=await connection.getLatestBlockhash('confirmed');tx.recentBlockhash=latest.blockhash;
+    tx.sign(session);
+    const raw=tx.serialize();
+    if(raw.length>1232)throw new Error(`Composed copy transaction is too large (${raw.length} bytes); lower SYNC_JUPITER_MAX_ACCOUNTS`);
+    const signature=await connection.sendRawTransaction(raw,{skipPreflight:false,maxRetries:4});
+    await connection.confirmTransaction({signature,...latest},'confirmed');
+    const sourceAfter=await tokenBalanceSnapshot(source);
+    const destinationAfter=await tokenBalanceSnapshot(destination);
+    const sourceDelta=sourceBefore.amount>sourceAfter.amount?sourceBefore.amount-sourceAfter.amount:0n;
+    const destinationDelta=destinationAfter.amount>destinationBefore.amount?destinationAfter.amount-destinationBefore.amount:0n;
+    const fill=side==='buy'
+      ?{spentLamports:String(sourceDelta),acquiredRaw:String(destinationDelta),tokenDecimals:destinationAfter.decimals||destinationBefore.decimals||0}
+      :{soldRaw:String(sourceDelta),receivedLamports:String(destinationDelta),tokenDecimals:sourceBefore.decimals||sourceAfter.decimals||0};
+    return {signature,side,amount:String(amount),quoteOutAmount:String(quote.outAmount||''),feePayer:session.publicKey.toBase58(),feeModel:'user_session_reserve',fill};
+  }
+  function positionRow(subscriptionId,mint){
+    return db.prepare('SELECT * FROM delegated_copy_positions WHERE subscription_id=? AND mint=?').get(subscriptionId,mint)||null;
+  }
+  function entryPriceSol(costLamports,tokenRaw,decimals){
+    const raw=asBigInt(tokenRaw),cost=asBigInt(costLamports);if(raw<=0n||cost<=0n)return 0;
+    const tokenUnits=Number(raw)/(10**Math.max(0,Number(decimals||0)));
+    return tokenUnits>0?(Number(cost)/1_000_000_000)/tokenUnits:0;
+  }
+  function recordBuyPosition(subscription,event,result){
+    const fill=result?.fill||{};
+    const acquired=asBigInt(fill.acquiredRaw),spent=asBigInt(fill.spentLamports);
+    if(acquired<=0n||spent<=0n){
+      lastError='Confirmed BUY fill could not be measured; TP/SL was not armed for this fill';
+      return null;
+    }
+    const mint=String(event.mint||''),stamp=now(),prev=positionRow(subscription.id,mint);
+    const merge=prev?.state==='open';
+    const tokenAmount=acquired+(merge?asBigInt(prev.token_amount_raw):0n);
+    const costLamports=spent+(merge?asBigInt(prev.cost_lamports):0n);
+    const decimals=Number(fill.tokenDecimals||prev?.token_decimals||0);
+    const openedAt=merge?(prev.opened_at||stamp):stamp;
+    if(prev){
+      db.prepare(`UPDATE delegated_copy_positions SET state='open',token_amount_raw=?,token_decimals=?,cost_lamports=?,entry_price_sol=?,entry_tx_signature=?,last_buy_source_signature=?,last_mark_price_sol=0,last_pnl_percent=0,last_checked_at='',close_reason='',close_source_signature='',close_tx_signature='',close_trigger_percent=0,exit_sold_raw='0',exit_received_lamports='0',last_error='',opened_at=?,closed_at='',updated_at=? WHERE subscription_id=? AND mint=?`)
+        .run(String(tokenAmount),decimals,String(costLamports),entryPriceSol(costLamports,tokenAmount,decimals),result.signature,String(event.signature||''),openedAt,stamp,subscription.id,mint);
+    }else{
+      db.prepare(`INSERT INTO delegated_copy_positions (subscription_id,mint,state,token_amount_raw,token_decimals,cost_lamports,entry_price_sol,entry_tx_signature,last_buy_source_signature,opened_at,updated_at) VALUES (?,?, 'open',?,?,?,?,?,?,?,?)`)
+        .run(subscription.id,mint,String(tokenAmount),decimals,String(costLamports),entryPriceSol(costLamports,tokenAmount,decimals),result.signature,String(event.signature||''),openedAt,stamp);
+    }
+    return positionRow(subscription.id,mint);
+  }
+  function positionExitAmount(position,subscription){
+    const tracked=asBigInt(position?.token_amount_raw);if(tracked<=0n)return 0n;
+    const bps=BigInt(Math.max(100,Math.min(10000,Math.round(boundedPercent(subscription.sell_percent||100,100)*100))));
+    const amount=(tracked*bps)/10000n;
+    return amount>0n?minBigInt(amount,tracked):minBigInt(1n,tracked);
+  }
+  function claimPositionExit(subscription,mint,reason,sourceSignature,triggerPercent=0,markPriceSol=0){
+    const stamp=now();
+    const changed=db.prepare(`UPDATE delegated_copy_positions SET state='closing',close_reason=?,close_source_signature=?,close_trigger_percent=?,last_mark_price_sol=?,last_error='',updated_at=? WHERE subscription_id=? AND mint=? AND state='open'`)
+      .run(reason,String(sourceSignature||''),Number(triggerPercent||0),Number(markPriceSol||0),stamp,subscription.id,mint);
+    return changed.changes?positionRow(subscription.id,mint):null;
+  }
+  function releasePositionExit(subscription,mint,error){
+    db.prepare(`UPDATE delegated_copy_positions SET state='open',close_reason='',close_source_signature='',close_tx_signature='',close_trigger_percent=0,last_error=?,updated_at=? WHERE subscription_id=? AND mint=? AND state='closing'`)
+      .run(String(error?.message||error||'').slice(0,500),now(),subscription.id,mint);
+  }
+  function finishPositionExit(subscription,mint,result,reason){
+    const fill=result?.fill||{},stamp=now();
+    db.prepare(`UPDATE delegated_copy_positions SET state='closed',close_reason=?,close_tx_signature=?,exit_sold_raw=?,exit_received_lamports=?,last_error='',closed_at=?,updated_at=? WHERE subscription_id=? AND mint=?`)
+      .run(reason,String(result?.signature||result?.txSignature||''),String(fill.soldRaw||result?.amount||'0'),String(fill.receivedLamports||'0'),stamp,stamp,subscription.id,mint);
+    return positionRow(subscription.id,mint);
+  }
+  async function runExecution(subscription,event){
+    const sig=String(event.signature||`slot-${event.slot||0}`),side=String(event.side||'').toLowerCase()==='sell'?'sell':'buy',mint=String(event.mint||'');
+    const stamp=now();
+    const existing=db.prepare(`SELECT * FROM delegated_copy_executions WHERE subscription_id=? AND source_signature=? AND side=? AND mint=?`).get(subscription.id,sig,side,mint);
+    if(existing){
+      const age=Date.now()-new Date(existing.updated_at||existing.created_at||0).getTime();
+      const retryable=existing.status==='error'||((existing.status==='queued'||existing.status==='executing')&&age>120000);
+      if(!retryable)return {duplicate:true,status:existing.status,txSignature:existing.tx_signature||''};
+      db.prepare(`UPDATE delegated_copy_executions SET status='queued',tx_signature='',last_error='',updated_at=? WHERE subscription_id=? AND source_signature=? AND side=? AND mint=?`).run(stamp,subscription.id,sig,side,mint);
+    }else{
+      db.prepare(`INSERT INTO delegated_copy_executions (subscription_id,source_signature,side,mint,status,tx_signature,last_error,created_at,updated_at) VALUES (?,?,?,?, 'queued','','',?,?)`).run(subscription.id,sig,side,mint,stamp,stamp);
+    }
+    db.prepare(`UPDATE delegated_copy_executions SET status='executing',updated_at=? WHERE subscription_id=? AND source_signature=? AND side=? AND mint=?`).run(now(),subscription.id,sig,side,mint);
+    try{
+      const result=await executeCopyTrade(subscription,event);
+      const fill=result?.fill||{};
+      const fillInputRaw=side==='buy'?String(fill.spentLamports||'0'):String(fill.soldRaw||'0');
+      const fillOutputRaw=side==='buy'?String(fill.acquiredRaw||'0'):String(fill.receivedLamports||'0');
+      const closeReason=String(event.closeReason||'');
+      db.prepare(`UPDATE delegated_copy_executions SET status='confirmed',tx_signature=?,fill_input_raw=?,fill_output_raw=?,close_reason=?,last_error='',updated_at=? WHERE subscription_id=? AND source_signature=? AND side=? AND mint=?`)
+        .run(result.signature,fillInputRaw,fillOutputRaw,closeReason,now(),subscription.id,sig,side,mint);
+      if(side==='buy'){
+        try{recordBuyPosition(subscription,event,result)}catch(error){lastError=`BUY fill bookkeeping: ${String(error?.message||error)}`}
+      }
+      return result;
+    }catch(error){
+      db.prepare(`UPDATE delegated_copy_executions SET status='error',last_error=?,updated_at=? WHERE subscription_id=? AND source_signature=? AND side=? AND mint=?`).run(String(error.message||error).slice(0,500),now(),subscription.id,sig,side,mint);
+      throw error;
+    }
+  }
+  async function runPositionExit(subscription,event,reason,metrics={}){
+    const mint=String(event.mint||''),existingPosition=positionRow(subscription.id,mint);
+    if(!existingPosition||existingPosition.state!=='open'){
+      if(reason==='leader_sell'&&!existingPosition)return runExecution(subscription,event);
+      return {duplicateClose:true,state:existingPosition?.state||'missing'};
+    }
+    const requested=positionExitAmount(existingPosition,subscription);if(requested<=0n)return {duplicateClose:true,state:'empty'};
+    const claimed=claimPositionExit(subscription,mint,reason,event.signature,metrics.pnlPercent,metrics.markPriceSol);
+    if(!claimed)return {duplicateClose:true,state:positionRow(subscription.id,mint)?.state||'missing'};
+    try{
+      const result=await runExecution(subscription,{...event,side:'sell',amountRaw:String(requested),closeReason:reason});
+      if(result?.duplicate){
+        if(result.status==='confirmed'){finishPositionExit(subscription,mint,result,reason);return {...result,closeReason:reason}}
+        releasePositionExit(subscription,mint,`duplicate execution state: ${result.status||'unknown'}`);
+        return result;
+      }
+      finishPositionExit(subscription,mint,result,reason);
+      return {...result,closeReason:reason};
+    }catch(error){releasePositionExit(subscription,mint,error);throw error}
+  }
+
+
 
   /* SHADOW_FAST_COPY_ENGINE_EVENT_V373 */
   let fastEventState={
@@ -240,123 +749,143 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
   }
   /* SHADOW_COPY_LATENCY_METER_V380_ENGINE_END */
 
+  /* SYNC_COPY_STATUS_LIVE_V18 */
+  function markSkippedExecution(subscription,event,reason){
+    const sig=String(event.signature||`slot-${event.slot||0}`);
+    const side=String(event.side||'').toLowerCase()==='sell'?'sell':'buy';
+    const mint=String(event.mint||'');
+    const stamp=now();
+    db.prepare(`
+      INSERT INTO delegated_copy_executions
+        (subscription_id,source_signature,side,mint,status,tx_signature,last_error,created_at,updated_at)
+      VALUES (?,?,?,?, 'skipped','',?,?,?)
+      ON CONFLICT(subscription_id,source_signature,side,mint) DO UPDATE SET
+        status='skipped',tx_signature='',last_error=excluded.last_error,updated_at=excluded.updated_at
+    `).run(subscription.id,sig,side,mint,String(reason||'not_copied'),stamp,stamp);
+  }
+  /* SYNC_COPY_STATUS_LIVE_V18_END */
+
   async function handleTradeEvent(event={}){
     const started=Date.now();
     const entityId=String(event.entityId||'');
     const side=String(event.side||'').toLowerCase()==='sell'?'sell':'buy';
-
     fastEventState.seen++;
     fastEventState.lastEventAt=now();
     fastEventState.lastSignature=String(event.signature||'');
     fastEventState.lastServerDispatchLagMs=Number(event.serverDispatchLagMs||0);
-
-    if(!entityId){
-      fastEventState.lastReason='missing_entity';
-      fastEventState.lastDecisionMs=Date.now()-started;
-      recordDecisionLatency(fastEventState.lastDecisionMs);
-      return {accepted:false,reason:'missing_entity'};
-    }
-
-    const subscriptions=db.prepare(`
-      SELECT *
-      FROM copy_subscriptions
-      WHERE entity_id=? AND enabled=1
-      ORDER BY updated_at DESC
-    `).all(entityId);
-
-    const marketCapRequired=
-      side==='buy' &&
-      subscriptions.some(sub=>{
-        if(!sub.copy_buys)return false;
-        const min=Math.max(0,Number(sub.min_market_cap_usd||0));
-        const max=Math.max(0,Number(sub.max_market_cap_usd||0));
-        return min>0||max>0;
-      });
-
+    if(!entityId){fastEventState.lastReason='missing_entity';fastEventState.lastDecisionMs=Date.now()-started;recordDecisionLatency(fastEventState.lastDecisionMs);return {accepted:false,reason:'missing_entity'}}
+    const subscriptions=db.prepare(`SELECT * FROM copy_subscriptions WHERE entity_id=? AND enabled=1 ORDER BY updated_at DESC`).all(entityId);
+    const marketCapRequired=side==='buy'&&subscriptions.some(sub=>{
+      if(!sub.copy_buys)return false;const min=Math.max(0,Number(sub.min_market_cap_usd||0));const max=Math.max(0,Number(sub.max_market_cap_usd||0));return min>0||max>0;
+    });
     let pumpMarketCapUsd=null;
-
     if(marketCapRequired){
-      pumpMarketCapUsd=await getPumpTokenMarketCap(
-        String(event.mint||''),
-        {
-          fetchImpl,
-          maxAgeMs:750,
-          timeoutMs:1800
-        }
-      );
-
-      if(Number.isFinite(Number(pumpMarketCapUsd))&&Number(pumpMarketCapUsd)>0){
-        db.prepare(`
-          UPDATE tokens
-          SET market_cap=?,last_market_at=?
-          WHERE mint=?
-        `).run(
-          Number(pumpMarketCapUsd),
-          now(),
-          String(event.mint||'')
-        );
-      }
+      pumpMarketCapUsd=await getPumpTokenMarketCap(String(event.mint||''),{fetchImpl,maxAgeMs:750,timeoutMs:1800});
+      if(Number.isFinite(Number(pumpMarketCapUsd))&&Number(pumpMarketCapUsd)>0){db.prepare(`UPDATE tokens SET market_cap=?,last_market_at=? WHERE mint=?`).run(Number(pumpMarketCapUsd),now(),String(event.mint||''))}
     }
-
-    let candidates=0;
-    let blockedByMarketCap=0;
-
+    const ready=[];let blockedByMarketCap=0;
     for(const sub of subscriptions){
-      if(side==='buy' && !sub.copy_buys)continue;
-      if(side==='sell' && !sub.copy_sells)continue;
-
+      if(side==='buy'&&!sub.copy_buys){markSkippedExecution(sub,event,'follow_buys_off');continue}
+      if(side==='sell'&&!sub.copy_sells){markSkippedExecution(sub,event,'follow_sells_off');continue}
       if(side==='buy'){
-        const min=Math.max(0,Number(sub.min_market_cap_usd||0));
-        const max=Math.max(0,Number(sub.max_market_cap_usd||0));
-        const rangeEnabled=min>0||max>0;
-
-        if(rangeEnabled){
+        const min=Math.max(0,Number(sub.min_market_cap_usd||0));const max=Math.max(0,Number(sub.max_market_cap_usd||0));
+        if(min>0||max>0){
           const mc=Number(pumpMarketCapUsd||0);
-          const fresh=mc>0;
-
-          // Pump.fun is the sole MC authority for this policy.
-          // If it cannot provide current MC, BUY fails closed.
-          if(!fresh || (min>0&&mc<min) || (max>0&&mc>max)){
+          if(!(mc>0)||(min>0&&mc<min)||(max>0&&mc>max)){
             blockedByMarketCap++;
+            markSkippedExecution(sub,event,'market_cap_filter');
             continue;
           }
         }
       }
-
-      candidates++;
+      ready.push(sub);
     }
-
-    fastEventState.candidates=candidates;
-    fastEventState.blockedByMarketCap=blockedByMarketCap;
-    fastEventState.lastDecisionMs=Date.now()-started;
-    recordDecisionLatency(fastEventState.lastDecisionMs);
-
-    fastEventState.lastReason=candidates===0
-      ? (blockedByMarketCap>0?'market_cap_filter':'no_active_subscription')
-      : 'executor_security_gate';
-
-    return {
-      accepted:false,
-      candidates,
-      blockedByMarketCap,
-      decisionMs:fastEventState.lastDecisionMs,
-      executionAllowed:false,
-      reason:fastEventState.lastReason
-    };
+    for(const sub of ready){
+      const task=side==='sell'?()=>runPositionExit(sub,event,'leader_sell'):()=>runExecution(sub,event);
+      enqueueExecution(task).catch(error=>{lastError=String(error?.message||error);console.warn('24/7 copy execution failed:',lastError)});
+    }
+    fastEventState.candidates=ready.length;fastEventState.blockedByMarketCap=blockedByMarketCap;fastEventState.lastDecisionMs=Date.now()-started;recordDecisionLatency(fastEventState.lastDecisionMs);
+    fastEventState.lastReason=ready.length?'queued_24x7':(blockedByMarketCap?'market_cap_filter':'no_active_subscription');
+    return {accepted:ready.length>0,candidates:ready.length,blockedByMarketCap,decisionMs:fastEventState.lastDecisionMs,executionAllowed:ready.length>0,reason:fastEventState.lastReason};
   }
   /* SHADOW_FAST_COPY_ENGINE_EVENT_V373_END */
+
+  /* SYNC_TP_SL_EXECUTOR_V15_MONITOR */
+  let riskTimer=null;
+  let riskRunning=false;
+  let riskState={checks:0,triggers:0,lastCheckAt:'',lastTriggerAt:'',lastTriggerReason:'',lastError:''};
+  function riskPollMs(){return Math.max(1000,Math.min(60000,Number(process.env.SYNC_TP_SL_POLL_MS)||3000))}
+  function riskBatchSize(){return Math.max(1,Math.min(100,Number(process.env.SYNC_TP_SL_MAX_POSITIONS_PER_TICK)||20))}
+  function riskStatus(){
+    const open=Number(db.prepare(`SELECT COUNT(*) AS n FROM delegated_copy_positions WHERE state='open'`).get()?.n||0);
+    const closing=Number(db.prepare(`SELECT COUNT(*) AS n FROM delegated_copy_positions WHERE state='closing'`).get()?.n||0);
+    return {...riskState,running:riskRunning,pollMs:riskPollMs(),openPositions:open,closingPositions:closing};
+  }
+  async function inspectPositionRisk(position){
+    const sub=subRow(db,position.subscription_id);if(!sub||!sub.enabled)return {skipped:'inactive'};
+    if(!sub.take_profit_enabled&&!sub.stop_loss_enabled)return {skipped:'disabled'};
+    const row=sessionRow(db,sub.id);if(!row)return {skipped:'session_missing'};
+    const tracked=asBigInt(position.token_amount_raw),cost=asBigInt(position.cost_lamports);if(tracked<=0n||cost<=0n)return {skipped:'empty'};
+    const vault=new PublicKey(row.vault_address),mint=new PublicKey(position.mint),source=ataAddress(vault,mint);
+    const available=minBigInt(tracked,await tokenRawBalance(source));
+    if(available<=0n){
+      const stamp=now();db.prepare(`UPDATE delegated_copy_positions SET state='closed',close_reason='balance_unavailable',closed_at=?,updated_at=? WHERE subscription_id=? AND mint=? AND state='open'`).run(stamp,stamp,sub.id,position.mint);
+      return {skipped:'balance_unavailable'};
+    }
+    const basisPosition={...position,token_amount_raw:String(available)};
+    const sellAmount=positionExitAmount(basisPosition,sub);if(sellAmount<=0n)return {skipped:'empty'};
+    const quote=await jupiterQuote(mint,WSOL_MINT,sellAmount,sub.slippage_bps||500);
+    const markLamports=asBigInt(quote.outAmount);const basis=(cost*sellAmount)/tracked;
+    if(markLamports<=0n||basis<=0n)return {skipped:'quote_zero'};
+    const pnlPercent=(Number(markLamports)/Number(basis)-1)*100;
+    const decimals=Math.max(0,Number(position.token_decimals||0));
+    const units=Number(sellAmount)/(10**decimals);
+    const markPriceSol=units>0?(Number(markLamports)/1_000_000_000)/units:0;
+    const stamp=now();
+    db.prepare(`UPDATE delegated_copy_positions SET last_mark_price_sol=?,last_pnl_percent=?,last_checked_at=?,last_error='',updated_at=? WHERE subscription_id=? AND mint=? AND state='open'`)
+      .run(markPriceSol,pnlPercent,stamp,stamp,sub.id,position.mint);
+    let reason='';
+    if(sub.take_profit_enabled&&pnlPercent>=Number(sub.take_profit_percent||100))reason='take_profit';
+    else if(sub.stop_loss_enabled&&pnlPercent<=-Math.abs(Number(sub.stop_loss_percent||30)))reason='stop_loss';
+    if(!reason)return {pnlPercent,markPriceSol};
+    const signature=`risk:${reason}:${sub.id}:${position.mint}:${position.opened_at||position.entry_tx_signature||'position'}`;
+    const result=await enqueueExecution(()=>runPositionExit(sub,{signature,side:'sell',mint:position.mint,entityId:sub.entity_id},reason,{pnlPercent,markPriceSol}));
+    riskState.triggers++;riskState.lastTriggerAt=now();riskState.lastTriggerReason=reason;
+    return {triggered:reason,pnlPercent,markPriceSol,result};
+  }
+  async function runRiskMonitor(){
+    if(riskRunning)return;riskRunning=true;riskState.lastCheckAt=now();
+    try{
+      const positions=db.prepare(`SELECT p.* FROM delegated_copy_positions p JOIN copy_subscriptions s ON s.id=p.subscription_id WHERE p.state='open' AND s.enabled=1 AND (s.take_profit_enabled=1 OR s.stop_loss_enabled=1) ORDER BY CASE WHEN p.last_checked_at='' THEN 0 ELSE 1 END,p.last_checked_at ASC,p.updated_at ASC LIMIT ?`).all(riskBatchSize());
+      for(const position of positions){
+        riskState.checks++;
+        try{await inspectPositionRisk(position)}catch(error){
+          riskState.lastError=String(error?.message||error);lastError=`TP/SL monitor: ${riskState.lastError}`;
+          db.prepare(`UPDATE delegated_copy_positions SET last_error=?,last_checked_at=?,updated_at=? WHERE subscription_id=? AND mint=? AND state='open'`).run(riskState.lastError.slice(0,500),now(),now(),position.subscription_id,position.mint);
+        }
+      }
+    }finally{riskRunning=false}
+  }
+  function scheduleRiskMonitor(delay=riskPollMs()){
+    if(riskTimer)clearTimeout(riskTimer);
+    riskTimer=setTimeout(async()=>{try{await runRiskMonitor()}catch(error){riskState.lastError=String(error?.message||error)}scheduleRiskMonitor()},delay);
+    riskTimer.unref?.();
+  }
+  /* SYNC_TP_SL_EXECUTOR_V15_MONITOR_END */
 
   function environmentStatus(){
     const pid=programId();
     const key=parseSessionMasterKey();
     const cluster=clusterName();
-    const mainnetApproved=text(process.env.SHADOW_DELEGATED_MAINNET_APPROVED).toLowerCase()==='true';
+    const approved=mainnetApproved();
     return {
-      configured:!!pid&&!!key&&(cluster!=='mainnet-beta'||mainnetApproved),
+      configured:!!pid&&!!key&&jupiterConfigured()&&(cluster!=='mainnet-beta'||approved),
       programConfigured:!!pid,
       sessionKeyEncryptionReady:!!key,
       cluster,
-      mainnetApproved,
+      mainnetApproved:approved,
+      jupiterConfigured:jupiterConfigured(),
+      feePayment:feeReservePublicConfig(),
       programId:pid?.toBase58()||'',
       mode:'noncustodial_delegated_vault',
       ciRequired:false,
@@ -364,6 +893,7 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
       artifactRequiredAtRuntime:false,
       ...delegatedArtifactStatus(),
       fastEvent:publicFastEvent(),
+      tpSlMonitor:riskStatus(),
       lastError,
     };
   }
@@ -371,6 +901,7 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
     const s=environmentStatus();
     if(!s.programConfigured)return 'SHADOW_DELEGATED_PROGRAM_ID is not configured';
     if(!s.sessionKeyEncryptionReady)return 'SHADOW_SESSION_MASTER_KEY is not configured';
+    if(!s.jupiterConfigured)return 'JUPITER_API_KEY is not configured';
     if(s.cluster==='mainnet-beta'&&!s.mainnetApproved)return 'Delegated program is not approved for public mainnet execution yet';
     return '';
   }
@@ -419,44 +950,35 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
     }catch(error){lastError=String(error?.message||error);return false}
   }
   async function snapshot(subscription,{issueToken=true}={}){
-    const reason=configBlockReason();
-    if(reason){
-      const s=environmentStatus();
-      const authorizationState=!s.programConfigured?'delegated_program_required':!s.sessionKeyEncryptionReady?'session_key_store_required':'mainnet_review_required';
-      return {active:false,authorizationState,message:reason,environment:s,executionWallet:null};
-    }
     const canonical=subRow(db,subscription.id)||subscription;
-    let row=ensureSession(canonical);
-    if(!row)return {active:false,authorizationState:'error',message:'Could not create delegated session metadata'};
-    const exists=await onchainPolicyExists(row);
-    if(exists&&!row.authorized_at){
-      const at=now();
-      db.prepare(`UPDATE delegated_copy_sessions SET authorized_at=?,revoked_at='',state='policy_active',updated_at=? WHERE subscription_id=?`).run(at,at,row.subscription_id);
-      row=sessionRow(db,row.subscription_id);
+    const pid=programId(),master=parseSessionMasterKey();
+    if(!pid||!master){
+      const s=environmentStatus();
+      return {active:false,authorizationState:!pid?'delegated_program_required':'session_key_store_required',message:!pid?'SHADOW_DELEGATED_PROGRAM_ID is not configured':'SHADOW_SESSION_MASTER_KEY is not configured',environment:s,executionWallet:null};
     }
+    let row=ensureSession(canonical);if(!row)return {active:false,authorizationState:'error',message:'Could not create delegated session metadata'};
+    const policy=await policyState(row);
+    const exists=!!policy;
+    if(exists&&!row.authorized_at){const at=now();db.prepare(`UPDATE delegated_copy_sessions SET authorized_at=?,revoked_at='',state='policy_active',updated_at=? WHERE subscription_id=?`).run(at,at,row.subscription_id);row=sessionRow(db,row.subscription_id)}
+    const matches=exists&&policyMatches(policy,canonical,row);
+    const vault=new PublicKey(row.vault_address),wsolAta=ataAddress(vault,WSOL_MINT);
+    const vaultWsol=await tokenRawBalance(wsolAta);
+    const sessionLamports=await connection.getBalance(new PublicKey(row.session_public_key),'confirmed');
+    const minTrade=desiredPolicy(canonical).maxTradeLamports;
+    const env=environmentStatus();
+    const infraReady=env.jupiterConfigured&&(env.cluster!=='mainnet-beta'||env.mainnetApproved);
+    const funded=vaultWsol>=minTrade;
+    const feeReady=sessionLamports>=userFeeReserveMinLamports();
     let authUrl='';
-    if(!exists&&issueToken)authUrl=issueActionUrl(row,'authorize');
-    const policyActive=exists&&row.state==='policy_active'&&!row.revoked_at;
-    // v3.4.0 deliberately does not claim autonomous execution readiness.
-    // The on-chain policy can be created/revoked now, but the swap composer is
-    // kept fail-closed until the final deployed program/IDL has passed review.
-    const active=false;
+    if((!exists||!matches||!funded||!feeReady)&&issueToken)authUrl=issueActionUrl(row,'authorize');
+    const active=exists&&matches&&funded&&feeReady&&infraReady;
+    const state=!exists?'authorization_required':!matches?'policy_update_required':!funded?'funding_required':!feeReady?'fee_reserve_required':!infraReady?'executor_configuration_required':'active';
+    if(active&&row.state!=='active')db.prepare(`UPDATE delegated_copy_sessions SET state='active',last_error='',updated_at=? WHERE subscription_id=?`).run(now(),row.subscription_id);
     return {
-      active,
-      policyActive,
-      authorizationState:policyActive?'policy_active_executor_locked':'authorization_required',
-      authorizationUrl:authUrl,
-      executionWallet:{
-        ...publicSession(row),
-        status:policyActive?'policy_active_executor_locked':'authorization_required',
-        authorizationState:policyActive?'policy_active_executor_locked':'authorization_required',
-        authorizationUrl:authUrl,
-        custody:'user_owned_program_vault',
-      },
-      environment:environmentStatus(),
-      buyMarketCapFilter:buyMarketCapFilter(canonical),
-      executionReady:false,
-      executionReadyReason:policyActive?'ONCHAIN_POLICY_ACTIVE_EXECUTOR_REVIEW_REQUIRED':'ONCHAIN_POLICY_NOT_ACTIVE',
+      active,policyActive:exists&&!policy?.revoked,authorizationState:state,authorizationUrl:authUrl,
+      executionWallet:{...publicSession(row),status:state,authorizationState:state,authorizationUrl:authUrl,custody:'user_owned_program_vault',wsolAta:wsolAta.toBase58(),wsolBalanceLamports:String(vaultWsol),feePayer:row.session_public_key,feeReserveLamports:String(sessionLamports),feeReserveTargetLamports:String(userFeeReserveTargetLamports()),feeReserveMinimumLamports:String(userFeeReserveMinLamports()),feeModel:'user_session_reserve'},
+      environment:env,buyMarketCapFilter:buyMarketCapFilter(canonical),executionReady:active,
+      executionReadyReason:active?'READY_24X7':state.toUpperCase(),
     };
   }
   async function syncSubscription({action='upsert',subscription}={}){
@@ -481,9 +1003,11 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
       mainWallet:main?.address||'',amountSol:Number(sub.amount_sol||0),maxPositionSol:Number(sub.max_position_sol||0),
       maxDailySol:Number(sub.max_daily_sol||0),slippageBps:Number(sub.slippage_bps||0),
       minMarketCapUsd:Number(sub.min_market_cap_usd||0),maxMarketCapUsd:Number(sub.max_market_cap_usd||0),
+      takeProfitEnabled:!!sub.take_profit_enabled,takeProfitPercent:Number(sub.take_profit_percent||100),
+      stopLossEnabled:!!sub.stop_loss_enabled,stopLossPercent:Number(sub.stop_loss_percent||30),
       buyMarketCapFilter:buyMarketCapFilter(sub),copyBuys:!!sub.copy_buys,
       copySells:!!sub.copy_sells,sellPercent:Number(sub.sell_percent||100),expiresAt:row.auth_token_expires_at,
-      cluster:clusterName(),programId:row.program_id,nonCustodial:true,
+      cluster:clusterName(),programId:row.program_id,nonCustodial:true,delegationDays:Math.max(1,Math.min(365,Number(process.env.SYNC_DELEGATION_DAYS)||30)),vaultFundingSol:Number(sub.max_position_sol||0),feeReserveSol:userFeeReserveTargetLamports()/1_000_000_000,feeReserveMinimumSol:userFeeReserveMinLamports()/1_000_000_000,feePayer:row.session_public_key,feeReserveRefundOnRevoke:true,
     };
   }
   async function prepareAction(token,userId,action='authorize'){
@@ -497,22 +1021,27 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
     const session=new PublicKey(row.session_public_key);
     const tx=new Transaction();
     if(action==='authorize'){
-      const expiresAt=Math.floor(Date.now()/1000)+(30*24*60*60);
-      const maxTradeLamports=BigInt(Math.max(0,Math.round(Number(sub.amount_sol||0)*1_000_000_000)));
-      const dailyCapLamports=BigInt(Math.max(0,Math.round(Number(sub.max_daily_sol||0)*1_000_000_000)));
-      const maxSellBps=Math.max(0,Math.min(10000,Math.round(Number(sub.sell_percent||100)*100)));
-      const data=Buffer.concat([
-        INIT_DISC,idHash(sub.id),session.toBuffer(),i64(expiresAt),u64(maxTradeLamports),u64(dailyCapLamports),u16(maxSellBps),bool(!!sub.copy_buys),bool(!!sub.copy_sells)
-      ]);
-      tx.add(new TransactionInstruction({
-        programId:pid,
-        keys:[
-          {pubkey:owner,isSigner:true,isWritable:true},
-          {pubkey:policy,isSigner:false,isWritable:true},
-          {pubkey:vault,isSigner:false,isWritable:false},
-          {pubkey:SystemProgram.programId,isSigner:false,isWritable:false},
-        ],data,
-      }));
+      const days=Math.max(1,Math.min(365,Number(process.env.SYNC_DELEGATION_DAYS)||30));
+      const expiresAt=Math.floor(Date.now()/1000)+(days*24*60*60);
+      const d=desiredPolicy(sub);
+      const exists=await onchainPolicyExists(row);
+      if(!exists){
+        const data=Buffer.concat([INIT_DISC,idHash(sub.id),session.toBuffer(),i64(expiresAt),u64(d.maxTradeLamports),u64(d.dailyCapLamports),u16(d.maxSellBps),bool(d.copyBuys),bool(d.copySells)]);
+        tx.add(new TransactionInstruction({programId:pid,keys:[{pubkey:owner,isSigner:true,isWritable:true},{pubkey:policy,isSigner:false,isWritable:true},{pubkey:vault,isSigner:false,isWritable:false},{pubkey:SystemProgram.programId,isSigner:false,isWritable:false}],data}));
+      }else{
+        const data=Buffer.concat([UPDATE_DISC,i64(expiresAt),u64(d.maxTradeLamports),u64(d.dailyCapLamports),u16(d.maxSellBps),bool(d.copyBuys),bool(d.copySells)]);
+        tx.add(new TransactionInstruction({programId:pid,keys:[{pubkey:owner,isSigner:true,isWritable:false},{pubkey:policy,isSigner:false,isWritable:true}],data}));
+      }
+      const wsolAta=ataAddress(vault,WSOL_MINT);
+      const current=await tokenRawBalance(wsolAta);
+      const target=BigInt(Math.max(0,Math.round(Number(sub.max_position_sol||0)*1_000_000_000)));
+      if(!(await connection.getAccountInfo(wsolAta,'confirmed')))tx.add(createAtaIdempotentIx(owner,vault,WSOL_MINT,wsolAta));
+      if(target>current){const topUp=target-current;tx.add(SystemProgram.transfer({fromPubkey:owner,toPubkey:wsolAta,lamports:Number(topUp)}));tx.add(syncNativeIx(wsolAta));}
+      const currentFeeReserve=BigInt(await connection.getBalance(session,'confirmed'));
+      const feeReserveTarget=BigInt(userFeeReserveTargetLamports());
+      if(currentFeeReserve<feeReserveTarget){
+        tx.add(SystemProgram.transfer({fromPubkey:owner,toPubkey:session,lamports:Number(feeReserveTarget-currentFeeReserve)}));
+      }
     }else if(action==='revoke'){
       tx.add(new TransactionInstruction({
         programId:pid,
@@ -530,27 +1059,35 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
     };
   }
   async function confirmAction(token,userId,action='authorize',signature=''){
-    const row=actionRow(token,action,userId);
-    if(!row)throw Object.assign(new Error('Delegated action link is invalid or expired'),{statusCode:410});
-    if(signature){
-      const status=await connection.getSignatureStatuses([signature],{searchTransactionHistory:true});
-      const s=status.value?.[0];
-      if(s?.err)throw Object.assign(new Error(`On-chain transaction failed: ${JSON.stringify(s.err)}`),{statusCode:409});
-    }
+    const row=actionRow(token,action,userId);if(!row)throw Object.assign(new Error('Delegated action link is invalid or expired'),{statusCode:410});
+    if(signature){const status=await connection.getSignatureStatuses([signature],{searchTransactionHistory:true});const s=status.value?.[0];if(s?.err)throw Object.assign(new Error(`On-chain transaction failed: ${JSON.stringify(s.err)}`),{statusCode:409})}
     const exists=await onchainPolicyExists(row);
     if(action==='authorize'&&!exists)throw Object.assign(new Error('Delegated policy account is not active on-chain yet'),{statusCode:409});
     const at=now();
     if(action==='authorize'){
       db.prepare(`UPDATE delegated_copy_sessions SET state='policy_active',authorized_at=?,revoked_at='',auth_token_hash='',auth_token_expires_at='',updated_at=? WHERE subscription_id=?`).run(at,at,row.subscription_id);
       const sub=subRow(db,row.subscription_id);
-      return snapshot(sub,{issueToken:false});
+      if(!sub)throw Object.assign(new Error('Copy subscription not found'),{statusCode:404});
+      const result=await snapshot(sub,{issueToken:false});
+      db.prepare(`UPDATE copy_subscriptions SET enabled=?,engine_state=?,last_error=?,updated_at=? WHERE id=?`).run(
+        result.active?1:0,
+        result.active?'active':String(result.authorizationState||'pending'),
+        result.active?'':String(result.executionReadyReason||''),
+        at,
+        sub.id
+      );
+      return result;
     }
     db.prepare(`UPDATE delegated_copy_sessions SET state='revoked',revoked_at=?,auth_token_hash='',auth_token_expires_at='',updated_at=? WHERE subscription_id=?`).run(at,at,row.subscription_id);
-    return {active:false,authorizationState:'revoked',revoked:true,executionWallet:{...publicSession(sessionRow(db,row.subscription_id)),status:'revoked'}};
+    const sub=subRow(db,row.subscription_id);
+    if(sub)db.prepare(`UPDATE copy_subscriptions SET enabled=0,engine_state='stopped',last_error='',updated_at=? WHERE id=?`).run(at,sub.id);
+    let feeReserveRefund={refundedLamports:'0',signature:''};
+    try{feeReserveRefund=await refundSessionFeeReserve(row)}catch(error){lastError=`fee reserve refund: ${String(error?.message||error)}`}
+    return {active:false,authorizationState:'revoked',revoked:true,feeReserveRefund,executionWallet:{...publicSession(sessionRow(db,row.subscription_id)),status:'revoked'}};
   }
   function status(){return environmentStatus()}
-  function start(){return status()}
-  function stop(){return true}
+  function start(){scheduleRiskMonitor(1200);return status()}
+  function stop(){if(riskTimer)clearTimeout(riskTimer);riskTimer=null;return true}
   async function withdrawSol(){
     throw Object.assign(new Error('Non-custodial vault withdrawals require an owner-signed on-chain transaction; server-side withdrawal is disabled'),{statusCode:409,code:'OWNER_SIGNATURE_REQUIRED'});
   }

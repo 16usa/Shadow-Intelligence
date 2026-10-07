@@ -2,6 +2,8 @@ import { isSafeHttpUrl } from '../utils.mjs';
 import { resolvePumpUserProfile } from './pump-profile.mjs';
 
 const PROFILE_PLATFORMS = new Set(['auto','fomo','pump.fun','x','other']);
+const FOMO_LOOKUP_CACHE = new Map();
+const FOMO_LOOKUP_TTL_MS = 30 * 60 * 1000;
 
 export function normalizeProfilePlatform(value) {
   const raw = String(value || 'auto').trim().toLowerCase();
@@ -60,17 +62,6 @@ function absoluteUrl(value, baseUrl) {
   }
 }
 
-function normalizedImageIdentity(value) {
-  const raw=String(value||'').trim();
-  if(!raw)return '';
-  try{
-    const url=new URL(raw);
-    return `${url.protocol}//${url.hostname.toLowerCase()}${url.pathname}`;
-  }catch{
-    return raw.split(/[?#]/,1)[0];
-  }
-}
-
 function metaContent(tag) {
   const match = String(tag).match(/\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
   return decodeHtml(match?.[1] ?? match?.[2] ?? match?.[3] ?? '');
@@ -111,6 +102,31 @@ function extractProfileImage(html, baseUrl) {
   return '';
 }
 
+// Fomo social/share cards are NOT avatars. They contain the username,
+// followers/trades text and coloured strips. Only accept explicit profile-picture
+// fields from embedded JSON when reading fomo.family HTML.
+function extractFomoEmbeddedAvatar(html, baseUrl) {
+  const source = String(html || '');
+  const patterns = [
+    /"profilePictureLink"\s*:\s*"((?:\\.|[^"\\])+)"/gi,
+    /"profile_picture_link"\s*:\s*"((?:\\.|[^"\\])+)"/gi,
+    /"profilePicture"\s*:\s*"((?:\\.|[^"\\])+)"/gi,
+    /"profileImageUrl"\s*:\s*"((?:\\.|[^"\\])+)"/gi,
+    /"avatarUrl"\s*:\s*"((?:\\.|[^"\\])+)"/gi,
+  ];
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(source))) {
+      const image = absoluteUrl(match[1], baseUrl);
+      if (!image) continue;
+      const low = image.toLowerCase();
+      if (/\b(?:share|social|preview|card|og-image|opengraph)\b/.test(low)) continue;
+      return image;
+    }
+  }
+  return '';
+}
+
 async function fetchProfilePage(url) {
   if (!isPublicProfileUrl(url)) return null;
 
@@ -119,7 +135,7 @@ async function fetchProfilePage(url) {
       redirect: 'follow',
       headers: {
         accept: 'text/html,application/xhtml+xml',
-        'user-agent': 'Mozilla/5.0 (compatible; ShadowIntelligence/1.0)',
+        'user-agent': 'Mozilla/5.0 (compatible; SYNC/1.0)',
       },
       signal: AbortSignal.timeout(7000),
     });
@@ -138,6 +154,48 @@ async function fetchProfilePage(url) {
   } catch {
     return null;
   }
+}
+
+function cleanExactHandle(value) {
+  return normalizeProfileHandle(value).toLowerCase();
+}
+
+async function fetchFomoPublicAvatar(handle) {
+  const normalized = normalizeProfileHandle(handle);
+  if (!normalized) return { found:false, avatar:'' };
+  const key = normalized.toLowerCase();
+  const cached = FOMO_LOOKUP_CACHE.get(key);
+  if (cached && Date.now() - cached.at < FOMO_LOOKUP_TTL_MS) return cached.value;
+
+  let value = { found:false, avatar:'' };
+  try {
+    // Free/no-key public search. We use it only to obtain Fomo's real
+    // profilePictureLink. We never use a rendered/share card as an avatar.
+    const url = `https://fomolens.app/api/public/search?q=${encodeURIComponent(normalized)}`;
+    const response = await fetch(url, {
+      redirect:'follow',
+      headers:{
+        accept:'application/json',
+        'user-agent':'Mozilla/5.0 (compatible; SYNC/1.0)'
+      },
+      signal:AbortSignal.timeout(5000)
+    });
+    if (response.ok) {
+      const data = await response.json().catch(()=>null);
+      const raw = Array.isArray(data?.results) ? data.results : (data?.results ? [data.results] : []);
+      const row = raw.find(item =>
+        String(item?.kind||'').toLowerCase()==='trader' &&
+        cleanExactHandle(item?.userHandle)===key
+      );
+      if (row) {
+        const avatar = absoluteUrl(row.profilePictureLink || '', 'https://fomolens.app/');
+        value = { found:true, avatar };
+      }
+    }
+  } catch {}
+
+  FOMO_LOOKUP_CACHE.set(key,{at:Date.now(),value});
+  return value;
 }
 
 function profileCandidates({ platform, handle, profileUrl }) {
@@ -189,7 +247,6 @@ export async function resolveProfileAvatar(input = {}) {
       };
     }
 
-    // If Pump.fun was explicitly selected, do not silently relabel it Fomo/X.
     if(platform==='pump.fun'){
       return {
         avatar:'',
@@ -201,20 +258,31 @@ export async function resolveProfileAvatar(input = {}) {
     }
   }
 
-  const candidates = profileCandidates({ platform, handle, profileUrl });
+  // Fomo must resolve to a REAL profilePictureLink. Do this before scraping
+  // profile HTML so og:image/share-card assets can never leak into avatar UI.
+  if(handle && (platform==='fomo' || platform==='auto')){
+    const fomo=await fetchFomoPublicAvatar(handle);
+    if(fomo.found){
+      return {
+        avatar:fomo.avatar||'',
+        source:fomo.avatar?'fomo-profile':'pending',
+        platform:'fomo',
+        profileUrl:`https://fomo.family/profile/${encodeURIComponent(handle)}`,
+        handle
+      };
+    }
+  }
 
-  // Cache the Fomo homepage image for this resolution. If a /profile/<handle>
-  // page returns the exact same OG image, it is a generic site preview, not the
-  // user's avatar, and must not be stored on the Entity.
-  let fomoHomeImage;
+  const candidates = profileCandidates({ platform, handle, profileUrl });
 
   for (const url of candidates) {
     const result = await fetchProfilePage(url);
-    if(!result?.avatar)continue;
+    if(!result)continue;
 
     let detectedPlatform=platform;
+    let host='';
     try{
-      const host=new URL(result.profileUrl||url).hostname.toLowerCase();
+      host=new URL(result.profileUrl||url).hostname.toLowerCase();
       if(host==='fomo.family'||host.endsWith('.fomo.family'))detectedPlatform='fomo';
       else if(host==='x.com'||host.endsWith('.x.com')||host==='twitter.com'||host.endsWith('.twitter.com'))detectedPlatform='x';
       else if(platform==='auto')detectedPlatform='other';
@@ -223,19 +291,22 @@ export async function resolveProfileAvatar(input = {}) {
     }
 
     if(detectedPlatform==='fomo'){
-      if(fomoHomeImage===undefined){
-        const home=await fetchProfilePage('https://fomo.family/');
-        fomoHomeImage=home?.avatar||'';
+      const cleanAvatar=extractFomoEmbeddedAvatar(result.html,result.profileUrl||url);
+      if(cleanAvatar){
+        return {
+          avatar:cleanAvatar,
+          source:'fomo-profile',
+          platform:'fomo',
+          profileUrl:result.profileUrl||url,
+          handle
+        };
       }
-
-      // This is the exact failure that made unrelated Pump.fun handles all
-      // receive the same Fomo image.
-      if(
-        fomoHomeImage &&
-        normalizedImageIdentity(result.avatar)===normalizedImageIdentity(fomoHomeImage)
-      )continue;
+      // IMPORTANT: never use result.avatar here. On Fomo that is commonly the
+      // social preview card which contains text/strips and caused the broken crop.
+      continue;
     }
 
+    if(!result.avatar)continue;
     return {
       avatar:result.avatar,
       source:detectedPlatform==='auto'?'profile':detectedPlatform,

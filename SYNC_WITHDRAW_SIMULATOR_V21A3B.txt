@@ -1,0 +1,285 @@
+=== SYNC WITHDRAW SIMULATOR V21A3B ===
+READ-ONLY: simulateTransaction only. NO transaction is broadcast.
+Program ID: HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA
+withdraw_token discriminator: 88ebb505656d3951 binaryHit=false
+withdraw_sol   discriminator: 91834a8841892a26 binaryHit=false
+
+--- TARGET SESSION ---
+Entity: @sh4vwty
+Subscription: cps_2904b90c-2606-4b67-b3d7-996101bfcf33
+Owner: 6qt8tt9g9F9PQRnZwHC3EbdsLK6aa4i1BY7KwgqMgbdJ
+Policy: BLUhWjXjUkM6SQ9nDfqS68TPpJXDYnFLF6iigASzWsfQ
+Vault: HjpZhgwV3W9giVgjb8zaRD5hc7cLsLKpHmTxtCXpkfoL
+Vault WSOL ATA: 7LCj7Wd49JbSd6YnsAMCYcYheZc8tTWj3yG35Tba1bL1
+Vault WSOL raw: 42981174
+Owner WSOL ATA: GVoLReKE3jNjr8rphffN6JZEaT6tnyRWSDc2MNkPfbkX
+Owner WSOL ATA exists: false
+
+--- WITHDRAW_TOKEN SIMULATIONS ---
+[1] owner > policy > vault > source > destination > token | disc+u64(1)
+    err=null units=19974
+    logs:
+      Program log: CreateIdempotent
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 179 of 394649 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program 11111111111111111111111111111111 success
+      Program log: Initialize the associated token account
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 37 of 389560 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 229 of 387099 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 13413 of 400000 compute units
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+      Program log: Instruction: WithdrawToken
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 83 of 380462 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA consumed 6561 of 386587 compute units
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA success
+    >>> SIMULATION MATCH: instruction accepted <<<
+[2] owner > policy > vault > source > destination > token | disc-only
+    err={"InstructionError":[1,{"Custom":102}]} units=16686
+    logs:
+      Program log: CreateIdempotent
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 179 of 394649 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program 11111111111111111111111111111111 success
+      Program log: Initialize the associated token account
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 37 of 389560 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 229 of 387099 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 13413 of 400000 compute units
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+      Program log: Instruction: WithdrawToken
+      Program log: AnchorError occurred. Error Code: InstructionDidNotDeserialize. Error Number: 102. Error Message: The program could not deserialize the given instruction.
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA consumed 3273 of 386587 compute units
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA failed: custom program error: 0x66
+[3] owner > policy > vault > source > destination > mint > token | disc+u64(1)
+    err={"InstructionError":[1,{"Custom":3008}]} units=18550
+    logs:
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 179 of 394649 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program 11111111111111111111111111111111 success
+      Program log: Initialize the associated token account
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 37 of 389560 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 229 of 387099 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 13413 of 400000 compute units
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+      Program log: Instruction: WithdrawToken
+      Program log: AnchorError caused by account: token_program. Error Code: InvalidProgramId. Error Number: 3008. Error Message: Program ID was not as expected.
+      Program log: Left:
+      Program log: So11111111111111111111111111111111111111112
+      Program log: Right:
+      Program log: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA consumed 5137 of 386587 compute units
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA failed: custom program error: 0xbc0
+[4] owner > policy > vault > source > destination > mint > token | disc-only
+    err={"InstructionError":[1,{"Custom":102}]} units=16925
+    logs:
+      Program log: CreateIdempotent
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 179 of 394649 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program 11111111111111111111111111111111 success
+      Program log: Initialize the associated token account
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 37 of 389560 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 229 of 387099 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 13413 of 400000 compute units
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+      Program log: Instruction: WithdrawToken
+      Program log: AnchorError occurred. Error Code: InstructionDidNotDeserialize. Error Number: 102. Error Message: The program could not deserialize the given instruction.
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA consumed 3512 of 386587 compute units
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA failed: custom program error: 0x66
+[5] owner > policy > source > destination > vault > token | disc+u64(1)
+    err={"InstructionError":[1,{"Custom":3012}]} units=17633
+    logs:
+      Program log: CreateIdempotent
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 179 of 394649 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program 11111111111111111111111111111111 success
+      Program log: Initialize the associated token account
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 37 of 389560 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 229 of 387099 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 13413 of 400000 compute units
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+      Program log: Instruction: WithdrawToken
+      Program log: AnchorError caused by account: destination. Error Code: AccountNotInitialized. Error Number: 3012. Error Message: The program expected this account to be already initialized.
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA consumed 4220 of 386587 compute units
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA failed: custom program error: 0xbc4
+[6] owner > policy > source > destination > vault > token | disc-only
+    err={"InstructionError":[1,{"Custom":102}]} units=16686
+    logs:
+      Program log: CreateIdempotent
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 179 of 394649 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program 11111111111111111111111111111111 success
+      Program log: Initialize the associated token account
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 37 of 389560 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 229 of 387099 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 13413 of 400000 compute units
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+      Program log: Instruction: WithdrawToken
+      Program log: AnchorError occurred. Error Code: InstructionDidNotDeserialize. Error Number: 102. Error Message: The program could not deserialize the given instruction.
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA consumed 3273 of 386587 compute units
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA failed: custom program error: 0x66
+[7] owner > vault > policy > source > destination > token | disc+u64(1)
+    err={"InstructionError":[1,{"Custom":3012}]} units=16867
+    logs:
+      Program log: CreateIdempotent
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 179 of 394649 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program 11111111111111111111111111111111 success
+      Program log: Initialize the associated token account
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 37 of 389560 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 229 of 387099 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 13413 of 400000 compute units
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+      Program log: Instruction: WithdrawToken
+      Program log: AnchorError caused by account: policy. Error Code: AccountNotInitialized. Error Number: 3012. Error Message: The program expected this account to be already initialized.
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA consumed 3454 of 386587 compute units
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA failed: custom program error: 0xbc4
+[8] owner > vault > policy > source > destination > token | disc-only
+    err={"InstructionError":[1,{"Custom":102}]} units=16686
+    logs:
+      Program log: CreateIdempotent
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 179 of 394649 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program 11111111111111111111111111111111 success
+      Program log: Initialize the associated token account
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 37 of 389560 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 229 of 387099 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 13413 of 400000 compute units
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+      Program log: Instruction: WithdrawToken
+      Program log: AnchorError occurred. Error Code: InstructionDidNotDeserialize. Error Number: 102. Error Message: The program could not deserialize the given instruction.
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA consumed 3273 of 386587 compute units
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA failed: custom program error: 0x66
+[9] policy > owner > vault > source > destination > token | disc+u64(1)
+    err={"InstructionError":[1,{"Custom":3010}]} units=16688
+    logs:
+      Program log: CreateIdempotent
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 179 of 394649 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program 11111111111111111111111111111111 success
+      Program log: Initialize the associated token account
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 37 of 389560 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 229 of 387099 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 13413 of 400000 compute units
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+      Program log: Instruction: WithdrawToken
+      Program log: AnchorError caused by account: owner. Error Code: AccountNotSigner. Error Number: 3010. Error Message: The given account did not sign.
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA consumed 3275 of 386587 compute units
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA failed: custom program error: 0xbc2
+[10] policy > owner > vault > source > destination > token | disc-only
+    err={"InstructionError":[1,{"Custom":102}]} units=16686
+    logs:
+      Program log: CreateIdempotent
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 179 of 394649 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program 11111111111111111111111111111111 success
+      Program log: Initialize the associated token account
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 37 of 389560 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 229 of 387099 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 13413 of 400000 compute units
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+      Program log: Instruction: WithdrawToken
+      Program log: AnchorError occurred. Error Code: InstructionDidNotDeserialize. Error Number: 102. Error Message: The program could not deserialize the given instruction.
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA consumed 3273 of 386587 compute units
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA failed: custom program error: 0x66
+[11] owner > policy > vault > source > destination > token > system | disc+u64(1)
+    err=null units=20212
+    logs:
+      Program log: CreateIdempotent
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 179 of 394649 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program 11111111111111111111111111111111 success
+      Program log: Initialize the associated token account
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 37 of 389560 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 229 of 387099 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 13413 of 400000 compute units
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+      Program log: Instruction: WithdrawToken
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 83 of 380265 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA consumed 6799 of 386587 compute units
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA success
+[12] owner > policy > vault > source > destination > token > system | disc-only
+    err={"InstructionError":[1,{"Custom":102}]} units=16924
+    logs:
+      Program log: CreateIdempotent
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 179 of 394649 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program 11111111111111111111111111111111 success
+      Program log: Initialize the associated token account
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 37 of 389560 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 229 of 387099 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 13413 of 400000 compute units
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+      Program log: Instruction: WithdrawToken
+      Program log: AnchorError occurred. Error Code: InstructionDidNotDeserialize. Error Number: 102. Error Message: The program could not deserialize the given instruction.
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA consumed 3511 of 386587 compute units
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA failed: custom program error: 0x66
+[13] owner > policy > vault > source > destination | disc+u64(1)
+    err={"InstructionError":[1,{"Custom":3005}]} units=17713
+    logs:
+      Program log: CreateIdempotent
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 179 of 394649 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program 11111111111111111111111111111111 success
+      Program log: Initialize the associated token account
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 37 of 389560 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 229 of 387099 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 13413 of 400000 compute units
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+      Program log: Instruction: WithdrawToken
+      Program log: AnchorError caused by account: token_program. Error Code: AccountNotEnoughKeys. Error Number: 3005. Error Message: Not enough account keys given to the instruction.
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA consumed 4300 of 386587 compute units
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA failed: custom program error: 0xbbd
+[14] owner > policy > vault > source > destination | disc-only
+    err={"InstructionError":[1,{"Custom":102}]} units=16448
+    logs:
+      Program log: CreateIdempotent
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 179 of 394649 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program 11111111111111111111111111111111 success
+      Program log: Initialize the associated token account
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 37 of 389560 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 229 of 387099 compute units
+      Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 13413 of 400000 compute units
+      Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+      Program log: Instruction: WithdrawToken
+      Program log: AnchorError occurred. Error Code: InstructionDidNotDeserialize. Error Number: 102. Error Message: The program could not deserialize the given instruction.
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA consumed 3035 of 386587 compute units
+      Program HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA failed: custom program error: 0x66
+
+--- RESULT ---
+MATCH layout: owner > policy > vault > source > destination > token
+MATCH data: disc+u64(1)
+This was simulation only. The real V21B can now use the confirmed account order/data shape.
+
+NO transaction was sent.
+NO wallet signature was requested.
+NO funds moved.

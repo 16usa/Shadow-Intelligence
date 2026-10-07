@@ -44,8 +44,8 @@ async function heliusGate(task){
 }
 
 function rpcEndpoint() {
-  if (process.env.SOLANA_RPC_URL && isSafeHttpUrl(process.env.SOLANA_RPC_URL)) return process.env.SOLANA_RPC_URL;
-  if (process.env.HELIUS_API_KEY) return `https://mainnet.helius-rpc.com/?api-key=${encodeURIComponent(process.env.HELIUS_API_KEY)}`;
+  const custom=String(process.env.SOLANA_RPC_URL||'').trim();
+  if (custom && isSafeHttpUrl(custom) && !isHeliusUrl(custom)) return custom;
   return 'https://api.mainnet-beta.solana.com';
 }
 
@@ -461,7 +461,7 @@ export async function getWalletTokenHoldings(address,{fetchImpl=fetch}={}) {
   }
 
   return {
-    provider:process.env.HELIUS_API_KEY?'helius-rpc':process.env.SOLANA_RPC_URL?'custom-rpc':'public-rpc',
+    provider:(process.env.SOLANA_RPC_URL&&!isHeliusUrl(process.env.SOLANA_RPC_URL))?'custom-rpc':'public-rpc',
     holdings:[...byMint.values()].filter(h=>h.amount>1e-12)
   };
 }
@@ -469,11 +469,6 @@ export async function getWalletTokenHoldings(address,{fetchImpl=fetch}={}) {
 
 export async function getRecentWalletActivity(address, { limit = 20, untilSignature = '', fetchImpl = fetch } = {}) {
   if (!isSolanaAddress(address)) throw new Error('Invalid Solana wallet address');
-  if (process.env.HELIUS_API_KEY) {
-    const rows = await heliusSince(address,{limit,untilSignature,fetchImpl});
-    const activity = rows.flatMap(tx => normalizeHeliusTransaction(tx,address));
-    return { provider:'helius', signatures:rows.map(x=>x.signature), activity };
-  }
   const options = { commitment:'confirmed', limit:Math.max(1,Math.min(limit,100)) };
   if (untilSignature) options.until = untilSignature;
   const sigRows = await rpc('getSignaturesForAddress',[address,options],{fetchImpl}) || [];
@@ -490,12 +485,19 @@ export async function getRecentWalletActivity(address, { limit = 20, untilSignat
   return { provider:'solana-rpc', signatures:good.map(x=>x.signature), activity:txRows.flatMap(x=>normalizeRpcTransaction(x.tx,address,x.signature)) };
 }
 
+export async function getHeliusRecentWalletActivity(address,{limit=20,untilSignature='',fetchImpl=fetch}={}){
+  if(!isSolanaAddress(address))throw new Error('Invalid Solana wallet address');
+  if(!process.env.HELIUS_API_KEY)return {provider:'helius',signatures:[],activity:[]};
+  const rows=await heliusSince(address,{limit,untilSignature,fetchImpl});
+  return {provider:'helius',signatures:rows.map(x=>x.signature),activity:rows.flatMap(tx=>normalizeHeliusTransaction(tx,address))};
+}
+
 /* SHADOW_RPC_REALTIME_V310_DIRECT_RPC */
 function directRpcEndpoints() {
   const out=[];
   const add=value=>{
     const v=String(value||'').trim();
-    if(v&&isSafeHttpUrl(v)&&!out.includes(v))out.push(v);
+    if(v&&isSafeHttpUrl(v)&&!isHeliusUrl(v)&&!out.includes(v))out.push(v);
   };
   add(process.env.SOLANA_RPC_URL);
   add(process.env.SOLANA_BACKUP_RPC_URL);
@@ -573,14 +575,14 @@ export async function solanaRpcHealth({fetchImpl=fetch}={}){
     const result=await rpcDirect('getHealth',[],{fetchImpl});
     return {
       configured:true,
-      provider:process.env.SOLANA_RPC_URL?'custom-rpc':'public-rpc',
+      provider:(process.env.SOLANA_RPC_URL&&!isHeliusUrl(process.env.SOLANA_RPC_URL))?'custom-rpc':'public-rpc',
       backupConfigured:!!process.env.SOLANA_BACKUP_RPC_URL,
       status:result==='ok'?'online':String(result||'online')
     };
   }catch(error){
     return {
       configured:true,
-      provider:process.env.SOLANA_RPC_URL?'custom-rpc':'public-rpc',
+      provider:(process.env.SOLANA_RPC_URL&&!isHeliusUrl(process.env.SOLANA_RPC_URL))?'custom-rpc':'public-rpc',
       backupConfigured:!!process.env.SOLANA_BACKUP_RPC_URL,
       status:'offline',
       error:String(error?.message||error)
@@ -592,8 +594,8 @@ export async function solanaRpcHealth({fetchImpl=fetch}={}){
 export async function solanaHealth({ fetchImpl = fetch } = {}) {
   try {
     const result = await rpc('getHealth',[],{fetchImpl});
-    return { configured:!!process.env.SOLANA_RPC_URL || !!process.env.HELIUS_API_KEY, provider:process.env.HELIUS_API_KEY?'helius':process.env.SOLANA_RPC_URL?'custom-rpc':'public-rpc', status:result === 'ok' ? 'online' : String(result || 'online') };
+    return { configured:true, provider:(process.env.SOLANA_RPC_URL&&!isHeliusUrl(process.env.SOLANA_RPC_URL))?'custom-rpc':'public-rpc', status:result === 'ok' ? 'online' : String(result || 'online') };
   } catch (error) {
-    return { configured:!!process.env.SOLANA_RPC_URL || !!process.env.HELIUS_API_KEY, provider:process.env.HELIUS_API_KEY?'helius':process.env.SOLANA_RPC_URL?'custom-rpc':'public-rpc', status:'offline', error:error.message };
+    return { configured:true, provider:(process.env.SOLANA_RPC_URL&&!isHeliusUrl(process.env.SOLANA_RPC_URL))?'custom-rpc':'public-rpc', status:'offline', error:error.message };
   }
 }

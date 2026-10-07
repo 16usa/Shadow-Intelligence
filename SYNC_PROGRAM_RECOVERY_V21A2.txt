@@ -1,0 +1,78 @@
+=== SYNC PROGRAM RECOVERY V21A2 ===
+Program ID: HGFPeTaz4C3EVz3k4UBAB11g73FxaTAmaKxEQg4SAXpA
+RPC: https://mainnet.helius-rpc.com/?api-key=***
+Program executable: true
+Program loader: BPFLoaderUpgradeab1e11111111111111111111111
+Program account data bytes: 36
+Upgradeable-loader state variant: 2
+ProgramData: BnDAuMU5W6cFEmce2zgNMp6ofdykpeMbhFDEnb2r6QS4
+ProgramData bytes: 242189
+ELF offset in ProgramData: 45
+ELF bytes: 242144
+ELF SHA256: a3edcc63fdccc7f9a0e7a3a1e1892ac6030838fbc768c3a3b2b4e3a7f84ea510
+
+--- ANCHOR IDL PROBE ---
+Legacy Anchor IDL address: uJfijKh1rdSNuFDeVYVoynUefQDk7Lw4UYknAGPNzuW
+IDL account: not found
+
+--- INSTRUCTION DISCRIMINATOR SCAN ---
+initialize_policy      09ba56e181a2e738 hits=0
+revoke_session         565cc678900207c2 hits=0
+withdraw               b712469c946da122 hits=0
+withdraw_all           60f6a682e5322b46 hits=0
+withdraw_sol           91834a8841892a26 hits=0
+withdraw_vault         8707ed78955e5f07 hits=0
+close_vault            8d67117e484b1d1d hits=0
+close_account          7dff950e6e224818 hits=0
+close_policy           372af8e5de8a1afc hits=0
+close_session          4472b28cde26f8d3 hits=0
+deposit                f223c68952e1f2b6 hits=0
+deposit_sol            6c514e757d9b38c8 hits=0
+fund_vault             1a21cff2776c8649 hits=0
+fund_session           28af78a220642026 hits=0
+refund_reserve         a77d1be06634b556 hits=0
+reclaim                2cb1ecf9916da3ba hits=0
+reclaim_vault          4a1857146bf2ea48 hits=0
+emergency_withdraw     ef2dcb409649da5c hits=0
+sweep_vault            895c09018cedd68c hits=0
+close_wsol             e646a4320a86c074 hits=0
+update_policy          d4f5f607a3971239 hits=0
+execute_swap           38b67cd79b8c9d66 hits=0
+execute_trade          4d10c0870d006a61 hits=0
+execute_pump_v2        fcf9eebdf198ef09 hits=0
+
+--- INTERESTING ASCII STRINGS ---
+1000: programs/shadow_delegated_vault/src/lib.rs
+1878: !Dpolicy
+2136: programs/shadow_delegated_vault/src/lib.rs
+2184: vault
+2296: Instruction: IdlCloseAccount
+2528: Instruction: ExecuteSwapInstruction: WithdrawSolInstruction: UpdatePolicy
+2608: Instruction: RevokeSession
+2640: Instruction: WithdrawToken
+2672: Instruction: InitializePolicy
+2912: InsufficientFunds
+3552: Session revoked
+3568: Session expired
+3584: Wrong session key
+3656: Token account is not owned by delegated vault
+3728: BUY must spend WSOL
+3752: SELL must return WSOL
+3872: Unexpected vault-owned account in route
+3992: Destination token account is not owned by the policy owner
+4832: ConstraintMintCloseAuthorityExtensionAuthority
+5120: InsufficientFunds
+6520: A close constraint was violated
+7680: A close authority constraint was violated
+7728: A close authority extension authority constraint was violated
+44788: Wsol{
+
+--- RECENT PROGRAM INSTRUCTION PREFIXES ---
+d4f5f607a3971239 count=5 candidate=update_policy
+09ba56e181a2e738 count=4 candidate=initialize_policy
+
+=== RECOVERY COMPLETE ===
+NO transaction was sent.
+NO wallet signature was requested.
+NO funds moved.
+Upload/show SYNC_PROGRAM_RECOVERY_V21A2.txt and any recovered SYNC_DEPLOYED_IDL.json.

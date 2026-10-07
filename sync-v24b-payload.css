@@ -1,0 +1,39 @@
+/* SYNC_VAULT_HEADER_LIVE_V24B */
+.vault-header-right{
+  justify-self:end;
+  min-width:0;
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:4px;
+}
+.vault-header-right .sync-menu{margin-left:0 !important}
+.vault-header-balance{
+  min-width:0;
+  display:flex;
+  align-items:baseline;
+  justify-content:flex-end;
+  gap:4px;
+  padding:0 2px 0 6px;
+  color:var(--green,#16e57c);
+  white-space:nowrap;
+  font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace !important;
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums;
+  text-shadow:0 0 14px rgba(22,229,124,.18);
+}
+.vault-header-balance[hidden]{display:none !important}
+.vault-header-balance small{
+  color:#8c928f;
+  font-size:8px;
+  font-weight:700;
+  letter-spacing:.08em;
+}
+.vault-header-balance.is-zero{color:#8c928f;text-shadow:none}
+@media (max-width:430px){
+  .vault-header-balance{font-size:10px;padding-left:3px;gap:3px}
+  .vault-header-balance small{font-size:7px}
+  .vault-header-right{gap:1px}
+}

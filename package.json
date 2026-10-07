@@ -11,7 +11,9 @@
     "delegated:artifact:check": "node scripts/verify-delegated-artifact.mjs",
     "delegated:artifact:stage": "bash scripts/stage-delegated-artifact.sh",
     "delegated:build:doctor": "bash scripts/build-shadow-delegated-replit.sh doctor",
-    "delegated:build:replit": "bash scripts/build-shadow-delegated-replit.sh build"
+    "delegated:build:replit": "bash scripts/build-shadow-delegated-replit.sh build",
+    "sync:24x7:keygen": "node scripts/generate-sync-executor-key.mjs",
+    "sync:24x7:check": "node scripts/check-sync-24x7.mjs"
   },
   "engines": {
     "node": ">=22.5"
