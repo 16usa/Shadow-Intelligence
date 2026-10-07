@@ -46,25 +46,13 @@
       $('#actionBtn').disabled=true;
     }
   }
-  async function sign(){const p=provider();if(!p){status('Open this page inside Phantom or Solflare so the owner wallet can sign.');return}$('#actionBtn').disabled=true;try{await p.connect();const prep=await api('/api/copy-engine/authorization/prepare',{method:'POST',body:JSON.stringify({token,action:mode})});const bytes=Uint8Array.from(atob(prep.transaction),c=>c.charCodeAt(0));let signature='';if(p.signAndSendTransaction){const web3=window.solanaWeb3; if(!web3?.Transaction)throw new Error('Wallet transaction codec is unavailable on this page');const tx=web3.Transaction.from(bytes);const sent=await p.signAndSendTransaction(tx);signature=sent?.signature||sent||''}else throw new Error('Connected wallet does not expose signAndSendTransaction');status(`Submitted ${String(signature).slice(0,12)}… Waiting for chain…`);await new Promise(r=>setTimeout(r,1400));const result=await api('/api/copy-engine/authorization/confirm',{method:'POST',body:JSON.stringify({token,action:mode,signature})});
+  async function sign(){const p=provider();if(!p){status('Open this page inside Phantom or Solflare so the owner wallet can sign.');return}$('#actionBtn').disabled=true;try{await p.connect();const prep=await api('/api/copy-engine/authorization/prepare',{method:'POST',body:JSON.stringify({token,action:mode})});const bytes=Uint8Array.from(atob(prep.transaction),c=>c.charCodeAt(0));let signature='';if(p.signAndSendTransaction){const web3=window.solanaWeb3; if(!web3?.Transaction)throw new Error('Wallet transaction codec is unavailable on this page');const tx=web3.Transaction.from(bytes);const sent=await p.signAndSendTransaction(tx);signature=sent?.signature||sent||''}else throw new Error('Connected wallet does not expose signAndSendTransaction');status(`Submitted ${String(signature).slice(0,12)}… Waiting for chain…`);await new Promise(r=>setTimeout(r,1400));const result=await api('/api/copy-engine/authorization/confirm',{method:'POST',body:JSON.stringify({token,action:mode,signature})});status(mode==='revoke'?'24/7 delegation revoked on-chain.':'SYNC 24/7 execution is authorized. Your scoped session reserve pays network fees; trading limits remain enforced by the signed on-chain policy.');$('#status').className='status good';
       if(mode==='authorize'){
-        const authState=String(result&&result.authorizationState||'').trim().toLowerCase();
-        const stillNeedsWallet=['authorization_required','policy_update_required','funding_required','fee_reserve_required'].includes(authState);
-        const confirmed=result&&result.authorizationConfirmed===true&&!stillNeedsWallet;
-        if(!confirmed){
-          throw new Error('Authorization transaction is confirmed, but execution is not ready yet ('+(authState||'pending')+'). Tap Refresh status or authorize again only if requested.');
-        }
-        status(result.active===true
-          ?'SYNC 24/7 execution is authorized and ready.'
-          :'SYNC 24/7 authorization is confirmed. Execution status: '+(authState||'ready')+'.');
-        $('#status').className='status good';
         showCopyTradingCta();
       }else{
-        status('24/7 delegation revoked on-chain.');
-        $('#status').className='status good';
         setTimeout(()=>{location.replace('/sync.html')},900);
       }
-      return result /* SYNC_AUTH_STATE_FIX_V25 */}catch(e){status(e.message);$('#status').className='status bad';$('#actionBtn').disabled=false}}
+      return result}catch(e){status(e.message);$('#status').className='status bad';$('#actionBtn').disabled=false}}
   $('#actionBtn').addEventListener('click',sign);$('#refreshBtn').addEventListener('click',load);$('#copyTradingBtn').addEventListener('click',()=>{location.href='/sync.html'});
   // web3.js browser bundle already exists in Shadow wallet flows in current builds.
   load();

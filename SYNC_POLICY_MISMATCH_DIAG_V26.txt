@@ -1,0 +1,68 @@
+=== SYNC POLICY MISMATCH DIAG V26 ===
+READ-ONLY: NO transaction, NO signature, NO funds moved.
+DB: ./shadow-intelligence.db
+RPC: https://api.mainnet-beta.solana.com
+Sessions: 4
+
+------------------------------------------------------------
+Entity: @sh4vwty
+Subscription: cps_2904b90c-2606-4b67-b3d7-996101bfcf33
+DB state: policy_active | subscription engine: policy_update_required
+Owner: 6qt8tt9g…wgqMgbdJ
+Policy: BLUhWjXjUkM6SQ9nDfqS68TPpJXDYnFLF6iigASzWsfQ
+DB session key: 7UydjnuEUxu9H4GimJJrpaC8KffuB2xZdVoaRiJAn5A2
+FAIL session_key: on-chain=11111111111111111111111111111111 desired=7UydjnuEUxu9H4GimJJrpaC8KffuB2xZdVoaRiJAn5A2
+OK   max_trade_lamports: on-chain=43010753 desired=43010753
+OK   daily_cap_lamports: on-chain=43010753 desired=43010753
+OK   max_sell_bps: on-chain=10000 desired=10000
+OK   copy_buys: on-chain=true desired=true
+OK   copy_sells: on-chain=true desired=true
+OK   expires_at: on-chain=1793999762 (2026-11-06T21:16:02.000Z)
+OK   revoked: false
+Vault target SOL: 0.043010752688172046
+Buy amount SOL: 0.043010752688172046
+Daily cap SOL: 0.043010752688172046
+RESULT: MISMATCH -> session_key
+IMPORTANT: current update_policy transaction does NOT change session_key.
+Repeated AUTHORIZE will not fix a session_key mismatch.
+
+------------------------------------------------------------
+Entity: @frankdegods
+Subscription: cps_da4aea83-feb4-49ec-aefd-50f23d8ea1ee
+DB state: authorization_required | subscription engine: stopped
+Owner: 6qt8tt9g…wgqMgbdJ
+Policy: HRtbKZm6gUeAxKPxX6LT7TrUPjtdVGsFmTWKanNN7DFE
+DB session key: 8aFn5mKvme963S4xha9s9BCkLBJFLjoLWFHjDZnztdz2
+OK   session_key: on-chain=8aFn5mKvme963S4xha9s9BCkLBJFLjoLWFHjDZnztdz2 desired=8aFn5mKvme963S4xha9s9BCkLBJFLjoLWFHjDZnztdz2
+FAIL max_trade_lamports: on-chain=42859592 desired=42922139
+FAIL daily_cap_lamports: on-chain=68575347 desired=68675423
+OK   max_sell_bps: on-chain=10000 desired=10000
+OK   copy_buys: on-chain=true desired=true
+OK   copy_sells: on-chain=true desired=true
+OK   expires_at: on-chain=1793989135 (2026-11-06T18:18:55.000Z)
+OK   revoked: false
+Vault target SOL: 0.0429221392394197
+Buy amount SOL: 0.0429221392394197
+Daily cap SOL: 0.06867542278307151
+RESULT: MISMATCH -> max_trade_lamports, daily_cap_lamports
+
+------------------------------------------------------------
+Entity: @Kryphos
+Subscription: cps_69ec18c5-2b62-4622-9860-ceddc808d2db
+DB state: authorization_required | subscription engine: 
+Owner: 6qt8tt9g…wgqMgbdJ
+Policy: AYUhuPXrwfHtrYrQvrfdTDCCadYNR4C3v11U7kUaGfDj
+DB session key: AhwUJ51cVJsobbRD6jZE8d3yDg8PZsDnMk6CopdCZPiD
+RESULT: ORPHAN SESSION — exact copy_subscriptions row is missing.
+
+------------------------------------------------------------
+Entity: @SossaDotKek
+Subscription: cps_115528ab-90b1-4e70-b5b0-441c97bbcdac
+DB state: authorization_required | subscription engine: 
+Owner: 6qt8tt9g…wgqMgbdJ
+Policy: 8Vqpvqi7fKhauMfHRG1pGczfGxzXK8rqb8GhiVWeeMJX
+DB session key: 76WJ6KV4dQz8JXZKbh2HSqR2zg9Kn8N1HsTuPkr8QMWm
+RESULT: ORPHAN SESSION — exact copy_subscriptions row is missing.
+
+=== DIAG COMPLETE ===
+NO transaction was sent. NO wallet signature was requested. NO funds moved.

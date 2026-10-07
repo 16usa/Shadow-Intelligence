@@ -402,19 +402,6 @@ function policyMatches(policy,subscription,row){
     policy.copyBuys===d.copyBuys && policy.copySells===d.copySells &&
     policy.expiresAt>Math.floor(Date.now()/1000)+300;
 }
-
-/* SYNC_POLICY_UPDATE_FIX_V27 */
-function policySettingsMatchDesired(policy,d,row){
-  if(!policy||policy.revoked)return false;
-  return policy.sessionKey===row.session_public_key &&
-    policy.maxTradeLamports===d.maxTradeLamports &&
-    policy.dailyCapLamports===d.dailyCapLamports &&
-    policy.maxSellBps===d.maxSellBps &&
-    policy.copyBuys===d.copyBuys &&
-    policy.copySells===d.copySells;
-}
-/* SYNC_POLICY_UPDATE_FIX_V27_END */
-
 function jupiterBase(){return text(process.env.JUPITER_API_BASE)||'https://api.jup.ag'}
 function jupiterHeaders(){
   const h={accept:'application/json','content-type':'application/json'};
@@ -467,112 +454,6 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
       return parsePolicyData(info.data);
     }catch(error){lastError=String(error?.message||error);return null}
   }
-  /* SYNC_POLICY_UPDATE_FIX_V27 */
-  async function simulatePolicyUpdateData(row,pid,owner,policy,expiresAt,d,data){
-    try{
-      const probe=new Transaction().add(new TransactionInstruction({
-        programId:pid,
-        keys:[
-          {pubkey:owner,isSigner:true,isWritable:false},
-          {pubkey:policy,isSigner:false,isWritable:true}
-        ],
-        data
-      }));
-      probe.feePayer=owner;
-      probe.recentBlockhash=(await connection.getLatestBlockhash('confirmed')).blockhash;
-
-      const raw=probe.serialize({
-        requireAllSignatures:false,
-        verifySignatures:false
-      }).toString('base64');
-
-      const rpc=await connection._rpcRequest('simulateTransaction',[
-        raw,
-        {
-          encoding:'base64',
-          sigVerify:false,
-          replaceRecentBlockhash:true,
-          commitment:'confirmed',
-          accounts:{
-            encoding:'base64',
-            addresses:[policy.toBase58()]
-          }
-        }
-      ]);
-
-      const value=rpc?.result?.value;
-      if(!value||value.err)return null;
-
-      const account=value.accounts?.[0];
-      const encoded=Array.isArray(account?.data)?account.data[0]:account?.data;
-      if(!encoded)return null;
-
-      const post=parsePolicyData(Buffer.from(encoded,'base64'));
-      if(!post)return null;
-
-      return {
-        post,
-        matches:policySettingsMatchDesired(post,d,row) &&
-          post.expiresAt>Math.floor(Date.now()/1000)+300
-      };
-    }catch(error){
-      lastError='policy update simulation: '+String(error?.message||error);
-      return null;
-    }
-  }
-
-  async function verifiedUpdatePolicyData(row,pid,owner,policy,expiresAt,d){
-    const standard=Buffer.concat([
-      UPDATE_DISC,
-      i64(expiresAt),
-      u64(d.maxTradeLamports),
-      u64(d.dailyCapLamports),
-      u16(d.maxSellBps),
-      bool(d.copyBuys),
-      bool(d.copySells)
-    ]);
-
-    const swapped=Buffer.concat([
-      UPDATE_DISC,
-      i64(expiresAt),
-      u64(d.dailyCapLamports),
-      u64(d.maxTradeLamports),
-      u16(d.maxSellBps),
-      bool(d.copyBuys),
-      bool(d.copySells)
-    ]);
-
-    const candidates=d.maxTradeLamports===d.dailyCapLamports
-      ? [{name:'standard',data:standard}]
-      : [
-          {name:'standard',data:standard},
-          {name:'swapped-u64',data:swapped}
-        ];
-
-    for(const candidate of candidates){
-      const simulation=await simulatePolicyUpdateData(
-        row,pid,owner,policy,expiresAt,d,candidate.data
-      );
-      if(simulation?.matches){
-        lastError='';
-        return {
-          data:candidate.data,
-          encoding:candidate.name,
-          simulatedPolicy:simulation.post
-        };
-      }
-    }
-
-    throw Object.assign(
-      new Error(
-        'Could not build a policy update that matches the current copy settings. '+
-        'No transaction was prepared and no funds were moved.'
-      ),
-      {statusCode:409,code:'POLICY_UPDATE_ENCODING_UNVERIFIED'}
-    );
-  }
-  /* SYNC_POLICY_UPDATE_FIX_V27_END */
-
   async function tokenBalanceSnapshot(address){
     try{
       const value=(await connection.getTokenAccountBalance(address,'confirmed')).value;
@@ -1148,19 +1029,8 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
         const data=Buffer.concat([INIT_DISC,idHash(sub.id),session.toBuffer(),i64(expiresAt),u64(d.maxTradeLamports),u64(d.dailyCapLamports),u16(d.maxSellBps),bool(d.copyBuys),bool(d.copySells)]);
         tx.add(new TransactionInstruction({programId:pid,keys:[{pubkey:owner,isSigner:true,isWritable:true},{pubkey:policy,isSigner:false,isWritable:true},{pubkey:vault,isSigner:false,isWritable:false},{pubkey:SystemProgram.programId,isSigner:false,isWritable:false}],data}));
       }else{
-        // V27: verify the deployed program's real UpdatePolicy layout by
-        // simulation before the wallet is ever asked to sign.
-        const verified=await verifiedUpdatePolicyData(
-          row,pid,owner,policy,expiresAt,d
-        );
-        tx.add(new TransactionInstruction({
-          programId:pid,
-          keys:[
-            {pubkey:owner,isSigner:true,isWritable:false},
-            {pubkey:policy,isSigner:false,isWritable:true}
-          ],
-          data:verified.data
-        }));
+        const data=Buffer.concat([UPDATE_DISC,i64(expiresAt),u64(d.maxTradeLamports),u64(d.dailyCapLamports),u16(d.maxSellBps),bool(d.copyBuys),bool(d.copySells)]);
+        tx.add(new TransactionInstruction({programId:pid,keys:[{pubkey:owner,isSigner:true,isWritable:false},{pubkey:policy,isSigner:false,isWritable:true}],data}));
       }
       const wsolAta=ataAddress(vault,WSOL_MINT);
       const current=await tokenRawBalance(wsolAta);
@@ -1188,89 +1058,27 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
       sessionPublicKey:row.session_public_key,cluster:clusterName(),programId:row.program_id,
     };
   }
-  /* SYNC_AUTH_STATE_FIX_V25 */
-  async function waitForConfirmedAuthorizationSignature(signature,timeoutMs=25000){
-    const sig=String(signature||'').trim();
-    if(!sig)throw Object.assign(new Error('Wallet transaction signature is missing'),{statusCode:400});
-    const started=Date.now();
-    while(Date.now()-started<timeoutMs){
-      const response=await connection.getSignatureStatuses([sig],{searchTransactionHistory:true});
-      const status=response.value?.[0]||null;
-      if(status?.err){
-        throw Object.assign(
-          new Error(`On-chain transaction failed: ${JSON.stringify(status.err)}`),
-          {statusCode:409}
-        );
-      }
-      if(status&&(status.confirmationStatus==='confirmed'||status.confirmationStatus==='finalized')){
-        return status;
-      }
-      await new Promise(resolve=>setTimeout(resolve,650));
-    }
-    throw Object.assign(
-      new Error('Authorization transaction was submitted but is not confirmed yet. Refresh status in a few seconds.'),
-      {statusCode:409}
-    );
-  }
-
-  function authorizationStillNeedsWallet(result){
-    const state=String(result?.authorizationState||'').trim().toLowerCase();
-    return [
-      'authorization_required',
-      'policy_update_required',
-      'funding_required',
-      'fee_reserve_required'
-    ].includes(state);
-  }
-  /* SYNC_AUTH_STATE_FIX_V25_END */
-
   async function confirmAction(token,userId,action='authorize',signature=''){
-    const row=actionRow(token,action,userId);
-    if(!row)throw Object.assign(new Error('Delegated action link is invalid or expired'),{statusCode:410});
-
-    // V25: do not accept a submitted signature until Solana reports confirmed/finalized.
-    if(signature)await waitForConfirmedAuthorizationSignature(signature);
-
+    const row=actionRow(token,action,userId);if(!row)throw Object.assign(new Error('Delegated action link is invalid or expired'),{statusCode:410});
+    if(signature){const status=await connection.getSignatureStatuses([signature],{searchTransactionHistory:true});const s=status.value?.[0];if(s?.err)throw Object.assign(new Error(`On-chain transaction failed: ${JSON.stringify(s.err)}`),{statusCode:409})}
     const exists=await onchainPolicyExists(row);
-    if(action==='authorize'&&!exists){
-      throw Object.assign(new Error('Delegated policy account is not active on-chain yet'),{statusCode:409});
-    }
-
+    if(action==='authorize'&&!exists)throw Object.assign(new Error('Delegated policy account is not active on-chain yet'),{statusCode:409});
     const at=now();
     if(action==='authorize'){
-      db.prepare(`UPDATE delegated_copy_sessions SET state='policy_active',authorized_at=?,revoked_at='',updated_at=? WHERE subscription_id=?`)
-        .run(at,at,row.subscription_id);
-
+      db.prepare(`UPDATE delegated_copy_sessions SET state='policy_active',authorized_at=?,revoked_at='',auth_token_hash='',auth_token_expires_at='',updated_at=? WHERE subscription_id=?`).run(at,at,row.subscription_id);
       const sub=subRow(db,row.subscription_id);
       if(!sub)throw Object.assign(new Error('Copy subscription not found'),{statusCode:404});
-
-      let result=await snapshot(sub,{issueToken:false});
-      for(let i=0;i<10&&authorizationStillNeedsWallet(result);i++){
-        await new Promise(resolve=>setTimeout(resolve,500));
-        result=await snapshot(sub,{issueToken:false});
-      }
-
-      const complete=!authorizationStillNeedsWallet(result);
-      if(complete){
-        db.prepare(`UPDATE delegated_copy_sessions
-          SET auth_token_hash='',auth_token_expires_at='',state=?,last_error='',updated_at=?
-          WHERE subscription_id=?`)
-          .run(result.active?'active':'policy_active',now(),row.subscription_id);
-      }
-
+      const result=await snapshot(sub,{issueToken:false});
       db.prepare(`UPDATE copy_subscriptions SET enabled=?,engine_state=?,last_error=?,updated_at=? WHERE id=?`).run(
         result.active?1:0,
         result.active?'active':String(result.authorizationState||'pending'),
-        complete?'':String(result.executionReadyReason||result.authorizationState||'authorization_not_ready'),
-        now(),
+        result.active?'':String(result.executionReadyReason||''),
+        at,
         sub.id
       );
-
-      return {...result,authorizationConfirmed:complete};
+      return result;
     }
-
-    db.prepare(`UPDATE delegated_copy_sessions SET state='revoked',revoked_at=?,auth_token_hash='',auth_token_expires_at='',updated_at=? WHERE subscription_id=?`)
-      .run(at,at,row.subscription_id);
+    db.prepare(`UPDATE delegated_copy_sessions SET state='revoked',revoked_at=?,auth_token_hash='',auth_token_expires_at='',updated_at=? WHERE subscription_id=?`).run(at,at,row.subscription_id);
     const sub=subRow(db,row.subscription_id);
     if(sub)db.prepare(`UPDATE copy_subscriptions SET enabled=0,engine_state='stopped',last_error='',updated_at=? WHERE id=?`).run(at,sub.id);
     let feeReserveRefund={refundedLamports:'0',signature:''};

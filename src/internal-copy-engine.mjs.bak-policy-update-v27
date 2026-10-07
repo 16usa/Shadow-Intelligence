@@ -402,19 +402,6 @@ function policyMatches(policy,subscription,row){
     policy.copyBuys===d.copyBuys && policy.copySells===d.copySells &&
     policy.expiresAt>Math.floor(Date.now()/1000)+300;
 }
-
-/* SYNC_POLICY_UPDATE_FIX_V27 */
-function policySettingsMatchDesired(policy,d,row){
-  if(!policy||policy.revoked)return false;
-  return policy.sessionKey===row.session_public_key &&
-    policy.maxTradeLamports===d.maxTradeLamports &&
-    policy.dailyCapLamports===d.dailyCapLamports &&
-    policy.maxSellBps===d.maxSellBps &&
-    policy.copyBuys===d.copyBuys &&
-    policy.copySells===d.copySells;
-}
-/* SYNC_POLICY_UPDATE_FIX_V27_END */
-
 function jupiterBase(){return text(process.env.JUPITER_API_BASE)||'https://api.jup.ag'}
 function jupiterHeaders(){
   const h={accept:'application/json','content-type':'application/json'};
@@ -467,112 +454,6 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
       return parsePolicyData(info.data);
     }catch(error){lastError=String(error?.message||error);return null}
   }
-  /* SYNC_POLICY_UPDATE_FIX_V27 */
-  async function simulatePolicyUpdateData(row,pid,owner,policy,expiresAt,d,data){
-    try{
-      const probe=new Transaction().add(new TransactionInstruction({
-        programId:pid,
-        keys:[
-          {pubkey:owner,isSigner:true,isWritable:false},
-          {pubkey:policy,isSigner:false,isWritable:true}
-        ],
-        data
-      }));
-      probe.feePayer=owner;
-      probe.recentBlockhash=(await connection.getLatestBlockhash('confirmed')).blockhash;
-
-      const raw=probe.serialize({
-        requireAllSignatures:false,
-        verifySignatures:false
-      }).toString('base64');
-
-      const rpc=await connection._rpcRequest('simulateTransaction',[
-        raw,
-        {
-          encoding:'base64',
-          sigVerify:false,
-          replaceRecentBlockhash:true,
-          commitment:'confirmed',
-          accounts:{
-            encoding:'base64',
-            addresses:[policy.toBase58()]
-          }
-        }
-      ]);
-
-      const value=rpc?.result?.value;
-      if(!value||value.err)return null;
-
-      const account=value.accounts?.[0];
-      const encoded=Array.isArray(account?.data)?account.data[0]:account?.data;
-      if(!encoded)return null;
-
-      const post=parsePolicyData(Buffer.from(encoded,'base64'));
-      if(!post)return null;
-
-      return {
-        post,
-        matches:policySettingsMatchDesired(post,d,row) &&
-          post.expiresAt>Math.floor(Date.now()/1000)+300
-      };
-    }catch(error){
-      lastError='policy update simulation: '+String(error?.message||error);
-      return null;
-    }
-  }
-
-  async function verifiedUpdatePolicyData(row,pid,owner,policy,expiresAt,d){
-    const standard=Buffer.concat([
-      UPDATE_DISC,
-      i64(expiresAt),
-      u64(d.maxTradeLamports),
-      u64(d.dailyCapLamports),
-      u16(d.maxSellBps),
-      bool(d.copyBuys),
-      bool(d.copySells)
-    ]);
-
-    const swapped=Buffer.concat([
-      UPDATE_DISC,
-      i64(expiresAt),
-      u64(d.dailyCapLamports),
-      u64(d.maxTradeLamports),
-      u16(d.maxSellBps),
-      bool(d.copyBuys),
-      bool(d.copySells)
-    ]);
-
-    const candidates=d.maxTradeLamports===d.dailyCapLamports
-      ? [{name:'standard',data:standard}]
-      : [
-          {name:'standard',data:standard},
-          {name:'swapped-u64',data:swapped}
-        ];
-
-    for(const candidate of candidates){
-      const simulation=await simulatePolicyUpdateData(
-        row,pid,owner,policy,expiresAt,d,candidate.data
-      );
-      if(simulation?.matches){
-        lastError='';
-        return {
-          data:candidate.data,
-          encoding:candidate.name,
-          simulatedPolicy:simulation.post
-        };
-      }
-    }
-
-    throw Object.assign(
-      new Error(
-        'Could not build a policy update that matches the current copy settings. '+
-        'No transaction was prepared and no funds were moved.'
-      ),
-      {statusCode:409,code:'POLICY_UPDATE_ENCODING_UNVERIFIED'}
-    );
-  }
-  /* SYNC_POLICY_UPDATE_FIX_V27_END */
-
   async function tokenBalanceSnapshot(address){
     try{
       const value=(await connection.getTokenAccountBalance(address,'confirmed')).value;
@@ -1148,19 +1029,8 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
         const data=Buffer.concat([INIT_DISC,idHash(sub.id),session.toBuffer(),i64(expiresAt),u64(d.maxTradeLamports),u64(d.dailyCapLamports),u16(d.maxSellBps),bool(d.copyBuys),bool(d.copySells)]);
         tx.add(new TransactionInstruction({programId:pid,keys:[{pubkey:owner,isSigner:true,isWritable:true},{pubkey:policy,isSigner:false,isWritable:true},{pubkey:vault,isSigner:false,isWritable:false},{pubkey:SystemProgram.programId,isSigner:false,isWritable:false}],data}));
       }else{
-        // V27: verify the deployed program's real UpdatePolicy layout by
-        // simulation before the wallet is ever asked to sign.
-        const verified=await verifiedUpdatePolicyData(
-          row,pid,owner,policy,expiresAt,d
-        );
-        tx.add(new TransactionInstruction({
-          programId:pid,
-          keys:[
-            {pubkey:owner,isSigner:true,isWritable:false},
-            {pubkey:policy,isSigner:false,isWritable:true}
-          ],
-          data:verified.data
-        }));
+        const data=Buffer.concat([UPDATE_DISC,i64(expiresAt),u64(d.maxTradeLamports),u64(d.dailyCapLamports),u16(d.maxSellBps),bool(d.copyBuys),bool(d.copySells)]);
+        tx.add(new TransactionInstruction({programId:pid,keys:[{pubkey:owner,isSigner:true,isWritable:false},{pubkey:policy,isSigner:false,isWritable:true}],data}));
       }
       const wsolAta=ataAddress(vault,WSOL_MINT);
       const current=await tokenRawBalance(wsolAta);
