@@ -444,37 +444,23 @@
       engineState!=="draft" &&
       engineState!=="authorization_required" &&
       engineState!=="execution_wallet_required" &&
-      engineState!=="error" &&
-      engineState!=="session_rebind_required" &&
-      engineState!=="policy_update_required" &&
-      engineState!=="funding_required" &&
-      engineState!=="fee_reserve_required" &&
-      engineState!=="executor_configuration_required" &&
-      engineState!=="delegated_program_required" &&
-      engineState!=="session_key_store_required"
+      engineState!=="error"
     );
 
-    // Never render a terminal backend failure as an endless spinner.
-    var blocked=!!(sub && !active && [
-      "session_rebind_required","policy_update_required","funding_required",
-      "fee_reserve_required","executor_configuration_required",
-      "delegated_program_required","session_key_store_required","error"
-    ].includes(engineState));
     var ready=!!(
       state.wallet &&
       !active &&
       !needsAuthorization &&
-      !activating && !blocked
+      !activating
     );
 
     var badge=qs("#copyBadge");
     if(badge){
       badge.classList.toggle("is-active",active);
-      badge.classList.toggle("is-pending",needsAuthorization||activating||blocked);
+      badge.classList.toggle("is-pending",needsAuthorization||activating);
 
       if(active)badge.textContent="ACTIVE";
       else if(needsAuthorization)badge.textContent="AUTHORIZE";
-      else if(blocked)badge.textContent="ACTION NEEDED";
       else if(activating)badge.textContent="PENDING";
       else if(ready)badge.textContent="READY";
       else badge.textContent="OFF";
@@ -484,7 +470,6 @@
     if(title){
       if(active)title.textContent="Copy trading active";
       else if(needsAuthorization)title.textContent="Execution authorization required";
-      else if(blocked)title.textContent="Execution needs attention";
       else if(activating)title.textContent="Activating copy trading";
       else if(ready)title.textContent="Ready to start copying";
       else title.textContent="Connect wallet to continue";
@@ -497,13 +482,11 @@
 
     if(startButton){
       startButton.hidden=false;
-      startButton.disabled=needsAuthorization||activating||blocked||!state.wallet;
+      startButton.disabled=needsAuthorization||activating||!state.wallet;
       startButton.textContent=active
         ?"UPDATE SETTINGS"
         :needsAuthorization
           ?"AUTHORIZE FIRST"
-          :blocked
-            ?"CHECK EXECUTION STATUS"
           :activating
             ?"ACTIVATING…"
             :"START COPYING";
