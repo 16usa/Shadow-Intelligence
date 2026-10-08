@@ -233,6 +233,24 @@ async function refundSessionReserve(conn,row){
   }
 }
 
+// SYNC_V56: Read-only on-chain identity verification. Never infer policy
+// revocation from a successful unrelated transaction or from local DB state.
+function inspectHistoricalPolicy(info,row){
+  if(!info)return {status:'missing',verified:false,revoked:false};
+  if(!info.owner.equals(new PublicKey(row.program_id)))
+    return {status:'wrong_program',verified:false,revoked:false};
+  const b=Buffer.from(info.data||[]);
+  const revokedOffset=8+32+32+32+8+8+8+8+8+2+1+1;
+  if(b.length<=revokedOffset)return {status:'invalid_layout',verified:false,revoked:false};
+  if(!b.subarray(8,40).equals(new PublicKey(row.owner_address).toBuffer()) ||
+     !b.subarray(40,72).equals(new PublicKey(row.session_public_key).toBuffer()) ||
+     !b.subarray(72,104).equals(sha256(row.subscription_id)))
+    return {status:'identity_mismatch',verified:false,revoked:false};
+  if(b[revokedOffset]!==0 && b[revokedOffset]!==1)
+    return {status:'invalid_revoke_flag',verified:false,revoked:false};
+  return {status:b[revokedOffset]===1?'revoked':'active',verified:true,revoked:b[revokedOffset]===1};
+}
+
 export async function getVaultReclaimStatus(db,userId,entityId){
   const row=sessionRow(db,userId,entityId);
   if(!row)return {available:false,required:false,message:'No delegated vault session found'};
@@ -240,11 +258,13 @@ export async function getVaultReclaimStatus(db,userId,entityId){
   const owner=new PublicKey(row.owner_address);
   const policy=new PublicKey(row.policy_address);
   const vault=new PublicKey(row.vault_address);
+  // RPC failures must not be misreported as an absent policy or zero reserve.
   const [policyInfo,assets,reserveLamports]=await Promise.all([
-    conn.getAccountInfo(policy,'confirmed').catch(()=>null),
+    conn.getAccountInfo(policy,'confirmed'),
     vaultAssets(conn,vault),
-    conn.getBalance(new PublicKey(row.session_public_key),'confirmed').catch(()=>0),
+    conn.getBalance(new PublicKey(row.session_public_key),'confirmed'),
   ]);
+  const policyCheck=inspectHistoricalPolicy(policyInfo,row);
   return {
     available:true,
     required:!!policyInfo||assets.length>0||reserveLamports>0,
@@ -254,6 +274,10 @@ export async function getVaultReclaimStatus(db,userId,entityId){
     policyAddress:policy.toBase58(),
     vaultAddress:vault.toBase58(),
     policyExists:!!policyInfo,
+    policyVerification:policyCheck,
+    recoverySafeToRelease:false,
+    // Never automatically rebind a historical policy to a recreated subscription.
+    requiresOwnerSignedReclaim:policyCheck.status==='active',
     state:String(row.state||''),
     assets:assets.map(publicAsset),
     reserveLamports,
@@ -279,6 +303,14 @@ export async function prepareVaultReclaim(db,userId,entityId){
     conn.getAccountInfo(policy,'confirmed').catch(()=>null),
     vaultAssets(conn,vault),
   ]);
+
+  const policyCheck=inspectHistoricalPolicy(policyInfo,row);
+  if(policyInfo && !policyCheck.verified){
+    throw Object.assign(new Error(`Historical on-chain policy verification failed: ${policyCheck.status}; no transaction prepared`),{statusCode:409});
+  }
+  if(policyCheck.revoked && assets.length>0){
+    throw Object.assign(new Error('Historical policy is already revoked while vault holds funds; automatic reclaim stopped'),{statusCode:409});
+  }
 
   if(assets.length>0 && (!policyInfo || !policyInfo.owner.equals(pid))){
     throw Object.assign(

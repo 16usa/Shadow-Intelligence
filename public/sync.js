@@ -785,7 +785,23 @@
       var message=String(engine.message||engine.executionReadyReason||"Execution state: "+code);
       toast(message);
       if(code==="session_rebind_required"){
-        toast("Existing vault requires verified session recovery. Do not sign again.");
+        // V52: The old on-chain policy cannot be reused by changing a local ID.
+        // Offer an explicit owner-reviewed recovery page; never auto-sign/reclaim.
+        toast("Old vault is tied to a different session. Review recovery; do not sign a new authorization.");
+        var recoveryButton=qs("#syncRecoveryReviewV52");
+        if(!recoveryButton){
+          recoveryButton=document.createElement("button");
+          recoveryButton.id="syncRecoveryReviewV52";
+          recoveryButton.type="button";
+          recoveryButton.textContent="REVIEW EXISTING VAULT";
+          recoveryButton.style.cssText="display:block;width:100%;margin:12px 0;padding:16px;background:#181818;color:#fff;border:1px solid #555;font:inherit;cursor:pointer";
+          var statusButton=qs("#startButton");
+          if(statusButton&&statusButton.parentNode)statusButton.insertAdjacentElement("afterend",recoveryButton);
+          recoveryButton.addEventListener("click",function(){
+            if(!confirm("Open the existing vault recovery page? This does not sign or send a transaction. Review carefully before any wallet approval."))return;
+            location.href="/execution-reclaim.html";
+          });
+        }
       }
       await loadCopyState();
     }catch(error){
@@ -1056,6 +1072,19 @@
     }
   }
   /* SHADOW_SYNC_PUSH_OPTION1_V4_END */
+
+  /* SYNC_V53_REVIEW_ENTITY_LINK */
+  // Capture the review action before V52's handler. Never submit transactions.
+  document.addEventListener("click",function(event){
+    var button=event.target && event.target.closest && event.target.closest("button,a");
+    if(!button || !/REVIEW EXISTING VAULT/i.test(button.textContent||""))return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    var entity=state.room && state.room.leader && state.room.leader.id;
+    if(!entity){toast("Leader entity is not loaded. Refresh SYNC and try again.");return;}
+    if(!window.confirm("Review the existing vault? This opens a status page only. Do not approve any wallet transaction."))return;
+    location.href="/execution-reclaim.html?entity="+encodeURIComponent(String(entity));
+  },true);
 
   function bind(){
     var xLink=qs("#xLink");
