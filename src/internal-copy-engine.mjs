@@ -1214,6 +1214,15 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
         message:'On-chain policy is revoked. Old vault must be reclaimed before creating a separate new authorization.',
         authorizationUrl:'',executionWallet:null};
     }
+    // SYNC_V43_FIXED_IDENTITY_GUARD: fail closed before issuing wallet actions.
+    if(policy && (policy.owner!==row.owner_address ||
+       policy.sessionKey!==row.session_public_key ||
+       policy.subscriptionHash!==idHash(row.subscription_id).toString('hex'))){
+      return {active:false,policyActive:false,authorizationState:'policy_identity_mismatch',
+        executionReady:false,executionReadyReason:'ONCHAIN_POLICY_IDENTITY_MISMATCH',
+        message:'On-chain policy identity mismatch. Existing vault preserved; no signing or funding requested.',
+        authorizationUrl:'',executionWallet:null};
+    }
     const exists=!!policy;
     if(exists&&!row.authorized_at){const at=now();db.prepare(`UPDATE delegated_copy_sessions SET authorized_at=?,revoked_at='',state='policy_active',updated_at=? WHERE subscription_id=?`).run(at,at,row.subscription_id);row=sessionRow(db,row.subscription_id)}
     const matches=exists&&policyMatches(policy,canonical,row);
