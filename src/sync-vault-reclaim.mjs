@@ -70,15 +70,21 @@ function closeTokenAccountIx(account,destination,owner){
   });
 }
 function sessionRow(db,userId,entityId){
-  return db.prepare(`
-    SELECT d.*,s.enabled AS subscription_enabled,s.engine_state,
-           uw.address AS funding_address
+  // V41: The original copy subscription may have been deleted or recreated.
+  // Reclaim must resolve the ORIGINAL vault, never derive a new PDA.
+  // Require a verified wallet record for the same user and owner address.
+  const rows=db.prepare(`
+    SELECT d.*,uw.address AS funding_address
     FROM delegated_copy_sessions d
-    JOIN copy_subscriptions s ON s.id=d.subscription_id
-    JOIN user_wallets uw ON uw.id=s.user_wallet_id
-    WHERE d.user_id=? AND d.entity_id=? AND s.user_id=?
-    LIMIT 1
-  `).get(userId,entityId,userId)||null;
+    JOIN user_wallets uw
+      ON uw.user_id=d.user_id AND uw.address=d.owner_address
+    WHERE d.user_id=? AND d.entity_id=?
+    LIMIT 2
+  `).all(userId,entityId);
+  if(rows.length>1){
+    throw Object.assign(new Error('Ambiguous delegated vault sessions; reclaim stopped'),{statusCode:409});
+  }
+  return rows[0]||null;
 }
 function publicAsset(a){
   return {
@@ -374,6 +380,12 @@ export async function confirmVaultReclaim(db,userId,entityId,signatures=[]){
     .map(v=>String(v||'').trim()).filter(Boolean))];
   for(const sig of sigs)await waitForSignature(conn,sig);
 
+  // V41: Do not mark an existing policy revoked based on an empty vault alone.
+  // Confirmation must contain an owner-submitted signature when policy exists.
+  const policyInfo=await conn.getAccountInfo(new PublicKey(row.policy_address),'confirmed');
+  if(policyInfo && sigs.length===0){
+    throw Object.assign(new Error('Owner-signed reclaim confirmation required'),{statusCode:409});
+  }
   const vault=new PublicKey(row.vault_address);
   const remaining=await vaultAssets(conn,vault);
   if(remaining.length){
