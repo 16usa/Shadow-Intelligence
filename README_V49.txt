@@ -1,0 +1,2 @@
+SYNC V49: fail-closed authorization confirmation guard.
+Confirms the on-chain policy owner, session, subscription hash, expiry and revocation before local authorization status can be changed. Requires original subscription and funding wallet record. No on-chain transactions or DB migration. Does NOT restore the mismatched old session; V48 showed that the existing potentially usable session is owned by a different wallet. Recovering it requires the original wallet and separate verified procedure. No new deploy.
