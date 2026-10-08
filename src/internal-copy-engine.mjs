@@ -1204,6 +1204,15 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
       throw error;
     }
     if(!row)return {active:false,authorizationState:'error',message:'Could not create delegated session metadata'};
+    // V54: a historical session cannot authorize or execute a recreated copy setup.
+    // Its PDA and on-chain subscription hash are tied to the original ID.
+    // Do not mutate IDs, issue action tokens, or prompt the owner to sign.
+    if(String(row.subscription_id)!==String(canonical.id)){
+      return {active:false,policyActive:false,authorizationState:'session_rebind_required',
+        executionReady:false,executionReadyReason:'HISTORICAL_SESSION_ID_MISMATCH',
+        message:'Existing vault belongs to a historical copy setup. Review the vault and recover it with the original owner wallet; do not sign a new authorization.',
+        authorizationUrl:'',executionWallet:null};
+    }
     const policy=await policyState(row);
     // SYNC_V42_REVOKED_POLICY_GUARD: a revoked on-chain policy cannot be
     // repaired by updating local IDs or silently re-signing the old policy.
