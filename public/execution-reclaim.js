@@ -5,7 +5,7 @@
   const qs=new URLSearchParams(location.search);
   const entity=String(qs.get('entity')||'');
   const api=async(url,opt={})=>{
-    const r=await fetch(url,{credentials:'include',headers:{accept:'application/json',...(opt.body?{'content-type':'application/json'}:{})},...opt});
+    const r=await fetch(url,{credentials:'include',cache:'no-store',headers:{accept:'application/json','cache-control':'no-cache',...(opt.body?{'content-type':'application/json'}:{})},...opt});
     const d=await r.json().catch(()=>({}));
     if(!r.ok)throw new Error(d.error||`HTTP ${r.status}`);
     return d;
@@ -26,12 +26,35 @@
     const v=d.policyVerification||{};
     const failed=Array.isArray(v.failedFields)?v.failedFields:[];
     const info='Policy verification: '+String(v.status||'unverified')+(failed.length?' | Mismatch: '+failed.join(', '):'');
+    const diagnostic=document.createElement('div');
+    diagnostic.className='row';
+    diagnostic.style.cssText='display:block;overflow-wrap:anywhere;white-space:normal';
+    diagnostic.textContent='Last checked: '+new Date().toLocaleString()+' | Historical subscription: '+String(d.subscriptionId||'unknown')+' | Policy: '+String(d.policyAddress||'unknown')+' | '+info;
+    $('#details').appendChild(diagnostic);
     status('SYNC_V58_READ_ONLY — '+info+'. Reclaim signing is paused until historical identity is independently verified.','bad');
   }
+  // SYNC_V59_REFRESH: fresh, visible, read-only status check.
+  let loading=false;
   async function load(){
+    if(loading)return;
     if(!entity){status('Missing entity id.','bad');return}
-    try{render(await api('/api/entities/'+encodeURIComponent(entity)+'/copy/reclaim'))}
-    catch(e){status(e.message,'bad');$('#actionBtn').disabled=true}
+    loading=true;
+    const btn=$('#refreshBtn');
+    btn.disabled=true;
+    const oldText=btn.textContent;
+    btn.textContent='Checking on-chain status…';
+    status('Checking historical policy and vault via RPC…');
+    try{
+      const url='/api/entities/'+encodeURIComponent(entity)+'/copy/reclaim?refresh='+Date.now();
+      render(await api(url));
+    }catch(e){
+      status('Refresh failed: '+String(e.message||e)+' | '+new Date().toLocaleString(),'bad');
+      $('#actionBtn').disabled=true;
+    }finally{
+      loading=false;
+      btn.disabled=false;
+      btn.textContent=oldText;
+    }
   }
   async function sign(){
     const p=provider();
