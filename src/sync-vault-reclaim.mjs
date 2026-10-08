@@ -249,14 +249,24 @@ function inspectHistoricalPolicy(info,row){
     sessionMatches:b.subarray(40,72).equals(new PublicKey(row.session_public_key).toBuffer()),
     subscriptionHashMatches:b.subarray(72,104).equals(sha256(row.subscription_id)),
   };
+  // SYNC_V62_REVOKED_DIAGNOSTIC: a revoked policy deliberately zeroes
+  // session_key. This is read-only classification, NOT permission to reclaim,
+  // release a DB slot, rebind or authorize a different subscription.
+  if(b[revokedOffset]!==0 && b[revokedOffset]!==1)
+    return {status:'invalid_revoke_flag',verified:false,revoked:false,identity};
+  const revoked=b[revokedOffset]===1;
+  const sessionIsZero=b.subarray(40,72).every(byte=>byte===0);
+  if(revoked && sessionIsZero && identity.ownerMatches && identity.subscriptionHashMatches){
+    return {status:'revoked_onchain',verified:false,revoked:true,identity,
+      sessionIsZero:true,failedFields:['sessionMatches'],
+      note:'Revoked on-chain; session key was cleared. Reclaim and session-slot release remain disabled.'};
+  }
   if(!Object.values(identity).every(Boolean)){
     const failed=Object.entries(identity).filter(([,ok])=>!ok).map(([name])=>name);
-    return {status:'identity_mismatch',verified:false,revoked:false,
-      identity,failedFields:failed};
+    return {status:'identity_mismatch',verified:false,revoked,
+      identity,failedFields:failed,sessionIsZero};
   }
-  if(b[revokedOffset]!==0 && b[revokedOffset]!==1)
-    return {status:'invalid_revoke_flag',verified:false,revoked:false};
-  return {status:b[revokedOffset]===1?'revoked':'active',verified:true,revoked:b[revokedOffset]===1};
+  return {status:revoked?'revoked_onchain':'active',verified:!revoked,revoked,identity};
 }
 
 export async function getVaultReclaimStatus(db,userId,entityId){

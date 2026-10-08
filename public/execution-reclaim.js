@@ -21,7 +21,7 @@
     }
     const assets=Array.isArray(d.assets)?d.assets:[];
     const assetHtml=assets.length?assets.map(a=>'<div class="row"><small>'+(a.isWsol?'Vault WSOL':'Vault token')+'</small><b>'+esc(a.isWsol?(a.uiAmount+' SOL'):(a.uiAmount+' · '+short(a.mint)))+'</b></div>').join(''):'<div class="row"><small>Vault assets</small><b>0</b></div>';
-    $('#details').innerHTML='<div class="row"><small>Owner wallet</small><b>'+esc(d.ownerAddress)+'</b></div><div class="row"><small>Delegated vault</small><b>'+esc(d.vaultAddress)+'</b></div>'+assetHtml+'<div class="row"><small>24/7 network reserve</small><b>'+esc(sol(d.reserveLamports))+'</b></div><div class="row"><small>Policy</small><b>'+(d.policyExists?'Active on-chain':'Not active')+'</b></div>';
+    $('#details').innerHTML='<div class="row"><small>Owner wallet</small><b>'+esc(d.ownerAddress)+'</b></div><div class="row"><small>Delegated vault</small><b>'+esc(d.vaultAddress)+'</b></div>'+assetHtml+'<div class="row"><small>24/7 network reserve</small><b>'+esc(sol(d.reserveLamports))+'</b></div><div class="row"><small>Policy</small><b>'+(d.policyVerification?.status==='revoked_onchain'?'Revoked on-chain':d.policyVerification?.status==='active'?'Active on-chain':d.policyExists?'Exists — status unverified':'Not found')+'</b></div>';
     $('#actionBtn').disabled=true;
     const v=d.policyVerification||{};
     const failed=Array.isArray(v.failedFields)?v.failedFields:[];
@@ -31,7 +31,7 @@
     diagnostic.style.cssText='display:block;overflow-wrap:anywhere;white-space:normal';
     diagnostic.textContent='Last checked: '+new Date().toLocaleString()+' | Historical subscription: '+String(d.subscriptionId||'unknown')+' | Policy: '+String(d.policyAddress||'unknown')+' | '+info;
     $('#details').appendChild(diagnostic);
-    status('SYNC_V58_READ_ONLY — '+info+'. Reclaim signing is paused until historical identity is independently verified.','bad');
+    status('SYNC_V62_READ_ONLY — '+info+'. No reclaim signing, session rebinding or trading activation is enabled.','bad');
   }
   // SYNC_V59_REFRESH: fresh, visible, read-only status check.
   let loading=false;
