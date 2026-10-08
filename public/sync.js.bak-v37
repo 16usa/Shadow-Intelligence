@@ -497,8 +497,7 @@
 
     if(startButton){
       startButton.hidden=false;
-      // V37: blocked means status inspection, never a new trade activation.
-      startButton.disabled=state.busy||needsAuthorization||activating||!state.wallet;
+      startButton.disabled=needsAuthorization||activating||blocked||!state.wallet;
       startButton.textContent=active
         ?"UPDATE SETTINGS"
         :needsAuthorization
@@ -767,33 +766,6 @@
 
       sellPercent:100
     };
-  }
-
-  // V37: status-only refresh. Never creates a new subscription or signs a policy.
-  async function inspectExecutionStatus(){
-    if(state.busy||!roomReady()||!state.wallet)return;
-    state.busy=true;
-    renderCopyState();
-    try{
-      var id=encodeURIComponent(state.room.leader.id);
-      var data=await api("/api/entities/"+id+"/copy/execution/refresh",{method:"POST"});
-      state.copy=data.subscription||state.copy;
-      state.execution=data;
-      state.authorizationUrl=authorizationFromExecution(data);
-      var engine=data.engine||{};
-      var code=String(engine.authorizationState||state.copy&&state.copy.engineState||"unknown");
-      var message=String(engine.message||engine.executionReadyReason||"Execution state: "+code);
-      toast(message);
-      if(code==="session_rebind_required"){
-        toast("Existing vault requires verified session recovery. Do not sign again.");
-      }
-      await loadCopyState();
-    }catch(error){
-      toast("Execution status check failed: "+String(error.message||error));
-    }finally{
-      state.busy=false;
-      renderCopyState();
-    }
   }
 
   async function saveCopy(enabled){
@@ -1090,18 +1062,7 @@
     };
     var tradeAlertsTest=qs("#tradeAlertsTest");
     if(tradeAlertsTest)tradeAlertsTest.onclick=sendTradeAlertsTest;
-    qs("#copyForm").onsubmit=function(event){
-      event.preventDefault();
-      var sub=state.copy||{};
-      var code=String(sub.engineState||'').toLowerCase();
-      if(["session_rebind_required","policy_update_required","funding_required",
-          "fee_reserve_required","executor_configuration_required",
-          "delegated_program_required","session_key_store_required","error"].includes(code)){
-        inspectExecutionStatus();
-        return;
-      }
-      saveCopy(true);
-    };
+    qs("#copyForm").onsubmit=function(event){event.preventDefault();saveCopy(true)};
     qs("#stopButton").onclick=function(){saveCopy(false)};
     qs("#authorizeButton").onclick=function(){
       if(state.authorizationUrl)location.href=state.authorizationUrl;
