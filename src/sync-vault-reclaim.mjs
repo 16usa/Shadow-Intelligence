@@ -15,6 +15,22 @@ const WSOL_MINT=new PublicKey('So11111111111111111111111111111111111111112');
 const TOKEN_PROGRAM_ID=new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 const ASSOCIATED_TOKEN_PROGRAM_ID=new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
 
+// V46: standalone base58 decoder for Solana compiled instruction bytes.
+function decodeBase58(value){
+  const alphabet='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  if(typeof value!=='string'||!value.length||value.length>4096)throw new Error('Invalid base58');
+  let n=0n;
+  for(const char of value){
+    const digit=alphabet.indexOf(char);
+    if(digit<0)throw new Error('Invalid base58 character');
+    n=n*58n+BigInt(digit);
+  }
+  const bytes=[];
+  while(n>0n){bytes.push(Number(n&255n));n>>=8n;}
+  bytes.reverse();
+  const zeroes=value.match(/^1*/)[0].length;
+  return Buffer.concat([Buffer.alloc(zeroes),Buffer.from(bytes)]);
+}
 const text=v=>String(v??'').trim();
 const sha256=v=>crypto.createHash('sha256').update(String(v)).digest();
 const discriminator=name=>sha256(`global:${name}`).subarray(0,8);
@@ -406,8 +422,12 @@ export async function confirmVaultReclaim(db,userId,entityId,signatures=[]){
       const program=ix.programIdIndex;
       const accounts=ix.accountKeyIndexes||ix.accounts||[];
       if(program!==programIndex||!accounts.includes(policyIndex))return false;
-      const data=typeof ix.data==='string'?null:Buffer.from(ix.data||[]);
-      return data&&(data.subarray(0,8).equals(WITHDRAW_TOKEN_DISC)||data.subarray(0,8).equals(REVOKE_DISC));
+      // V46: Solana RPC returns compiled instruction data as base58 strings.
+      // Reject malformed encodings instead of treating them as empty bytes.
+      let data;
+      try { data=typeof ix.data==='string'?decodeBase58(ix.data):Buffer.from(ix.data||[]); }
+      catch { return false; }
+      return data.length>=8&&(data.subarray(0,8).equals(WITHDRAW_TOKEN_DISC)||data.subarray(0,8).equals(REVOKE_DISC));
     });
     if(!matched){
       throw Object.assign(new Error('Signature does not contain a valid reclaim instruction'),{statusCode:409});
