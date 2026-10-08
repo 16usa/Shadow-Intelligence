@@ -22,8 +22,11 @@
     const assets=Array.isArray(d.assets)?d.assets:[];
     const assetHtml=assets.length?assets.map(a=>'<div class="row"><small>'+(a.isWsol?'Vault WSOL':'Vault token')+'</small><b>'+esc(a.isWsol?(a.uiAmount+' SOL'):(a.uiAmount+' · '+short(a.mint)))+'</b></div>').join(''):'<div class="row"><small>Vault assets</small><b>0</b></div>';
     $('#details').innerHTML='<div class="row"><small>Owner wallet</small><b>'+esc(d.ownerAddress)+'</b></div><div class="row"><small>Delegated vault</small><b>'+esc(d.vaultAddress)+'</b></div>'+assetHtml+'<div class="row"><small>24/7 network reserve</small><b>'+esc(sol(d.reserveLamports))+'</b></div><div class="row"><small>Policy</small><b>'+(d.policyExists?'Active on-chain':'Not active')+'</b></div>';
-    $('#actionBtn').disabled=!d.required;
-    status(d.required?'Ready. The owner wallet will return vault assets and revoke the 24/7 policy.':'Vault is already empty and no reclaim is required.',d.required?'':'good');
+    $('#actionBtn').disabled=true;
+    const v=d.policyVerification||{};
+    const failed=Array.isArray(v.failedFields)?v.failedFields:[];
+    const info='Policy verification: '+String(v.status||'unverified')+(failed.length?' | Mismatch: '+failed.join(', '):'');
+    status('SYNC_V58_READ_ONLY — '+info+'. Reclaim signing is paused until historical identity is independently verified.','bad');
   }
   async function load(){
     if(!entity){status('Missing entity id.','bad');return}
@@ -69,7 +72,8 @@
       setTimeout(()=>{location.href='/sync.html'},2200);
     }catch(e){status(e.message,'bad');$('#actionBtn').disabled=false}
   }
-  $('#actionBtn').addEventListener('click',sign);
+  // SYNC_V58_READ_ONLY: no signing action bound on the recovery diagnostics page.
+  $('#actionBtn').disabled=true;
   $('#refreshBtn').addEventListener('click',load);
   load();
 })();
