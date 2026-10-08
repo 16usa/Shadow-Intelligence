@@ -242,10 +242,18 @@ function inspectHistoricalPolicy(info,row){
   const b=Buffer.from(info.data||[]);
   const revokedOffset=8+32+32+32+8+8+8+8+8+2+1+1;
   if(b.length<=revokedOffset)return {status:'invalid_layout',verified:false,revoked:false};
-  if(!b.subarray(8,40).equals(new PublicKey(row.owner_address).toBuffer()) ||
-     !b.subarray(40,72).equals(new PublicKey(row.session_public_key).toBuffer()) ||
-     !b.subarray(72,104).equals(sha256(row.subscription_id)))
-    return {status:'identity_mismatch',verified:false,revoked:false};
+  // SYNC_V57_IDENTITY_DIAGNOSTICS
+  // V57: Distinguish identity fields without exposing private session material.
+  const identity={
+    ownerMatches:b.subarray(8,40).equals(new PublicKey(row.owner_address).toBuffer()),
+    sessionMatches:b.subarray(40,72).equals(new PublicKey(row.session_public_key).toBuffer()),
+    subscriptionHashMatches:b.subarray(72,104).equals(sha256(row.subscription_id)),
+  };
+  if(!Object.values(identity).every(Boolean)){
+    const failed=Object.entries(identity).filter(([,ok])=>!ok).map(([name])=>name);
+    return {status:'identity_mismatch',verified:false,revoked:false,
+      identity,failedFields:failed};
+  }
   if(b[revokedOffset]!==0 && b[revokedOffset]!==1)
     return {status:'invalid_revoke_flag',verified:false,revoked:false};
   return {status:b[revokedOffset]===1?'revoked':'active',verified:true,revoked:b[revokedOffset]===1};
@@ -306,7 +314,9 @@ export async function prepareVaultReclaim(db,userId,entityId){
 
   const policyCheck=inspectHistoricalPolicy(policyInfo,row);
   if(policyInfo && !policyCheck.verified){
-    throw Object.assign(new Error(`Historical on-chain policy verification failed: ${policyCheck.status}; no transaction prepared`),{statusCode:409});
+    const details=policyCheck.failedFields?.length
+      ? ` [${policyCheck.failedFields.join(', ')}]` : '';
+    throw Object.assign(new Error(`Historical on-chain policy verification failed: ${policyCheck.status}${details}; no transaction prepared`),{statusCode:409});
   }
   if(policyCheck.revoked && assets.length>0){
     throw Object.assign(new Error('Historical policy is already revoked while vault holds funds; automatic reclaim stopped'),{statusCode:409});
