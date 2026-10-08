@@ -35,7 +35,7 @@
       $('#actionBtn').disabled=true;
     }
   }
-  let walletActionInFlight=false;async function sign(){if(walletActionInFlight)return;walletActionInFlight=true;const p=provider();if(!p){walletActionInFlight=false;status('Open this page inside Phantom or Solflare so the owner wallet can sign.');return}$('#actionBtn').disabled=true;try{/* SYNC_WALLET_DOUBLE_PROMPT_FIX_V32B */if(!p.isConnected&&!p.publicKey)await p.connect();const prep=await api('/api/copy-engine/authorization/prepare',{method:'POST',body:JSON.stringify({token,action:mode,entity})});const bytes=Uint8Array.from(atob(prep.transaction),c=>c.charCodeAt(0));let signature='';if(p.signAndSendTransaction){const web3=window.solanaWeb3; if(!web3?.Transaction)throw new Error('Wallet transaction codec is unavailable on this page');const tx=web3.Transaction.from(bytes);const sent=await p.signAndSendTransaction(tx);signature=sent?.signature||sent||''}else throw new Error('Connected wallet does not expose signAndSendTransaction');status(`Submitted ${String(signature).slice(0,12)}… Waiting for chain…`);await new Promise(r=>setTimeout(r,1400));const result=await api('/api/copy-engine/authorization/confirm',{method:'POST',body:JSON.stringify({token,action:mode,signature,entity})});
+  async function sign(){const p=provider();if(!p){status('Open this page inside Phantom or Solflare so the owner wallet can sign.');return}$('#actionBtn').disabled=true;try{await p.connect();const prep=await api('/api/copy-engine/authorization/prepare',{method:'POST',body:JSON.stringify({token,action:mode,entity})});const bytes=Uint8Array.from(atob(prep.transaction),c=>c.charCodeAt(0));let signature='';if(p.signAndSendTransaction){const web3=window.solanaWeb3; if(!web3?.Transaction)throw new Error('Wallet transaction codec is unavailable on this page');const tx=web3.Transaction.from(bytes);const sent=await p.signAndSendTransaction(tx);signature=sent?.signature||sent||''}else throw new Error('Connected wallet does not expose signAndSendTransaction');status(`Submitted ${String(signature).slice(0,12)}… Waiting for chain…`);await new Promise(r=>setTimeout(r,1400));const result=await api('/api/copy-engine/authorization/confirm',{method:'POST',body:JSON.stringify({token,action:mode,signature,entity})});
       if(mode==='authorize'){
         const authState=String(result&&result.authorizationState||'').trim().toLowerCase();
         const stillNeedsWallet=['authorization_required','policy_update_required','funding_required','fee_reserve_required'].includes(authState);
@@ -53,7 +53,7 @@
         $('#status').className='status good';
         setTimeout(()=>{location.replace('/sync.html')},900);
       }
-      walletActionInFlight=false;return result /* SYNC_AUTH_STATE_FIX_V25 */}catch(e){walletActionInFlight=false;status(e.message);$('#status').className='status bad';$('#actionBtn').disabled=false}}
+      return result /* SYNC_AUTH_STATE_FIX_V25 */}catch(e){status(e.message);$('#status').className='status bad';$('#actionBtn').disabled=false}}
   $('#actionBtn').addEventListener('click',sign);$('#refreshBtn').addEventListener('click',load);$('#copyTradingBtn').addEventListener('click',()=>{location.href='/sync.html'});
   // web3.js browser bundle already exists in Shadow wallet flows in current builds.
   load();

@@ -429,11 +429,10 @@
     var authorized=executionIsAuthorized();
 
     var needsAuthorization=!!(
-      sub &&
       !active &&
       state.authorizationUrl &&
       !authorized
-    ); /* SYNC_ORPHAN_SUBSCRIPTION_FIX_V30 */
+    );
 
     var activating=!!(
       sub &&
@@ -599,17 +598,9 @@
     }
     try{
       state.execution=await api("/api/entities/"+encodeURIComponent(state.room.leader.id)+"/copy/execution");
-
-      /* SYNC_ORPHAN_SUBSCRIPTION_FIX_V30 */
-      if(state.copy){
-        state.authorizationUrl=authorizationFromExecution(state.execution);
-      }else{
-        state.authorizationUrl="";
-      }
-      /* SYNC_ORPHAN_SUBSCRIPTION_FIX_V30_END */
+      state.authorizationUrl=authorizationFromExecution(state.execution);
     }catch(error){
       state.execution=null;
-      state.authorizationUrl="";
     }
     hydrateCopyForm();
     refreshVisibleCopyExecutions();

@@ -257,33 +257,29 @@ function mainWallet(db,entityId){
     ORDER BY CASE WHEN lower(trim(COALESCE(label,'')))='main wallet' THEN 0 ELSE 1 END,created_at ASC LIMIT 1`).get(entityId)||null;
 }
 function sessionRow(db,subscriptionId){
-  // SYNC_SAFE_SESSION_REBIND_V33
-  // Resolve a recreated copy setup without choosing an arbitrary historical
-  // authorization. Fail closed on ambiguity, revoked or expired sessions.
   const exact=db.prepare('SELECT * FROM delegated_copy_sessions WHERE subscription_id=?').get(subscriptionId);
   if(exact)return exact;
+
+  // SYNC_DELEGATED_SESSION_REBIND_V16:
+  // Reuse the already-authorized delegated session when only the local
+  // copy_subscriptions.id drifted. Never cross users/entities or owners.
   const current=db.prepare(`
-    SELECT s.user_id,s.entity_id,s.user_wallet_id,uw.address AS funding_address
+    SELECT s.user_id,s.entity_id,uw.address AS funding_address
     FROM copy_subscriptions s
     JOIN user_wallets uw ON uw.id=s.user_wallet_id
     WHERE s.id=?
   `).get(subscriptionId);
   if(!current)return null;
-  const candidates=db.prepare(`
+
+  const existing=db.prepare(`
     SELECT * FROM delegated_copy_sessions
-    WHERE user_id=? AND entity_id=? AND owner_address=?
-    ORDER BY created_at DESC
-  `).all(current.user_id,current.entity_id,current.funding_address);
-  const active=candidates.filter(row=>{
-    if(row.revoked_at)return false;
-    if(!row.policy_address||!row.session_public_key||!row.vault_address)return false;
-    if(row.funding_wallet_id && row.funding_wallet_id!==current.user_wallet_id)return false;
-    return true;
-  });
-  // No arbitrary LIMIT 1: multiple historical sessions need explicit
-  // verification against the on-chain policy before reusing any of them.
-  if(active.length!==1)return null;
-  return active[0];
+    WHERE user_id=? AND entity_id=?
+    LIMIT 1
+  `).get(current.user_id,current.entity_id);
+  if(!existing)return null;
+
+  if(String(existing.owner_address||'')!==String(current.funding_address||''))return null;
+  return existing;
 }
 function publicSession(row){
   if(!row)return null;

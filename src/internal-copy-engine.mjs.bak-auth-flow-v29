@@ -169,7 +169,6 @@ function ensureSchema(db){
     /* SYNC_AUTH_TOKEN_RACE_FIX_V28 */
     CREATE TABLE IF NOT EXISTS delegated_copy_action_tokens (
       token_hash TEXT PRIMARY KEY,
-      token_value TEXT NOT NULL DEFAULT '',
       subscription_id TEXT NOT NULL,
       user_id TEXT NOT NULL,
       action TEXT NOT NULL,
@@ -210,15 +209,6 @@ function ensureSchema(db){
     /* SYNC_TP_SL_EXECUTOR_V15_END */
   `);
 
-  /* SYNC_AUTH_FLOW_STABLE_V29 */
-  const actionTokenColumns=new Set(
-    db.prepare("PRAGMA table_info(delegated_copy_action_tokens)").all().map(row=>String(row.name||''))
-  );
-  if(!actionTokenColumns.has('token_value')){
-    db.exec("ALTER TABLE delegated_copy_action_tokens ADD COLUMN token_value TEXT NOT NULL DEFAULT ''");
-  }
-  /* SYNC_AUTH_FLOW_STABLE_V29_END */
-
   /* SYNC_COPY_STATUS_LIVE_V18_SCHEMA */
   const executionColumns=new Set(
     db.prepare("PRAGMA table_info(delegated_copy_executions)").all().map(row=>String(row.name||''))
@@ -257,33 +247,29 @@ function mainWallet(db,entityId){
     ORDER BY CASE WHEN lower(trim(COALESCE(label,'')))='main wallet' THEN 0 ELSE 1 END,created_at ASC LIMIT 1`).get(entityId)||null;
 }
 function sessionRow(db,subscriptionId){
-  // SYNC_SAFE_SESSION_REBIND_V33
-  // Resolve a recreated copy setup without choosing an arbitrary historical
-  // authorization. Fail closed on ambiguity, revoked or expired sessions.
   const exact=db.prepare('SELECT * FROM delegated_copy_sessions WHERE subscription_id=?').get(subscriptionId);
   if(exact)return exact;
+
+  // SYNC_DELEGATED_SESSION_REBIND_V16:
+  // Reuse the already-authorized delegated session when only the local
+  // copy_subscriptions.id drifted. Never cross users/entities or owners.
   const current=db.prepare(`
-    SELECT s.user_id,s.entity_id,s.user_wallet_id,uw.address AS funding_address
+    SELECT s.user_id,s.entity_id,uw.address AS funding_address
     FROM copy_subscriptions s
     JOIN user_wallets uw ON uw.id=s.user_wallet_id
     WHERE s.id=?
   `).get(subscriptionId);
   if(!current)return null;
-  const candidates=db.prepare(`
+
+  const existing=db.prepare(`
     SELECT * FROM delegated_copy_sessions
-    WHERE user_id=? AND entity_id=? AND owner_address=?
-    ORDER BY created_at DESC
-  `).all(current.user_id,current.entity_id,current.funding_address);
-  const active=candidates.filter(row=>{
-    if(row.revoked_at)return false;
-    if(!row.policy_address||!row.session_public_key||!row.vault_address)return false;
-    if(row.funding_wallet_id && row.funding_wallet_id!==current.user_wallet_id)return false;
-    return true;
-  });
-  // No arbitrary LIMIT 1: multiple historical sessions need explicit
-  // verification against the on-chain policy before reusing any of them.
-  if(active.length!==1)return null;
-  return active[0];
+    WHERE user_id=? AND entity_id=?
+    LIMIT 1
+  `).get(current.user_id,current.entity_id);
+  if(!existing)return null;
+
+  if(String(existing.owner_address||'')!==String(current.funding_address||''))return null;
+  return existing;
 }
 function publicSession(row){
   if(!row)return null;
@@ -493,62 +479,62 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
       return parsePolicyData(info.data);
     }catch(error){lastError=String(error?.message||error);return null}
   }
-  /* SYNC_UPDATE_POLICY_EXACT_V31 */
-  async function simulateExactUpdatePolicy(pid,owner,policy,data){
-    const probe=new Transaction().add(new TransactionInstruction({
-      programId:pid,
-      keys:[
-        {pubkey:owner,isSigner:true,isWritable:false},
-        {pubkey:policy,isSigner:false,isWritable:true}
-      ],
-      data
-    }));
-    probe.feePayer=owner;
-    probe.recentBlockhash=(await connection.getLatestBlockhash('confirmed')).blockhash;
+  /* SYNC_POLICY_UPDATE_FIX_V27 */
+  async function simulatePolicyUpdateData(row,pid,owner,policy,expiresAt,d,data){
+    try{
+      const probe=new Transaction().add(new TransactionInstruction({
+        programId:pid,
+        keys:[
+          {pubkey:owner,isSigner:true,isWritable:false},
+          {pubkey:policy,isSigner:false,isWritable:true}
+        ],
+        data
+      }));
+      probe.feePayer=owner;
+      probe.recentBlockhash=(await connection.getLatestBlockhash('confirmed')).blockhash;
 
-    const raw=probe.serialize({
-      requireAllSignatures:false,
-      verifySignatures:false
-    }).toString('base64');
+      const raw=probe.serialize({
+        requireAllSignatures:false,
+        verifySignatures:false
+      }).toString('base64');
 
-    const rpc=await connection._rpcRequest('simulateTransaction',[
-      raw,
-      {
-        encoding:'base64',
-        sigVerify:false,
-        replaceRecentBlockhash:true,
-        commitment:'confirmed'
-      }
-    ]);
+      const rpc=await connection._rpcRequest('simulateTransaction',[
+        raw,
+        {
+          encoding:'base64',
+          sigVerify:false,
+          replaceRecentBlockhash:true,
+          commitment:'confirmed',
+          accounts:{
+            encoding:'base64',
+            addresses:[policy.toBase58()]
+          }
+        }
+      ]);
 
-    const value=rpc?.result?.value;
-    if(!value){
-      throw Object.assign(
-        new Error('UpdatePolicy simulation returned no result. No transaction was prepared.'),
-        {statusCode:502,code:'POLICY_UPDATE_SIMULATION_EMPTY'}
-      );
+      const value=rpc?.result?.value;
+      if(!value||value.err)return null;
+
+      const account=value.accounts?.[0];
+      const encoded=Array.isArray(account?.data)?account.data[0]:account?.data;
+      if(!encoded)return null;
+
+      const post=parsePolicyData(Buffer.from(encoded,'base64'));
+      if(!post)return null;
+
+      return {
+        post,
+        matches:policySettingsMatchDesired(post,d,row) &&
+          post.expiresAt>Math.floor(Date.now()/1000)+300
+      };
+    }catch(error){
+      lastError='policy update simulation: '+String(error?.message||error);
+      return null;
     }
-
-    if(value.err){
-      const logs=Array.isArray(value.logs)?value.logs:[];
-      const lastProgramLog=[...logs].reverse().find(line=>/Program log:/i.test(String(line||'')))||'';
-      const detail=lastProgramLog
-        ? String(lastProgramLog).replace(/^.*Program log:\s*/i,'').trim()
-        : JSON.stringify(value.err);
-
-      throw Object.assign(
-        new Error('UpdatePolicy simulation failed: '+detail+'. No transaction was prepared and no funds were moved.'),
-        {statusCode:409,code:'POLICY_UPDATE_SIMULATION_FAILED'}
-      );
-    }
-
-    return {ok:true,logs:Array.isArray(value.logs)?value.logs:[]};
   }
 
   async function verifiedUpdatePolicyData(row,pid,owner,policy,expiresAt,d){
-    // V31 exact deployed UpdatePolicy instruction confirmed from successful
-    // mainnet transactions. Total data length = 36 bytes.
-    const data=Buffer.concat([
+    const standard=Buffer.concat([
       UPDATE_DISC,
       i64(expiresAt),
       u64(d.maxTradeLamports),
@@ -558,26 +544,46 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
       bool(d.copySells)
     ]);
 
-    if(data.length!==36){
-      throw Object.assign(
-        new Error(`Internal UpdatePolicy encoding error: expected 36 bytes, got ${data.length}.`),
-        {statusCode:500,code:'POLICY_UPDATE_BAD_LENGTH'}
+    const swapped=Buffer.concat([
+      UPDATE_DISC,
+      i64(expiresAt),
+      u64(d.dailyCapLamports),
+      u64(d.maxTradeLamports),
+      u16(d.maxSellBps),
+      bool(d.copyBuys),
+      bool(d.copySells)
+    ]);
+
+    const candidates=d.maxTradeLamports===d.dailyCapLamports
+      ? [{name:'standard',data:standard}]
+      : [
+          {name:'standard',data:standard},
+          {name:'swapped-u64',data:swapped}
+        ];
+
+    for(const candidate of candidates){
+      const simulation=await simulatePolicyUpdateData(
+        row,pid,owner,policy,expiresAt,d,candidate.data
       );
+      if(simulation?.matches){
+        lastError='';
+        return {
+          data:candidate.data,
+          encoding:candidate.name,
+          simulatedPolicy:simulation.post
+        };
+      }
     }
 
-    // V27 falsely required the RPC to return a simulated post-account snapshot.
-    // V31 instead verifies that the deployed program accepts the exact confirmed
-    // 36-byte instruction. If the program rejects it, we surface the real log.
-    const simulation=await simulateExactUpdatePolicy(pid,owner,policy,data);
-
-    lastError='';
-    return {
-      data,
-      encoding:'deployed-update-policy-v1-36-byte',
-      simulation
-    };
+    throw Object.assign(
+      new Error(
+        'Could not build a policy update that matches the current copy settings. '+
+        'No transaction was prepared and no funds were moved.'
+      ),
+      {statusCode:409,code:'POLICY_UPDATE_ENCODING_UNVERIFIED'}
+    );
   }
-  /* SYNC_UPDATE_POLICY_EXACT_V31_END */
+  /* SYNC_POLICY_UPDATE_FIX_V27_END */
 
   async function tokenBalanceSnapshot(address){
     try{
@@ -1054,102 +1060,49 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
     return sessionRow(db,subscription.id);
   }
   /* SYNC_AUTH_TOKEN_RACE_FIX_V28 */
-  /* SYNC_AUTH_TOKEN_RACE_FIX_V28 */
-  /* SYNC_AUTH_FLOW_STABLE_V29 */
   function cleanupActionTokens(){
     db.prepare('DELETE FROM delegated_copy_action_tokens WHERE expires_at<=?').run(now());
   }
-
-  function actionUrlFor(row,action,token){
-    // Stay on the exact origin/process/database that issued this token.
-    return `/execution-authorize.html?mode=${encodeURIComponent(action)}&token=${encodeURIComponent(token)}&entity=${encodeURIComponent(row.entity_id||'')}`;
-  }
-
   function issueActionUrl(row,action){
     cleanupActionTokens();
-
-    // Background status polling must not rotate the authorization link.
-    const reusable=db.prepare(`
-      SELECT token_value,expires_at
-      FROM delegated_copy_action_tokens
-      WHERE subscription_id=? AND user_id=? AND action=? AND expires_at>? AND token_value<>''
-      ORDER BY created_at DESC
-      LIMIT 1
-    `).get(row.subscription_id,row.user_id,action,now());
-
-    if(reusable?.token_value){
-      return actionUrlFor(row,action,reusable.token_value);
-    }
-
     const token=crypto.randomBytes(32).toString('base64url');
     const exp=new Date(Date.now()+30*60*1000).toISOString();
     const hash=hashHex(`${action}:${token}`);
 
+    // Keep every still-valid short-lived action token. Background status polls
+    // may mint a newer URL without invalidating the URL already opened by user.
     db.prepare(`INSERT INTO delegated_copy_action_tokens
-      (token_hash,token_value,subscription_id,user_id,action,expires_at,created_at)
-      VALUES (?,?,?,?,?,?,?)`)
-      .run(hash,token,row.subscription_id,row.user_id,action,exp,now());
+      (token_hash,subscription_id,user_id,action,expires_at,created_at)
+      VALUES (?,?,?,?,?,?)`)
+      .run(hash,row.subscription_id,row.user_id,action,exp,now());
 
+    // Legacy columns remain for compatibility/status display only.
     db.prepare(`UPDATE delegated_copy_sessions
       SET auth_token_hash=?,auth_token_expires_at=?,state=?,updated_at=?
       WHERE subscription_id=?`)
       .run(hash,exp,action==='revoke'?'revocation_required':'authorization_required',now(),row.subscription_id);
 
-    return actionUrlFor(row,action,token);
+    return absUrl(`/execution-authorize.html?mode=${encodeURIComponent(action)}&token=${encodeURIComponent(token)}`);
   }
 
-  function currentAuthorizeRow(userId,entityId){
-    const entity=String(entityId||'').trim();
-    if(!entity)return null;
-
-    const sub=db.prepare(`
-      SELECT id
-      FROM copy_subscriptions
-      WHERE user_id=? AND entity_id=?
-      LIMIT 1
-    `).get(userId,entity);
-    if(!sub?.id)return null;
-
-    const row=sessionRow(db,sub.id);
-    if(!row)return null;
-    if(String(row.user_id)!==String(userId))return null;
-    if(String(row.entity_id)!==entity)return null;
-    return row;
-  }
-
-  function actionRow(token,action,userId,entityId=''){
+  function actionRow(token,action,userId){
     cleanupActionTokens();
-    const raw=String(token||'').trim();
+    const hash=hashHex(`${action}:${token}`);
 
-    if(raw){
-      const hash=hashHex(`${action}:${raw}`);
+    const tokenRow=db.prepare(`
+      SELECT d.*
+      FROM delegated_copy_action_tokens t
+      JOIN delegated_copy_sessions d ON d.subscription_id=t.subscription_id
+      WHERE t.token_hash=? AND t.action=? AND t.user_id=? AND t.expires_at>?
+      LIMIT 1
+    `).get(hash,action,userId,now());
+    if(tokenRow)return tokenRow;
 
-      const tokenRow=db.prepare(`
-        SELECT d.*
-        FROM delegated_copy_action_tokens t
-        JOIN delegated_copy_sessions d ON d.subscription_id=t.subscription_id
-        WHERE t.token_hash=? AND t.action=? AND t.user_id=? AND t.expires_at>?
-        LIMIT 1
-      `).get(hash,action,userId,now());
-
-      if(tokenRow && (!entityId || String(tokenRow.entity_id)===String(entityId))){
-        return tokenRow;
-      }
-
-      const legacy=db.prepare('SELECT * FROM delegated_copy_sessions WHERE auth_token_hash=?').get(hash);
-      if(legacy && legacy.user_id===userId &&
-         legacy.auth_token_expires_at &&
-         Date.parse(legacy.auth_token_expires_at)>Date.now() &&
-         (!entityId || String(legacy.entity_id)===String(entityId))){
-        return legacy;
-      }
-    }
-
-    // Authorize-only self-heal by authenticated user + entity.
-    if(action==='authorize'){
-      return currentAuthorizeRow(userId,entityId);
-    }
-    return null;
+    // Backward compatibility for a URL issued before V28.
+    const legacy=db.prepare('SELECT * FROM delegated_copy_sessions WHERE auth_token_hash=?').get(hash);
+    if(!legacy||legacy.user_id!==userId)return null;
+    if(!legacy.auth_token_expires_at||Date.parse(legacy.auth_token_expires_at)<=Date.now())return null;
+    return legacy;
   }
 
   function clearActionTokens(subscriptionId,action=''){
@@ -1161,7 +1114,6 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
         .run(subscriptionId);
     }
   }
-  /* SYNC_AUTH_FLOW_STABLE_V29_END */
   /* SYNC_AUTH_TOKEN_RACE_FIX_V28_END */
   async function onchainPolicyExists(row){
     try{
@@ -1212,8 +1164,8 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
     }
     return snapshot(canonical,{issueToken:true});
   }
-  function authorizationDetails(token,userId,action='authorize',entityId=''){
-    const row=actionRow(token,action,userId,entityId);if(!row)return null;
+  function authorizationDetails(token,userId,action='authorize'){
+    const row=actionRow(token,action,userId);if(!row)return null;
     const sub=subRow(db,row.subscription_id);if(!sub)return null;
     const main=mainWallet(db,sub.entity_id);
     return {
@@ -1230,8 +1182,8 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
       cluster:clusterName(),programId:row.program_id,nonCustodial:true,delegationDays:Math.max(1,Math.min(365,Number(process.env.SYNC_DELEGATION_DAYS)||30)),vaultFundingSol:Number(sub.max_position_sol||0),feeReserveSol:userFeeReserveTargetLamports()/1_000_000_000,feeReserveMinimumSol:userFeeReserveMinLamports()/1_000_000_000,feePayer:row.session_public_key,feeReserveRefundOnRevoke:true,
     };
   }
-  async function prepareAction(token,userId,action='authorize',entityId=''){
-    const row=actionRow(token,action,userId,entityId);
+  async function prepareAction(token,userId,action='authorize'){
+    const row=actionRow(token,action,userId);
     if(!row)throw Object.assign(new Error('Delegated authorization link is invalid or expired'),{statusCode:410});
     const sub=subRow(db,row.subscription_id);if(!sub)throw Object.assign(new Error('Copy subscription not found'),{statusCode:404});
     const pid=new PublicKey(row.program_id);
@@ -1325,8 +1277,8 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
   }
   /* SYNC_AUTH_STATE_FIX_V25_END */
 
-  async function confirmAction(token,userId,action='authorize',signature='',entityId=''){
-    const row=actionRow(token,action,userId,entityId);
+  async function confirmAction(token,userId,action='authorize',signature=''){
+    const row=actionRow(token,action,userId);
     if(!row)throw Object.assign(new Error('Delegated action link is invalid or expired'),{statusCode:410});
 
     // V25: do not accept a submitted signature until Solana reports confirmed/finalized.
