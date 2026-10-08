@@ -1205,6 +1205,15 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
     }
     if(!row)return {active:false,authorizationState:'error',message:'Could not create delegated session metadata'};
     const policy=await policyState(row);
+    // SYNC_V42_REVOKED_POLICY_GUARD: a revoked on-chain policy cannot be
+    // repaired by updating local IDs or silently re-signing the old policy.
+    // Keep the original vault available to the owner-only reclaim flow.
+    if(policy?.revoked){
+      return {active:false,policyActive:false,authorizationState:'session_rebind_required',
+        executionReady:false,executionReadyReason:'ONCHAIN_POLICY_REVOKED',
+        message:'On-chain policy is revoked. Old vault must be reclaimed before creating a separate new authorization.',
+        authorizationUrl:'',executionWallet:null};
+    }
     const exists=!!policy;
     if(exists&&!row.authorized_at){const at=now();db.prepare(`UPDATE delegated_copy_sessions SET authorized_at=?,revoked_at='',state='policy_active',updated_at=? WHERE subscription_id=?`).run(at,at,row.subscription_id);row=sessionRow(db,row.subscription_id)}
     const matches=exists&&policyMatches(policy,canonical,row);
@@ -1271,6 +1280,15 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
       const days=Math.max(1,Math.min(365,Number(process.env.SYNC_DELEGATION_DAYS)||30));
       const expiresAt=Math.floor(Date.now()/1000)+(days*24*60*60);
       const d=desiredPolicy(sub);
+      const chainPolicy=await policyState(row);
+      if(chainPolicy?.revoked){
+        throw Object.assign(new Error('On-chain policy is revoked. Reclaim the original vault first; do not sign another authorization for this policy.'),{statusCode:409});
+      }
+      if(chainPolicy && (chainPolicy.owner!==row.owner_address ||
+          chainPolicy.subscriptionHash!==idHash(row.subscription_id).toString('hex') ||
+          chainPolicy.sessionKey!==row.session_public_key)){
+        throw Object.assign(new Error('On-chain policy identity mismatch. Authorization blocked to protect existing vault.'),{statusCode:409});
+      }
       const exists=await onchainPolicyExists(row);
       if(!exists){
         const data=Buffer.concat([INIT_DISC,idHash(sub.id),session.toBuffer(),i64(expiresAt),u64(d.maxTradeLamports),u64(d.dailyCapLamports),u16(d.maxSellBps),bool(d.copyBuys),bool(d.copySells)]);
