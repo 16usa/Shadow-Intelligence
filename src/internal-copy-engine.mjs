@@ -1223,6 +1223,14 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
         message:'On-chain policy identity mismatch. Existing vault preserved; no signing or funding requested.',
         authorizationUrl:'',executionWallet:null};
     }
+    // V44: expired policies cannot execute. Do not request funds or Phantom
+    // authorization for an unusable session. Preserve vault and DB records.
+    if(policy && policy.expiresAt <= Math.floor(Date.now()/1000)+300){
+      return {active:false,policyActive:false,authorizationState:'expired_policy_recovery_required',
+        executionReady:false,executionReadyReason:'ONCHAIN_POLICY_EXPIRED',
+        message:'Existing on-chain policy has expired. Old vault preserved; no signing or funding requested.',
+        authorizationUrl:'',executionWallet:null};
+    }
     const exists=!!policy;
     if(exists&&!row.authorized_at){const at=now();db.prepare(`UPDATE delegated_copy_sessions SET authorized_at=?,revoked_at='',state='policy_active',updated_at=? WHERE subscription_id=?`).run(at,at,row.subscription_id);row=sessionRow(db,row.subscription_id)}
     const matches=exists&&policyMatches(policy,canonical,row);
