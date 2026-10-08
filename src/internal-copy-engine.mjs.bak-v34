@@ -1033,18 +1033,6 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
   function ensureSession(subscription){
     let row=sessionRow(db,subscription.id);
     if(row)return row;
-    // V34: Never create a second delegated session for the same user/entity.
-    // Existing vaults may hold funds; wallet changes require explicit recovery.
-    const conflict=db.prepare(`SELECT subscription_id,owner_address,policy_address,vault_address
-      FROM delegated_copy_sessions WHERE user_id=? AND entity_id=? LIMIT 1`).get(
-      subscription.user_id||subscription.userId,subscription.entity_id||subscription.entityId);
-    if(conflict){
-      const error=new Error('Existing delegated vault belongs to another Copy Setup or funding wallet. Reconnect the original wallet; no new authorization was created.');
-      error.code='DELEGATED_SESSION_REBIND_REQUIRED';
-      error.statusCode=409;
-      error.existingSubscriptionId=conflict.subscription_id;
-      throw error;
-    }
     const pid=programId();
     const master=parseSessionMasterKey();
     if(!pid||!master)return null;
@@ -1188,16 +1176,7 @@ export function createInternalCopyEngine(db,{fetchImpl=fetch}={}){
       const s=environmentStatus();
       return {active:false,authorizationState:!pid?'delegated_program_required':'session_key_store_required',message:!pid?'SHADOW_DELEGATED_PROGRAM_ID is not configured':'SHADOW_SESSION_MASTER_KEY is not configured',environment:s,executionWallet:null};
     }
-    let row;
-    try{row=ensureSession(canonical)}catch(error){
-      if(error?.code==='DELEGATED_SESSION_REBIND_REQUIRED'){
-        return {active:false,authorizationState:'session_rebind_required',
-          executionReady:false,executionReadyReason:'DELEGATED_SESSION_REBIND_REQUIRED',
-          message:String(error.message),authorizationUrl:'',executionWallet:null};
-      }
-      throw error;
-    }
-    if(!row)return {active:false,authorizationState:'error',message:'Could not create delegated session metadata'};
+    let row=ensureSession(canonical);if(!row)return {active:false,authorizationState:'error',message:'Could not create delegated session metadata'};
     const policy=await policyState(row);
     const exists=!!policy;
     if(exists&&!row.authorized_at){const at=now();db.prepare(`UPDATE delegated_copy_sessions SET authorized_at=?,revoked_at='',state='policy_active',updated_at=? WHERE subscription_id=?`).run(at,at,row.subscription_id);row=sessionRow(db,row.subscription_id)}
