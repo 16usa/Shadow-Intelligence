@@ -25,13 +25,20 @@
     $('#actionBtn').disabled=true;
     const v=d.policyVerification||{};
     const failed=Array.isArray(v.failedFields)?v.failedFields:[];
-    const info='Policy verification: '+String(v.status||'unverified')+(failed.length?' | Mismatch: '+failed.join(', '):'');
+    const evidence=d.revocationEvidence||{};
+    const independentlyRevoked=evidence.status==='revoked_onchain' && evidence.revoked===true && evidence.sessionIsZero===true;
+    const info='Policy verification: '+String(v.status||'unverified')+(failed.length?' | Mismatch: '+failed.join(', '):'')+' | Revocation evidence: '+String(evidence.status||'not_available');
     const diagnostic=document.createElement('div');
     diagnostic.className='row';
     diagnostic.style.cssText='display:block;overflow-wrap:anywhere;white-space:normal';
     diagnostic.textContent='Last checked: '+new Date().toLocaleString()+' | Historical subscription: '+String(d.subscriptionId||'unknown')+' | Policy: '+String(d.policyAddress||'unknown')+' | '+info;
     $('#details').appendChild(diagnostic);
-    status('SYNC_V62_READ_ONLY — '+info+'. No reclaim signing, session rebinding or trading activation is enabled.','bad');
+    // V63: correct label only; do not enable return, rebind or copy trading.
+    if(independentlyRevoked){
+      const policyRow=[...$('#details').querySelectorAll('.row')].find(el=>el.querySelector('small')?.textContent==='Policy');
+      if(policyRow)policyRow.querySelector('b').textContent='Revoked on-chain (verified read-only)';
+    }
+    status('SYNC_V63_READ_ONLY — '+info+'. No reclaim signing, session rebinding or trading activation is enabled.','bad');
   }
   // SYNC_V59_REFRESH: fresh, visible, read-only status check.
   let loading=false;

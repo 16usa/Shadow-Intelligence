@@ -283,6 +283,23 @@ export async function getVaultReclaimStatus(db,userId,entityId){
     conn.getBalance(new PublicKey(row.session_public_key),'confirmed'),
   ]);
   const policyCheck=inspectHistoricalPolicy(policyInfo,row);
+  // SYNC_V63_REVOKED_EVIDENCE: independent, strictly read-only on-chain
+  // classification. A cleared signer is expected after revoke_session.
+  // Never treat this evidence as permission to release, rebind or trade.
+  let revocationEvidence={status:'unverified',revoked:false};
+  if(policyInfo && policyInfo.owner.equals(new PublicKey(row.program_id))){
+    const bytes=Buffer.from(policyInfo.data||[]);
+    const flagOffset=148;
+    const ownerOk=bytes.length>flagOffset && bytes.subarray(8,40).equals(owner.toBuffer());
+    const hashOk=bytes.length>flagOffset && bytes.subarray(72,104).equals(sha256(row.subscription_id));
+    const zeroSigner=bytes.length>flagOffset && bytes.subarray(40,72).every(v=>v===0);
+    if(ownerOk && hashOk && (bytes[flagOffset]===0 || bytes[flagOffset]===1)){
+      const revoked=bytes[flagOffset]===1;
+      revocationEvidence={status:revoked&&zeroSigner?'revoked_onchain':revoked?'revoked_signer_unexpected':'not_revoked',
+        revoked,sessionIsZero:zeroSigner,ownerMatches:true,subscriptionHashMatches:true,
+        dataLength:bytes.length};
+    }else revocationEvidence={status:'identity_or_layout_unverified',revoked:false};
+  }
   return {
     available:true,
     required:!!policyInfo||assets.length>0||reserveLamports>0,
@@ -293,6 +310,7 @@ export async function getVaultReclaimStatus(db,userId,entityId){
     vaultAddress:vault.toBase58(),
     policyExists:!!policyInfo,
     policyVerification:policyCheck,
+    revocationEvidence,
     recoverySafeToRelease:false,
     // Never automatically rebind a historical policy to a recreated subscription.
     requiresOwnerSignedReclaim:policyCheck.status==='active',
